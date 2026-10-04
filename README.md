@@ -1,5 +1,7 @@
 # Resilient Geo Mesh
 
+> 2026-10-04：新增可選的 **Wi-Fi Direct** 同步。在「個人設定 → 同步狀態」關閉緊急模式後選擇傳輸方式，兩台選擇一致再啟動。藍牙仍為預設；Wi-Fi Direct 的權限、系統邀請、單群組限制與驗證方式見 [Wi-Fi Direct 文件](docs/wifi-direct.md)。
+
 > 極端通訊環境下的空間情報系統 — 當基地台總頻寬受限時，讓附近的手機彼此交換各自缺少的災情資料分片。
 
 > 2026-09-24 更新：Android App 的 launcher 現在是 Flutter module 的全台灣離線地圖；Android 原生保留 Room、事件驗證／TTL、BLE 與 transport harness，Flutter 透過 bridge 只讀取已驗證事件。
@@ -67,7 +69,7 @@ flowchart LR
 
 Android host 直接載入原生已驗證的靜態地物與事件，不依賴 Flutter 預覽 JSON。原生驗證、儲存或格式錯誤會顯示載入失敗；只有非 Android 的預覽環境在缺少 native bridge 時，才使用打包的展示快照。
 
-沒有雲端資料庫、沒有後端服務相依；唯一的例外是把民眾回報升級為「已查證」需要政府端簽發確認事件，但沒有政府端時系統照常運作。App 固定使用單一 `MapLibreMap` renderer：台灣 Protomaps PMTiles、glyph、sprite、樣式、行政區／地標 GeoJSON 與 `taiwan-roads.json` 搜尋索引全部隨 App 內嵌；Android 啟動時將 PMTiles 串流複製到 app-private `files/maps/`，因此地圖與道路搜尋不需要網路或地圖服務憑證。ADR-001 否決的 Nearby Connections 與 Wi-Fi Direct 實作已連同它們所需的 Wi-Fi／Play Services 權限一併移除，只保留在 git 歷史與 ADR 記錄中。
+沒有雲端資料庫、沒有後端服務相依；唯一的例外是把民眾回報升級為「已查證」需要政府端簽發確認事件，但沒有政府端時系統照常運作。App 固定使用單一 `MapLibreMap` renderer：台灣 Protomaps PMTiles、glyph、sprite、樣式、行政區／地標 GeoJSON 與 `taiwan-roads.json` 搜尋索引全部隨 App 內嵌；Android 啟動時將 PMTiles 串流複製到 app-private `files/maps/`，因此地圖與道路搜尋不需要網路或地圖服務憑證。Nearby Connections 仍未採用；2026-10-04 的 Wi-Fi Direct 為重新實作的可選 transport，不依賴 Play Services。ADR-001 保留舊實作的失敗紀錄。
 
 ## 使用技術
 
@@ -85,7 +87,7 @@ Android host 直接載入原生已驗證的靜態地物與事件，不依賴 Flu
 | 測試               | Flutter test、JUnit 4、AndroidX Test、`node:test`、Python `unittest`                  | 覆蓋地圖介面、資料契約、驗證、同步與模擬；測試數量及結果以各 runner 的當次輸出為準                                               |
 | Sponsor 技術       | 未使用                                                                                | 本次未使用主辦方或贊助商提供的服務；pipeline 與 simulator 零第三方相依，Android 端僅用 AndroidX 與 Bouncy Castle                  |
 
-> 曾評估但**否決**的技術，實測記錄見 [`docs/adr/ADR-001-transport-layer.md`](docs/adr/ADR-001-transport-layer.md)：**Nearby Connections**（兩台實機皆回傳 Google 側 `INTERNAL_ERROR`，非 App 端可控）、**原生 Wi-Fi Direct**（discovery／連線可行，但 TCP 卡在疑似 Android per-app 網路路由限制）。
+> 2026-09-05 的候選評估與失敗紀錄保留在 [`docs/adr/ADR-001-transport-layer.md`](docs/adr/ADR-001-transport-layer.md)。Nearby Connections 仍未採用；Wi-Fi Direct 已於 2026-10-04 重新實作並通過雙機資料交換，當時的 TCP 逾時不代表技術不可用。新版本的搜尋延遲、實測條件與限制見 [Wi-Fi Direct 文件](docs/wifi-direct.md)。
 
 ## 安裝與執行
 

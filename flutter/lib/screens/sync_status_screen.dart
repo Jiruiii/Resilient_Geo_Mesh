@@ -63,6 +63,24 @@ class _SyncStatusScreenState extends State<SyncStatusScreen>
     }
   }
 
+  Future<void> _setTransport(String? transport) async {
+    if (_changing || transport == null) return;
+    setState(() => _changing = true);
+    try {
+      final status = await widget.bridge.setSyncTransport(transport);
+      if (mounted) {
+        setState(() {
+          _status = status;
+          _error = null;
+        });
+      }
+    } catch (error) {
+      if (mounted) setState(() => _error = error);
+    } finally {
+      if (mounted) setState(() => _changing = false);
+    }
+  }
+
   @override
   void dispose() {
     _timer?.cancel();
@@ -123,6 +141,34 @@ class _SyncStatusScreenState extends State<SyncStatusScreen>
             Card(
               child: Column(
                 children: [
+                  Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: DropdownButtonFormField<String>(
+                      value: status.transport,
+                      decoration: const InputDecoration(labelText: '傳輸方式'),
+                      items: const [
+                        DropdownMenuItem(value: 'ble', child: Text('藍牙 BLE')),
+                        DropdownMenuItem(
+                          value: 'wifi_direct',
+                          child: Text('Wi-Fi Direct'),
+                        ),
+                      ],
+                      onChanged:
+                          _changing ||
+                                  _error != null ||
+                                  status.emergencyModeEnabled
+                              ? null
+                              : _setTransport,
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                    child: Text(
+                      status.emergencyModeEnabled
+                          ? '切換傳輸方式前，請先關閉緊急模式。'
+                          : '兩支手機請選擇相同方式，再開啟緊急模式。',
+                    ),
+                  ),
                   SwitchListTile(
                     title: const Text('緊急模式'),
                     subtitle: Text(
@@ -131,35 +177,70 @@ class _SyncStatusScreenState extends State<SyncStatusScreen>
                     value: status.emergencyModeEnabled,
                     onChanged: _changing || _error != null ? null : _setEnabled,
                   ),
-                  ListTile(
-                    title: const Text('藍牙'),
-                    trailing: Text(
-                      !status.bluetoothAvailable
-                          ? '不支援'
-                          : status.bluetoothEnabled
-                          ? '已開啟'
-                          : '已關閉',
+                  if (status.usesWifiDirect) ...[
+                    ListTile(
+                      title: const Text('Wi-Fi Direct'),
+                      trailing: Text(
+                        !status.wifiDirectAvailable
+                            ? '不支援'
+                            : status.wifiEnabled
+                            ? 'Wi-Fi 已開啟'
+                            : '請開啟 Wi-Fi',
+                      ),
                     ),
-                  ),
-                  ListTile(
-                    title: const Text('附近裝置權限'),
-                    trailing: Text(
-                      status.blePermissionsGranted ? '已允許' : '未允許',
+                    ListTile(
+                      title: const Text('Wi-Fi 附近裝置權限'),
+                      trailing: Text(
+                        status.wifiPermissionsGranted ? '已允許' : '未允許',
+                      ),
                     ),
-                  ),
+                    ListTile(
+                      title: const Text('系統定位服務'),
+                      trailing: Text(
+                        status.locationEnabled ? '已開啟' : '請開啟以搜尋裝置',
+                      ),
+                    ),
+                    const Padding(
+                      padding: EdgeInsets.all(16),
+                      child: Text(
+                        '不需要網際網路或同一台路由器。請在對方手機接受系統連線邀請；若未授權，重新開啟緊急模式或至系統 App 設定允許。此模式一次加入一個群組；無法連線時可切回藍牙。',
+                      ),
+                    ),
+                  ] else ...[
+                    ListTile(
+                      title: const Text('藍牙'),
+                      trailing: Text(
+                        !status.bluetoothAvailable
+                            ? '不支援'
+                            : status.bluetoothEnabled
+                            ? '已開啟'
+                            : '已關閉',
+                      ),
+                    ),
+                    ListTile(
+                      title: const Text('附近裝置權限'),
+                      trailing: Text(
+                        status.blePermissionsGranted ? '已允許' : '未允許',
+                      ),
+                    ),
+                  ],
                   ListTile(
                     title: const Text('通知權限'),
                     trailing: Text(status.notificationsEnabled ? '已允許' : '未允許'),
                   ),
-                  if (!status.blePermissionsGranted)
+                  if (!status.usesWifiDirect && !status.blePermissionsGranted)
                     const Padding(
                       padding: EdgeInsets.all(16),
                       child: Text('重新開啟緊急模式以授予附近裝置權限；若已拒絕，請至系統 App 設定允許。'),
                     ),
-                  if (!status.bluetoothEnabled && status.bluetoothAvailable)
+                  if (!status.usesWifiDirect &&
+                      !status.bluetoothEnabled &&
+                      status.bluetoothAvailable)
                     const Padding(
                       padding: EdgeInsets.all(16),
-                      child: Text('請在系統設定開啟藍牙；緊急模式會自動恢復掃描。Android 11 以下也需開啟定位服務。'),
+                      child: Text(
+                        '請在系統設定開啟藍牙；緊急模式會自動恢復掃描。Android 11 以下也需開啟定位服務。',
+                      ),
                     ),
                   if (!status.notificationsEnabled)
                     const Padding(

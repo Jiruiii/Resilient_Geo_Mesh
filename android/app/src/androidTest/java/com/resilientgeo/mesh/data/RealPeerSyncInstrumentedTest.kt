@@ -9,6 +9,10 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.resilientgeo.mesh.emergency.AutoPeerSyncEngine
 import com.resilientgeo.mesh.transport.BleGattTransport
+import com.resilientgeo.mesh.transport.WifiDirectTransport
+import com.resilientgeo.mesh.transport.PeerTransport
+import com.resilientgeo.mesh.transport.MeshTransportSettings
+import com.resilientgeo.mesh.transport.OfflineWifiTestNetwork
 import kotlinx.coroutines.*
 import org.json.JSONObject
 import org.junit.Assert.*
@@ -25,20 +29,32 @@ class RealPeerSyncInstrumentedTest {
         val seed = InstrumentationRegistry.getArguments().getString("peer_seed")
         assumeTrue("Opt-in paired-device test", seed == "shelter" || seed == "road")
         val context: Context = ApplicationProvider.getApplicationContext()
+        val wifi = InstrumentationRegistry.getArguments().getString("peer_transport") == "wifi_direct"
         val adapter = context.getSystemService(BluetoothManager::class.java).adapter
-        assertTrue("Bluetooth must be enabled", adapter.isEnabled)
+        if (wifi) assertTrue("Wi-Fi Direct permissions, Wi-Fi and Location must be enabled", MeshTransportSettings(context).wifiReady())
+        else assertTrue("Bluetooth must be enabled", adapter.isEnabled)
         val db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).build()
         val cache = File.createTempFile("peer-test-", "", context.cacheDir).apply { delete(); mkdirs() }
         val repository = MeshRepository(context, db, cache)
         var scope: CoroutineScope? = null
-        var transport: BleGattTransport? = null
+        var transport: PeerTransport? = null
+        fun teardown() {
+            when (val radio = transport) {
+                is BleGattTransport -> radio.teardown()
+                is WifiDirectTransport -> radio.teardown()
+            }
+        }
         val logs = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val offline = if (wifi && InstrumentationRegistry.getArguments().getString("peer_offline") == "true")
+            OfflineWifiTestNetwork(context) else null
         try {
+            offline?.disconnect()
+            if (offline != null) Log.i("RealPeerSyncTest", "[$seed] OFFLINE_CONFIRMED")
             val fixtureName = if (seed == "shelter") "chunk-136-dahu-shelter-000.json" else "chunk-136-wende-road-000.json"
             val fixture = JSONObject(context.assets.open("fixtures/peer-sync/$fixtureName").bufferedReader().use { it.readText() })
             assertTrue(repository.ingestChunk(fixture) is ChunkIngestResult.Applied)
             fun newEngine(): AutoPeerSyncEngine {
-                val radio = BleGattTransport(context, adapter)
+                val radio: PeerTransport = if (wifi) WifiDirectTransport(context) else BleGattTransport(context, adapter)
                 val work = CoroutineScope(SupervisorJob() + Dispatchers.Default)
                 transport = radio
                 scope = work
@@ -49,6 +65,7 @@ class RealPeerSyncInstrumentedTest {
                     chunkProvider = { dataset, namespace, id -> repository.cachedChunkJson(dataset, namespace, id) },
                     chunkIngestor = { repository.ingestChunk(it) },
                     scope = work,
+                    connectTimeoutMillis = if (wifi) 90_000 else 40_000,
                     onLog = { logs.add(it); Log.i("RealPeerSyncTest", "[$seed] $it") },
                     receptiveWindowMillis = 5000,
                     syncCooldownMillis = 10000,
@@ -62,16 +79,16 @@ class RealPeerSyncInstrumentedTest {
             }
             assertEquals(2, db.chunkDao().countSync())
             assertTrue(engine.stats().chunksApplied > 0)
-            assertEquals("Unrelated Bluetooth advertisements must not count as Mesh peers", 1, engine.visiblePeerCount(30_000))
+            assertEquals("Unrelated devices must not count as Mesh peers", 1, engine.visiblePeerCount(30_000))
             Log.i("RealPeerSyncTest", "[$seed] FIRST_EXCHANGE_OK ${engine.stats()}")
             engine.stop()
             scope!!.cancel()
-            transport!!.teardown()
+            teardown()
             delay(5000)
             logs.clear()
             engine = newEngine()
             engine.start()
-            withTimeout(90000) {
+            withTimeout(if (wifi) 150000 else 90000) {
                 while (engine.stats().peersSynced < 1) delay(250)
             }
             assertEquals(0, engine.stats().chunksApplied)
@@ -79,10 +96,12 @@ class RealPeerSyncInstrumentedTest {
             Log.i("RealPeerSyncTest", "[$seed] SECOND_ENCOUNTER_OK ${engine.stats()}")
             engine.stop()
         } finally {
-            scope?.cancel()
-            transport?.teardown()
-            db.close()
-            cache.deleteRecursively()
+            try {
+                scope?.cancel()
+                teardown()
+                db.close()
+                cache.deleteRecursively()
+            } finally { offline?.close() }
         }
     }
 }
