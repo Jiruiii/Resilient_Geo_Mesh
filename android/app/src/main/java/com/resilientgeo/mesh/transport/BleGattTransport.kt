@@ -48,10 +48,9 @@ import java.security.SecureRandom
  * issue, not fixable quickly) hit real platform-level blockers on the
  * Stage 0 test devices, independent of application code.
  *
- * Both rejected implementations have since been deleted along with the
- * Wi-Fi/Play-Services permissions and dependencies they pulled in; the
- * full measurement record for all three candidates lives in
- * docs/adr/ADR-001-transport-layer.md, and the code itself in git history.
+ * Those original spikes were removed; the measurement history lives in
+ * docs/adr/ADR-001-transport-layer.md. A new optional WifiDirectTransport
+ * was added on 2026-10-04; BLE remains the default transport.
  *
  * Unlike those two, this reuses [BleDiscovery]'s already-proven-reliable
  * advertise/scan pair (see C_BLEbroadcast.md) and layers real data transfer

@@ -15,6 +15,11 @@ final class SyncStatus {
     this.lastSuccessAt,
     this.lastFailureAt,
     this.lastFailureCode,
+    this.transport = 'ble',
+    this.wifiDirectAvailable = false,
+    this.wifiEnabled = false,
+    this.wifiPermissionsGranted = false,
+    this.locationEnabled = false,
   });
 
   final bool emergencyModeEnabled,
@@ -28,6 +33,12 @@ final class SyncStatus {
   final DateTime observedAt;
   final DateTime? lastSuccessAt, lastFailureAt;
   final String? lastFailureCode;
+  final String transport;
+  final bool wifiDirectAvailable,
+      wifiEnabled,
+      wifiPermissionsGranted,
+      locationEnabled;
+  bool get usesWifiDirect => transport == 'wifi_direct';
 
   factory SyncStatus.fromMessage(Map<String, dynamic> message) {
     bool flag(String key) {
@@ -61,6 +72,12 @@ final class SyncStatus {
       throw const FormatException('Invalid sync failure code');
     }
     return SyncStatus(
+      transport: message['transport'] as String? ?? 'ble',
+      wifiDirectAvailable: message['wifi_direct_available'] as bool? ?? false,
+      wifiEnabled: message['wifi_enabled'] as bool? ?? false,
+      wifiPermissionsGranted:
+          message['wifi_permissions_granted'] as bool? ?? false,
+      locationEnabled: message['location_enabled'] as bool? ?? false,
       emergencyModeEnabled: flag('emergency_mode_enabled'),
       bluetoothAvailable: flag('bluetooth_available'),
       bluetoothEnabled: flag('bluetooth_enabled'),
@@ -81,9 +98,16 @@ final class SyncStatus {
 
   String get activityLabel {
     if (!emergencyModeEnabled) return '緊急模式未開啟';
-    if (!bluetoothAvailable) return '裝置不支援藍牙';
-    if (!blePermissionsGranted) return '尚未取得附近裝置權限';
-    if (!bluetoothEnabled) return '請開啟藍牙';
+    if (usesWifiDirect) {
+      if (!wifiDirectAvailable) return '裝置不支援 Wi-Fi Direct';
+      if (!wifiPermissionsGranted) return '尚未取得 Wi-Fi 附近裝置權限';
+      if (!wifiEnabled) return '請開啟 Wi-Fi';
+      if (!locationEnabled) return '請開啟系統定位服務以搜尋 Wi-Fi Direct 裝置';
+    } else {
+      if (!bluetoothAvailable) return '裝置不支援藍牙';
+      if (!blePermissionsGranted) return '尚未取得附近裝置權限';
+      if (!bluetoothEnabled) return '請開啟藍牙';
+    }
     if (!serviceRunning) return '尚未確認服務運作，請重新開啟緊急模式';
     if (!discoveryActive) {
       return lastFailureCode == 'discovery_failed'
@@ -95,9 +119,10 @@ final class SyncStatus {
   }
 
   String get failureDescription => switch (lastFailureCode) {
-    'connection_failed' => '藍牙連線未成功或已逾時',
+    'connection_failed' =>
+      usesWifiDirect ? 'Wi-Fi Direct 連線未成功或已逾時，請確認對方已接受連線邀請' : '藍牙連線未成功或已逾時',
     'hello_timeout' => '對方未在時間內回應資料摘要',
-    'send_failed' => '藍牙訊息傳送失敗',
+    'send_failed' => usesWifiDirect ? 'Wi-Fi Direct 訊息傳送失敗' : '藍牙訊息傳送失敗',
     'transfer_incomplete' => '需要的資料未收齊，或資料驗證未通過',
     'session_failed' => '同步過程中發生錯誤',
     'discovery_failed' => '無法搜尋附近節點',

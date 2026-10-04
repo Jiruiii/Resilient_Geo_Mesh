@@ -28,7 +28,7 @@ object EmergencyStatusText {
      * "0 chunks synced" next to every other state, which tells a user in a
      * disaster nothing they can act on.
      */
-    fun contentText(aliveSeconds: Long, peers: Int = 0, discoveryActive: Boolean = true, chunksSynced: Int = 0): String {
+    fun contentText(aliveSeconds: Long, peers: Int = 0, discoveryActive: Boolean = true, chunksSynced: Int = 0, radioHint: String = "Bluetooth"): String {
         require(aliveSeconds >= 0) { "aliveSeconds must not be negative: $aliveSeconds" }
         require(peers >= 0) { "peers must not be negative: $peers" }
         require(chunksSynced >= 0) { "chunksSynced must not be negative: $chunksSynced" }
@@ -38,7 +38,7 @@ object EmergencyStatusText {
         val elapsed = if (minutes > 0) "${minutes}m %02ds".format(seconds) else "${seconds}s"
 
         val status = when {
-            !discoveryActive -> "Discovery off — check Bluetooth"
+            !discoveryActive -> "Discovery off — check $radioHint"
             peers == 0 -> "Scanning for peers — none nearby"
             peers == 1 -> "1 peer nearby"
             else -> "$peers peers nearby"

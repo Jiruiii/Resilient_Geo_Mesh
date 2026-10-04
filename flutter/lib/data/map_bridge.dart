@@ -47,6 +47,11 @@ class MapBridge {
     }
   }
 
+  Future<SyncStatus> setSyncTransport(String transport) async =>
+      SyncStatus.fromMessage(
+        await _invokeRequiredMap('setSyncTransport', {'transport': transport}),
+      );
+
   /// Verified nationwide static layers. Android verifies them in the
   /// background, so the first call after install can take several seconds;
   /// it never returns unverified data.

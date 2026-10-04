@@ -18,6 +18,9 @@ import androidx.core.content.ContextCompat
 import androidx.core.location.LocationManagerCompat
 import com.resilientgeo.mesh.data.MeshRepository
 import com.resilientgeo.mesh.transport.BleGattTransport
+import com.resilientgeo.mesh.transport.PeerTransport
+import com.resilientgeo.mesh.transport.WifiDirectTransport
+import com.resilientgeo.mesh.transport.MeshTransportSettings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -40,7 +43,7 @@ import kotlinx.coroutines.launch
  *
  * ### What it does
  *
- * It runs [BleGattTransport] (advertise + scan + GATT client/server) and
+ * It runs the selected [BleGattTransport] or [WifiDirectTransport] and
  * hands it to an [AutoPeerSyncEngine], which runs HELLO -> DIFF -> REQUEST ->
  * TRANSFER with every peer found, with no human choosing roles — see that
  * class's doc comment for why no role negotiation is actually needed. This
@@ -51,7 +54,7 @@ import kotlinx.coroutines.launch
  *
  * `MainActivity` starts and stops this service from the Emergency Mode
  * switch; this class manages the service lifecycle and notification and
- * otherwise defers to [AutoPeerSyncEngine] and [BleGattTransport].
+ * otherwise defers to [AutoPeerSyncEngine] and the selected transport.
  */
 class EmergencyModeService : Service() {
 
@@ -79,7 +82,9 @@ class EmergencyModeService : Service() {
     private var heartbeatJob: Job? = null
     private var startedAtMillis = 0L
 
-    private var transport: BleGattTransport? = null
+    private var transport: PeerTransport? = null
+    private val transportSettings by lazy { MeshTransportSettings(applicationContext) }
+    private val wifiMode get() = transportSettings.mode == MeshTransportSettings.WIFI_DIRECT
     private var engine: AutoPeerSyncEngine? = null
     private var discoveryActive = false
     private var completedBeforeRestart = 0
@@ -145,7 +150,7 @@ class EmergencyModeService : Service() {
     }
 
     private fun maintainDiscovery() {
-        val ready = hasBluetoothPermissions() && runCatching {
+        val ready = if (wifiMode) transportSettings.wifiReady() else hasBluetoothPermissions() && runCatching {
             val adapter = getSystemService(BluetoothManager::class.java)?.adapter
             adapter?.isEnabled == true && (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ||
                 getSystemService(LocationManager::class.java)?.let { LocationManagerCompat.isLocationEnabled(it) } == true)
@@ -161,7 +166,7 @@ class EmergencyModeService : Service() {
     }
 
     private fun startAutoSync() {
-        if (!hasBluetoothPermissions()) {
+        if (!wifiMode && !hasBluetoothPermissions()) {
             // Not fatal: the service still runs and still holds the process
             // up, it just can't see anyone. The notification says so rather
             // than silently pretending discovery is working.
@@ -169,35 +174,47 @@ class EmergencyModeService : Service() {
             return
         }
         val adapter = getSystemService(BluetoothManager::class.java)?.adapter
-        if (adapter == null || !adapter.isEnabled) {
+        if (!wifiMode && (adapter == null || !adapter.isEnabled)) {
             Log.w(TAG, "Bluetooth unavailable or disabled; running without discovery")
             return
         }
 
         val nodeId = NodeIdentity(applicationContext).nodeId
         val repository = MeshRepository(applicationContext)
-        val ble = BleGattTransport(applicationContext, adapter)
-
         runCatching {
+            val radio: PeerTransport = if (wifiMode) WifiDirectTransport(applicationContext)
+                else BleGattTransport(applicationContext, adapter!!)
+            transport = radio
             val syncEngine = AutoPeerSyncEngine(
-                transport = ble,
+                transport = radio,
                 localNodeId = nodeId,
-                localSummaryProvider = { repository.allLocalPeerSummaries(nodeId) },
+                localSummaryProvider = {
+                    repository.allLocalPeerSummaries(nodeId).apply {
+                        if (wifiMode) getJSONObject("capabilities").apply {
+                            put("discovery_transports", org.json.JSONArray().put("WIFI_DIRECT"))
+                            put("transfer_transports", org.json.JSONArray().put("WIFI_DIRECT"))
+                            put("supports_resume", false)
+                            put("max_peer_count", 1)
+                        }
+                    }
+                },
                 chunkProvider = { datasetId, namespace, chunkId -> repository.cachedChunkJson(datasetId, namespace, chunkId) },
                 chunkIngestor = { chunk -> repository.ingestChunk(chunk) },
                 scope = syncScope,
+                maxConcurrentSessions = if (wifiMode) 1 else 2,
+                connectTimeoutMillis = if (wifiMode) 90_000L else 40_000L,
+                failureCooldownMillis = if (wifiMode) 3_000L else 15_000L,
                 onLog = { line -> Log.i(TAG, "[auto-sync] $line") },
                 onSyncOutcome = { outcome ->
                     scope.launch {
                         // Ignore a late result from an engine already replaced.
-                        if (transport === ble) {
+                        if (transport === radio) {
                             if (outcome.failureCode == "discovery_failed") discoveryActive = false
                             syncStatus.record(outcome)
                         }
                     }
                 },
             )
-            transport = ble
             engine = syncEngine
             discoveryActive = true
             syncEngine.start()
@@ -219,7 +236,12 @@ class EmergencyModeService : Service() {
             chunksBeforeRestart += it.chunksApplied
         }
         engine = null
-        runCatching { transport?.teardown() }.onFailure { error -> Log.w(TAG, "error tearing down transport: ${error.message}") }
+        runCatching {
+            when (val radio = transport) {
+                is BleGattTransport -> radio.teardown()
+                is WifiDirectTransport -> radio.teardown()
+            }
+        }.onFailure { error -> Log.w(TAG, "error tearing down transport: ${error.message}") }
         transport = null
         discoveryActive = false
     }
@@ -250,8 +272,9 @@ class EmergencyModeService : Service() {
 
     private fun buildNotification(aliveSeconds: Long, peers: Int, chunksSynced: Int): Notification =
         NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle(EmergencyStatusText.title())
-            .setContentText(EmergencyStatusText.contentText(aliveSeconds, peers, discoveryActive, chunksSynced))
+            .setContentTitle(EmergencyStatusText.title() + if (wifiMode) " · Wi-Fi Direct" else " · Bluetooth")
+            .setContentText(EmergencyStatusText.contentText(aliveSeconds, peers, discoveryActive, chunksSynced,
+                if (wifiMode) "Wi-Fi / permissions / Location" else "Bluetooth"))
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setOngoing(true)
             .build()

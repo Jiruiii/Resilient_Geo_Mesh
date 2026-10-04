@@ -25,6 +25,82 @@ Map<String, dynamic> message() => {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  test('Wi-Fi Direct readiness does not depend on Bluetooth', () {
+    final wifi =
+        message()..addAll({
+          'transport': 'wifi_direct',
+          'wifi_direct_available': true,
+          'wifi_enabled': true,
+          'wifi_permissions_granted': true,
+          'location_enabled': true,
+          'bluetooth_enabled': false,
+          'ble_permissions_granted': false,
+        });
+    expect(SyncStatus.fromMessage(wifi).activityLabel, '正在與附近節點同步');
+    expect(
+      SyncStatus.fromMessage({
+        ...wifi,
+        'location_enabled': false,
+      }).activityLabel,
+      contains('定位服務'),
+    );
+    expect(
+      SyncStatus.fromMessage({
+        ...wifi,
+        'wifi_permissions_granted': false,
+      }).activityLabel,
+      contains('Wi-Fi 附近裝置權限'),
+    );
+    expect(
+      SyncStatus.fromMessage({...wifi, 'wifi_enabled': false}).activityLabel,
+      '請開啟 Wi-Fi',
+    );
+  });
+
+  testWidgets(
+    'transport selection is persisted through native bridge and locked while running',
+    (tester) async {
+      const channel = MethodChannel('test/sync-transport');
+      var mode = 'ble';
+      var enabled = false;
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        if (call.method == 'setSyncTransport') {
+          mode = (call.arguments as Map)['transport'] as String;
+        }
+        if (call.method == 'setEmergencyMode') {
+          enabled = (call.arguments as Map)['enabled'] as bool;
+          return {'enabled': enabled};
+        }
+        return message()
+          ..addAll({'transport': mode, 'emergency_mode_enabled': enabled});
+      });
+      addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SyncStatusScreen(bridge: MapBridge(methodChannel: channel)),
+        ),
+      );
+      await tester.pump();
+      await tester.tap(find.byType(DropdownButtonFormField<String>));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Wi-Fi Direct').last);
+      await tester.pumpAndSettle();
+      expect(mode, 'wifi_direct');
+      await tester.tap(find.byType(Switch));
+      await tester.pump();
+      expect(
+        tester
+            .widget<DropdownButtonFormField<String>>(
+              find.byType(DropdownButtonFormField<String>),
+            )
+            .onChanged,
+        isNull,
+      );
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
   test(
     'does not confuse enabled mode with permission or service readiness',
     () {
@@ -61,6 +137,10 @@ void main() {
   testWidgets(
     'polls real bridge data and clearly marks retained data on failure',
     (tester) async {
+      tester.view.physicalSize = const Size(800, 1500);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
       const channel = MethodChannel('test/sync-screen');
       var calls = 0;
       final messenger =
