@@ -75,6 +75,34 @@ class EventIngestorTest {
     }
 
     @Test
+    fun `version floors reject older peer replays and allow a higher signed version`() {
+        val store = InMemoryEventStore()
+        store.rememberVersion("official.tdx", "road:dahu-01", 2)
+
+        val replay = EventIngestor.ingest(
+            store,
+            TestFixtures.event("official.tdx", "road:dahu-01", 1),
+            trustStore,
+            now,
+        )
+
+        assertTrue(replay is IngestResult.RejectedVersionRollback)
+        assertEquals(2, (replay as IngestResult.RejectedVersionRollback).storedVersion)
+        assertTrue("an older replay must not recreate an event payload", store.all().isEmpty())
+
+        val lowerFloorStore = InMemoryEventStore()
+        lowerFloorStore.rememberVersion("official.tdx", "road:dahu-01", 1)
+        val newer = EventIngestor.ingest(
+            lowerFloorStore,
+            TestFixtures.event("official.tdx", "road:dahu-01", 2),
+            trustStore,
+            now,
+        )
+        assertTrue(newer is IngestResult.Inserted)
+        assertEquals(2, lowerFloorStore.find("official.tdx", "road:dahu-01")?.eventVersion)
+    }
+
+    @Test
     fun `a tampered event is rejected before it ever reaches the store`() {
         val store = InMemoryEventStore()
         val tampered = org.json.JSONObject(TestFixtures.event("official.cwa", "flood:neihu-0901-001", 1).toString())

@@ -42,7 +42,7 @@ void main() {
     expect(event.isExpired, isTrue);
   });
 
-  testWidgets('tapping a shelter opens its details with occupancy', (
+  testWidgets('tapping a shelter shows planned capacity without live occupancy', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -55,7 +55,7 @@ void main() {
 
     expect(find.text('潭美國小'), findsOneWidget);
     expect(find.text('預計收容人數：81人'), findsOneWidget);
-    expect(find.text('收容人數：無資料'), findsOneWidget);
+    expect(find.text('收容人數：無資料'), findsNothing);
     expect(find.text('來源：taipei-shelter'), findsOneWidget);
     expect(find.text('更新時間：2026-9-5 00:00:00'), findsNWidgets(2));
   });
@@ -137,7 +137,7 @@ void main() {
 
     await tester.tap(find.text('潭美國小'));
     await tester.pump();
-    expect(find.text('收容人數：無資料'), findsOneWidget);
+    expect(find.text('收容人數：無資料'), findsNothing);
     expect(find.byType(FeatureDetailsSheet), findsOneWidget);
     expect(
       find.byKey(const ValueKey<String>('map-search-field')),

@@ -4,6 +4,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.nio.charset.StandardCharsets
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 
 /**
  * Remembers that one exact static layer package already passed
@@ -19,6 +21,28 @@ import java.nio.charset.StandardCharsets
  * beside in the trust model.
  */
 class VerifiedLayerCache(private val directory: File) {
+
+    /** Returns whether the exact signed bytes were validated in an earlier run. */
+    fun matchesVerified(layerId: String, key: String): Boolean =
+        runCatching { verifiedMarker(layerId).readText() == key }.getOrDefault(false)
+
+    /** Stores only the content key for very large layers whose parsed records are streamed. */
+    fun markVerified(layerId: String, key: String) {
+        directory.mkdirs()
+        val target = verifiedMarker(layerId)
+        val temporary = Files.createTempFile(directory.toPath(), "${target.name}-", ".tmp").toFile()
+        try {
+            temporary.writeText(key)
+            Files.move(
+                temporary.toPath(),
+                target.toPath(),
+                StandardCopyOption.ATOMIC_MOVE,
+                StandardCopyOption.REPLACE_EXISTING,
+            )
+        } finally {
+            temporary.delete()
+        }
+    }
 
     fun read(layerId: String, key: String): List<JSONObject>? {
         val file = fileFor(layerId)
@@ -50,6 +74,9 @@ class VerifiedLayerCache(private val directory: File) {
 
     private fun fileFor(layerId: String): File =
         File(directory, layerId.map { if (it.isLetterOrDigit() || it == '-') it else '_' }.joinToString("") + ".json")
+
+    private fun verifiedMarker(layerId: String): File =
+        File(directory, layerId.map { if (it.isLetterOrDigit() || it == '-') it else '_' }.joinToString("") + ".verified")
 
     companion object {
         fun key(trustStoreText: String, manifestText: String, chunkTexts: List<String>): String {

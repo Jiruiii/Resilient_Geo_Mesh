@@ -1,0 +1,108 @@
+services:
+  collector:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    entrypoint: ["node", "/app/deploy/collector-entrypoint.mjs"]
+    command: ["npm", "run", "collector:start"]
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PRIVATE_DATA_ROOT: /var/lib/resilientgeo-private
+      PUBLIC_RELEASE_ROOT: /var/lib/resilientgeo-public
+      AREA_CATALOG_PATH: /app/data/area-catalog.json
+      SIGNING_PRIVATE_KEY_PATH: /run/secrets/signing_private_key
+      SIGNING_PUBLIC_KEY_PATH: /run/secrets/signing_public_key
+      SIGNING_KEY_ID: ${SIGNING_KEY_ID:?set SIGNING_KEY_ID}
+      # TDX is retained as an explicit opt-in source; it is not collected by
+      # the default central disaster run.
+      TDX_CLIENT_ID: ${TDX_CLIENT_ID:-}
+      TDX_CLIENT_SECRET: ${TDX_CLIENT_SECRET:-}
+      TDX_API_ENDPOINTS: ${TDX_API_ENDPOINTS:-}
+      TDX_EVENT_FRESHNESS_SECONDS: ${TDX_EVENT_FRESHNESS_SECONDS:-900}
+      TDX_ENDPOINT_DELAY_MS: ${TDX_ENDPOINT_DELAY_MS:-1000}
+      CWA_API_KEY: ${CWA_API_KEY:?set CWA_API_KEY}
+      NCDR_ALERT_API_KEY: ${NCDR_ALERT_API_KEY:?set NCDR_ALERT_API_KEY}
+      NCDR_AUTH_MODE: ${NCDR_AUTH_MODE:-query}
+      NCDR_ALERT_ENDPOINT: ${NCDR_ALERT_ENDPOINT:-https://alerts.ncdr.nat.gov.tw/api/datastore}
+      NCDR_ALERT_DETAIL_ENDPOINT: ${NCDR_ALERT_DETAIL_ENDPOINT:-https://alerts.ncdr.nat.gov.tw/api/dump/datastore}
+      NCDR_DETAIL_CONCURRENCY: ${NCDR_DETAIL_CONCURRENCY:-1}
+      MEDICAL_COORDINATE_ENDPOINT: ${MEDICAL_COORDINATE_ENDPOINT:-https://api.nlsc.gov.tw/other/MarkBufferAnlys/med}
+      MEDICAL_COORDINATE_FALLBACK_ENDPOINTS: ${MEDICAL_COORDINATE_FALLBACK_ENDPOINTS:-}
+      MEDICAL_COORDINATE_RADIUS_METERS: ${MEDICAL_COORDINATE_RADIUS_METERS:-25000}
+      MEDICAL_COORDINATE_SPACING_METERS: ${MEDICAL_COORDINATE_SPACING_METERS:-30000}
+      MEDICAL_COORDINATE_MAX_QUERIES: ${MEDICAL_COORDINATE_MAX_QUERIES:-500}
+      MEDICAL_COORDINATE_CONCURRENCY: ${MEDICAL_COORDINATE_CONCURRENCY:-4}
+      MEDICAL_COORDINATE_TIMEOUT_MS: ${MEDICAL_COORDINATE_TIMEOUT_MS:-120000}
+      MEDICAL_ADDRESS_PACKS_DIR: /app/deploy/public/address-packs
+      EMERGENCY_MEDICAL_ROSTER_PATH: ${EMERGENCY_MEDICAL_ROSTER_PATH:-}
+      EMERGENCY_MEDICAL_CROSSWALK_PATH: ${EMERGENCY_MEDICAL_CROSSWALK_PATH:-}
+      COLLECTOR_INITIAL_SOURCE_IDS: ${COLLECTOR_INITIAL_SOURCE_IDS:-}
+
+    secrets:
+      - signing_private_key
+      - signing_public_key
+    volumes:
+      - ../data/area-catalog.json:/app/data/area-catalog.json:ro
+      - ../deploy/public/address-packs:/app/deploy/public/address-packs:ro
+      - private_data:/var/lib/resilientgeo-private
+      - public_release:/var/lib/resilientgeo-public
+
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    command: ["npm", "run", "server:start"]
+    user: node
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8787:8787"
+    environment:
+      NODE_ENV: production
+      PUBLIC_RELEASE_ROOT: /var/lib/resilientgeo-public
+      ADDRESS_PACKS_ROOT: /app/deploy/public/address-packs
+      SIGNING_PUBLIC_KEY_PATH: /run/secrets/signing_public_key
+      SIGNING_KEY_ID: ${SIGNING_KEY_ID:?set SIGNING_KEY_ID}
+    secrets:
+      - signing_public_key
+    volumes:
+      - public_release:/var/lib/resilientgeo-public:ro
+      - ../deploy/public/address-packs:/app/deploy/public/address-packs:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/healthz').then(r => { if (!r.ok) process.exit(1); }).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  proxy:
+    image: caddy:2.9-alpine
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      SERVER_DOMAIN: ${SERVER_DOMAIN:?set SERVER_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ../deploy/public/address-packs:/srv/address-packs:ro
+      - ../flutter/build/web:/srv/web:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  private_data:
+  public_release:
+  caddy_data:
+  caddy_config:
+
+secrets:
+  signing_private_key:
+    file: ${SIGNING_PRIVATE_KEY_FILE:?set SIGNING_PRIVATE_KEY_FILE}
+  signing_public_key:
+    file: ${SIGNING_PUBLIC_KEY_FILE:?set SIGNING_PUBLIC_KEY_FILE}

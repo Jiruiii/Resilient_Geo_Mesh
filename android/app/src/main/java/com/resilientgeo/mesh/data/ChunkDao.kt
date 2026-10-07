@@ -25,6 +25,9 @@ interface ChunkDao {
     @Query("SELECT * FROM chunks ORDER BY datasetId, namespace, chunkId")
     fun allSync(): List<ChunkEntity>
 
+    @Query("SELECT * FROM chunks WHERE namespace LIKE 'official.%' ORDER BY datasetId, namespace, chunkId")
+    fun officialSync(): List<ChunkEntity>
+
     @Query("SELECT COUNT(*) FROM chunks")
     fun countSync(): Int
 

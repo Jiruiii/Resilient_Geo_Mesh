@@ -21,6 +21,40 @@ object LayerBundleVerifier {
         manifest: JSONObject,
         chunks: List<JSONObject>,
         trustStore: TrustedKeyStore,
+    ): LayerVerificationResult = verifyChunks(manifest, chunks.asSequence(), chunks.size, trustStore)
+
+    /** Parses and verifies one downloaded chunk at a time to bound peak Android heap use. */
+    fun verifyJson(
+        manifest: JSONObject,
+        chunks: List<String>,
+        trustStore: TrustedKeyStore,
+    ): LayerVerificationResult = verifyChunks(
+        manifest,
+        chunks.asSequence().map(::JSONObject),
+        chunks.size,
+        trustStore,
+    )
+
+    /** Verifies a package without retaining every parsed feature in memory. */
+    fun verifyJsonChunks(
+        manifest: JSONObject,
+        chunks: List<String>,
+        trustStore: TrustedKeyStore,
+        onVerifiedChunk: (List<JSONObject>) -> Unit,
+    ): LayerVerificationResult = verifyChunks(
+        manifest,
+        chunks.asSequence().map(::JSONObject),
+        chunks.size,
+        trustStore,
+        onVerifiedChunk,
+    )
+
+    private fun verifyChunks(
+        manifest: JSONObject,
+        chunks: Sequence<JSONObject>,
+        chunkCount: Int,
+        trustStore: TrustedKeyStore,
+        onVerifiedChunk: ((List<JSONObject>) -> Unit)? = null,
     ): LayerVerificationResult {
         val shapeErrors = validateManifest(manifest)
         if (shapeErrors.isNotEmpty()) return LayerVerificationResult(false, LayerVerificationResult.Stage.SCHEMA, shapeErrors)
@@ -41,10 +75,12 @@ object LayerBundleVerifier {
         }
 
         val manifestChunks = manifest.getJSONArray("chunks")
-        if (chunks.size != manifestChunks.length()) {
+        if (chunkCount != manifestChunks.length()) {
             return LayerVerificationResult(false, LayerVerificationResult.Stage.INTEGRITY, listOf("chunk_count_mismatch"))
         }
-        val allFeatures = mutableListOf<JSONObject>()
+        val allFeatures: MutableList<JSONObject>? = if (onVerifiedChunk == null) mutableListOf() else null
+        val contentHasher = com.resilientgeo.mesh.trust.CanonicalArrayHasher()
+        var featureCount = 0
         for (chunk in chunks) {
             if (chunk.optString("manifest_id") != manifest.getString("manifest_id")
                 || chunk.optString("manifest_hash") != manifest.getString("manifest_hash")) {
@@ -64,17 +100,25 @@ object LayerBundleVerifier {
             if (actualIds != expectedIds) {
                 return LayerVerificationResult(false, LayerVerificationResult.Stage.INTEGRITY, listOf("feature_ids_mismatch"))
             }
-            allFeatures += verified.features
+            for (feature in verified.features) {
+                contentHasher.update(FeatureVerifier.featurePayload(feature))
+                featureCount += 1
+            }
+            if (onVerifiedChunk == null) allFeatures?.addAll(verified.features)
+            else onVerifiedChunk(verified.features)
         }
 
-        if (allFeatures.size != manifest.getInt("total_feature_count")) {
+        if (featureCount != manifest.getInt("total_feature_count")) {
             return LayerVerificationResult(false, LayerVerificationResult.Stage.INTEGRITY, listOf("total_feature_count_mismatch"))
         }
-        val content = JSONArray().apply { allFeatures.forEach { put(FeatureVerifier.featurePayload(it)) } }
-        if (Canonical.sha256Canonical(content) != manifest.getString("content_hash")) {
+        if (contentHasher.finish() != manifest.getString("content_hash")) {
             return LayerVerificationResult(false, LayerVerificationResult.Stage.INTEGRITY, listOf("manifest_content_hash_mismatch"))
         }
-        return LayerVerificationResult(true, LayerVerificationResult.Stage.SIGNATURE, features = allFeatures)
+        return LayerVerificationResult(
+            true,
+            LayerVerificationResult.Stage.SIGNATURE,
+            features = allFeatures ?: emptyList(),
+        )
     }
 
     private fun validateManifest(manifest: JSONObject): List<String> {

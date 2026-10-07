@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import {
+  DEFAULT_TDX_CITY_CODES,
   DEFAULT_TDX_NATIONWIDE_ENDPOINTS,
   TdxCredentialError,
   TdxSourceError,
@@ -145,6 +146,7 @@ test('fetches multiple TDX city endpoints for Taiwan scope and retains endpoint 
     clientSecret: 'client-secret-for-test',
     endpoints,
     scope: 'taiwan',
+    endpointDelayMs: 0,
     fetchImpl,
     retrievedAt: RETRIEVED_AT,
   });
@@ -159,6 +161,40 @@ test('fetches multiple TDX city endpoints for Taiwan scope and retains endpoint 
   assert.doesNotMatch(JSON.stringify(snapshot), /access-token-for-test/u);
 });
 
+test('uses only the currently accepted TDX RoadEvent city codes by default', () => {
+  assert.deepEqual(DEFAULT_TDX_CITY_CODES, [
+    'Taipei', 'NewTaipei', 'Taoyuan', 'Taichung', 'Tainan', 'Kaohsiung',
+    'Keelung', 'MiaoliCounty', 'ChiayiCounty', 'PingtungCounty', 'YilanCounty', 'KinmenCounty',
+  ]);
+});
+
+test('paces sequential TDX endpoint requests', async () => {
+  const endpoints = [
+    'https://tdx.test/City/Taipei?$format=JSON',
+    'https://tdx.test/City/Kaohsiung?$format=JSON',
+  ];
+  const delays = [];
+  const calls = [];
+  const snapshot = await fetchTdxRoadEvents({
+    clientId: 'client-id-for-test',
+    clientSecret: 'client-secret-for-test',
+    endpoints,
+    scope: 'taiwan',
+    endpointDelayMs: 1250,
+    sleepImpl: async (milliseconds) => delays.push(milliseconds),
+    fetchImpl: async (url) => {
+      calls.push(url);
+      if (url.includes('/auth/realms/TDXConnect/')) return response({ payload: { access_token: 'access-token-for-test' } });
+      return response({ payload: { UpdateTime: UPDATE_TIME, Events: [] } });
+    },
+    retrievedAt: RETRIEVED_AT,
+  });
+
+  assert.equal(snapshot.payload.sources.length, 2);
+  assert.deepEqual(calls.slice(1), endpoints);
+  assert.deepEqual(delays, [1250]);
+});
+
 test('keeps successful Taiwan endpoints when one TDX city endpoint is unavailable', async () => {
   const endpoints = [
     'https://tdx.test/City/Taipei?$format=JSON',
@@ -169,6 +205,7 @@ test('keeps successful Taiwan endpoints when one TDX city endpoint is unavailabl
     clientSecret: 'client-secret-for-test',
     endpoints,
     scope: 'taiwan',
+    endpointDelayMs: 0,
     fetchImpl: async (url) => {
       if (url.includes('/auth/realms/TDXConnect/')) return response({ payload: { access_token: 'access-token-for-test' } });
       if (url.includes('HualienCounty')) return {

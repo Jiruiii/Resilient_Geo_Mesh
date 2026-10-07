@@ -82,3 +82,36 @@ test('builds and verifies a separate static layer bundle', () => {
   assert.equal(bundle.manifest.total_feature_count, 2);
   assert.equal(verifyFeatureBundle(bundle, publicKey, { trustedKeyIds: [KEY_ID], now: NOW }).valid, true);
 });
+
+test('allows geometry-less medical directory records without weakening point layers', () => {
+  const directoryFeature = feature({
+    namespace: 'official.medical',
+    dataset_id: 'resilientgeo-taiwan-medical-directory',
+    layer_id: 'taiwan-medical-directory',
+    feature_id: 'medical-directory:h002',
+    feature_type: 'MEDICAL_DIRECTORY_ENTRY',
+    geometry: null,
+    properties: {
+      name: '待定位診所', address: '臺北市大安區仁愛路1號',
+      geometry_status: 'unresolved', point_feature_id: null,
+    },
+  });
+  const signed = signFeature(directoryFeature, privateKey);
+  assert.equal(verifyFeature(signed, publicKey, { trustedKeyIds: [KEY_ID], now: NOW }).valid, true);
+  assert.throws(() => signFeature(feature({ geometry: null }), privateKey), /geometry/u);
+
+  const bundle = buildFeatureBundle([signed], {
+    datasetId: directoryFeature.dataset_id,
+    layerId: directoryFeature.layer_id,
+    namespace: directoryFeature.namespace,
+    datasetVersion: 1,
+    source: 'mohw-medical-master',
+    sourceVersion: 'snapshot-2026-09',
+    createdAt: '2026-09-04T00:00:00Z',
+    expiresAt: '2026-10-04T00:00:00Z',
+    signingKeyId: KEY_ID,
+    privateKey,
+  });
+  assert.deepEqual(bundle.manifest.bbox, [118, 21.8, 122.2, 26.5]);
+  assert.equal(verifyFeatureBundle(bundle, publicKey, { trustedKeyIds: [KEY_ID], now: NOW }).valid, true);
+});

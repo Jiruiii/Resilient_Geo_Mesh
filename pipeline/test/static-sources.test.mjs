@@ -106,7 +106,7 @@ test('normalizes OSM roads and POIs to Neihu static features', () => {
   assert.equal(features[1].properties.source_record.id, 1001);
 });
 
-test('parses shelter CSV, keeps static properties, and emits a separate status event', async () => {
+test('parses shelter CSV and keeps static location and planned capacity only', async () => {
   const csv = [
     '序號,縣市及鄉鎮市區,村里,避難收容處所地址,經度,緯度,避難收容處所名稱,預計收容人數,適用災害類別,開設狀態',
     'S001,臺北市內湖區,港墘里,內湖路一段1號,121.58,25.08,內湖國小,300,地震;水災,FULL',
@@ -116,19 +116,17 @@ test('parses shelter CSV, keeps static properties, and emits a separate status e
     fetchImpl: async () => response({ body: csv, headers: { 'Content-Type': 'text/csv', ETag: '"shelter-1"' } }),
     retrievedAt: RETRIEVED_AT,
   });
-  const { features, statusEvents } = normalizeShelters(raw, { boundary: BOUNDARY, expiresAt: EXPIRES_AT });
+  const normalized = normalizeShelters(raw, { boundary: BOUNDARY, expiresAt: EXPIRES_AT });
+  const { features } = normalized;
   assert.equal(raw.payload.records.length, 2);
   assert.equal(features.length, 1);
   assert.equal(features[0].feature_id, 'shelter:s001');
   assert.equal(features[0].properties.capacity, 300);
   assert.equal(features[0].properties.status, undefined);
-  assert.equal(statusEvents.length, 1);
-  assert.equal(statusEvents[0].event_type, 'SHELTER_STATUS');
-  assert.equal(statusEvents[0].attributes.status, 'FULL');
-  assert.equal(statusEvents[0].attributes.area_id, 'neihu');
+  assert.equal('statusEvents' in normalized, false);
 });
 
-test('does not invent a shelter status event when the point source has no status field', () => {
+test('shelter normalization has no dynamic status output', () => {
   const raw = rawSnapshot('taipei-shelter', 'https://example.gov.tw/shelters.csv', {
     records: [{
       序號: 'S003',
@@ -142,7 +140,7 @@ test('does not invent a shelter status event when the point source has no status
   });
   const normalized = normalizeShelters(raw, { boundary: BOUNDARY, expiresAt: EXPIRES_AT });
   assert.equal(normalized.features.length, 1);
-  assert.deepEqual(normalized.statusEvents, []);
+  assert.equal('statusEvents' in normalized, false);
 });
 
 test('normalizes Neihu hospitals and excludes outside facilities', () => {

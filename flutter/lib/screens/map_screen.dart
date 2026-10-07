@@ -24,6 +24,7 @@ import '../data/route_event_snapshot.dart';
 import '../data/map_search.dart';
 import '../data/map_search_asset.dart';
 import '../data/ncdr_map_filter.dart';
+import '../data/offline_address_pack_store.dart';
 import '../data/offline_map_asset_store.dart';
 import '../widgets/feature_details_sheet.dart';
 import '../widgets/crowd_report_sheet.dart';
@@ -77,6 +78,7 @@ class MapScreen extends StatefulWidget {
 class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   late final MapBridge _bridge;
   late final LocationController _locationController;
+  final OfflineAddressPackStore _addressPackStore = OfflineAddressPackStore();
   final TextEditingController _searchController = TextEditingController();
   final TextEditingController _reportAddressController =
       TextEditingController();
@@ -85,6 +87,8 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   StaticFeatureCollection? _staticFeatures;
   MapAdministrativeIndex? _administrativeIndex;
   TaiwanSearchAsset? _searchAsset;
+  List<TaiwanSearchEntry> _addressSearchEntries = const <TaiwanSearchEntry>[];
+  AddressPackCatalog? _addressPackCatalog;
   MapSearchIndex? _searchIndex;
   OfflineSearchWorker? _searchWorker;
   List<MapSearchResult> _mapSearchResults = const [];
@@ -211,6 +215,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
 
   Future<void> _load() async {
     unawaited(_loadSearchAssetInBackground());
+    unawaited(_loadAddressPacks());
     final featureFuture =
         widget.staticFeatures == null
             ? _loadStaticFeatures()
@@ -249,12 +254,251 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   }
 
   Future<StaticFeatureCollection> _loadStaticFeatures() async {
-    final raw = await rootBundle.loadString(
-      'assets/data/taiwan/static-features.json',
+    return const StaticFeatureCollection(
+      schemaVersion: 'feature-v0',
+      datasetId: 'resilientgeo-taiwan',
+      snapshotAt: null,
+      features: <StaticFeature>[],
     );
-    return StaticFeatureCollection.fromJson(
-      Map<String, dynamic>.from(jsonDecode(raw) as Map),
+  }
+
+  Future<void> _loadAddressPacks() async {
+    List<TaiwanSearchEntry> installed = const <TaiwanSearchEntry>[];
+    try {
+      installed = await _addressPackStore.loadInstalledPacks();
+    } on Object {
+      // Keep the map available if an old local package cannot be read.
+    }
+    if (mounted && installed.isNotEmpty) {
+      setState(() {
+        _addressSearchEntries = installed;
+        _rebuildSearchIndex();
+      });
+    }
+    try {
+      final catalog = await _addressPackStore.loadCatalog();
+      if (!mounted) return;
+      setState(() => _addressPackCatalog = catalog);
+    } on Object {
+      // A verified installed county package remains searchable offline.
+    }
+  }
+
+  Future<void> _openAddressPackDialog() async {
+    var catalog = _addressPackCatalog;
+    try {
+      catalog ??= await _addressPackStore.loadCatalog();
+      _addressPackCatalog = catalog;
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('無法載入門牌索引目錄：$error')));
+      return;
+    }
+    if (!mounted) return;
+    final installed = Set<String>.from(_addressPackStore.installedCountyCodes);
+    final progressByCounty = <String, Map<String, dynamic>>{};
+    var allowMobileData = false;
+    String? downloadingCounty;
+    String? message;
+    Timer? progressTimer;
+
+    void pollProgress(String countyCode, StateSetter dialogSetState) {
+      progressTimer?.cancel();
+      progressTimer = Timer.periodic(const Duration(milliseconds: 600), (
+        _,
+      ) async {
+        try {
+          final progress = await _addressPackStore.progress(countyCode);
+          if (!context.mounted) return;
+          dialogSetState(() => progressByCounty[countyCode] = progress);
+        } on Object {
+          // Keep the latest progress visible if a transient status poll fails.
+        }
+      });
+    }
+
+    await showDialog<void>(
+      context: context,
+      builder:
+          (dialogContext) => StatefulBuilder(
+            builder:
+                (context, dialogSetState) => AlertDialog(
+                  title: const Text('門牌索引（按縣市下載）'),
+                  content: SizedBox(
+                    width: 520,
+                    height: 520,
+                    child: Column(
+                      children: <Widget>[
+                        if (!kIsWeb)
+                          SwitchListTile(
+                            contentPadding: EdgeInsets.zero,
+                            title: const Text('允許使用行動網路下載'),
+                            value: allowMobileData,
+                            onChanged:
+                                (value) => dialogSetState(
+                                  () => allowMobileData = value,
+                                ),
+                          ),
+                        if (message != null)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: Text(
+                              message!,
+                              style: TextStyle(
+                                color: Theme.of(context).colorScheme.error,
+                              ),
+                            ),
+                          ),
+                        Expanded(
+                          child: ListView.separated(
+                            itemCount: catalog!.counties.length,
+                            separatorBuilder:
+                                (_, _) => const Divider(height: 1),
+                            itemBuilder: (context, index) {
+                              final county = catalog!.counties[index];
+                              final progress =
+                                  progressByCounty[county.code] ??
+                                  const <String, dynamic>{};
+                              final state =
+                                  progress['state'] as String? ?? 'idle';
+                              final isInstalled = installed.contains(
+                                county.code,
+                              );
+                              final isDownloading =
+                                  downloadingCounty == county.code &&
+                                  const {
+                                    'checking',
+                                    'downloading',
+                                    'verifying',
+                                  }.contains(state);
+                              final details =
+                                  county.available
+                                      ? '${county.locatedCount ?? 0} 筆門牌位置${county.partial ? '・來源仍有未定位或排除資料' : ''}'
+                                      : '尚無門牌資料涵蓋';
+                              final total =
+                                  (progress['total'] as num?)?.toDouble() ?? 0;
+                              final loaded =
+                                  (progress['loaded'] as num?)?.toDouble() ?? 0;
+                              final trailing =
+                                  isInstalled
+                                      ? const Text('已下載')
+                                      : isDownloading
+                                      ? SizedBox(
+                                        width: 78,
+                                        child: Column(
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.center,
+                                          children: <Widget>[
+                                            LinearProgressIndicator(
+                                              value:
+                                                  total > 0
+                                                      ? (loaded / total)
+                                                          .clamp(0, 1)
+                                                          .toDouble()
+                                                      : null,
+                                            ),
+                                            const SizedBox(height: 4),
+                                            Text(
+                                              total > 0
+                                                  ? '${(loaded / total * 100).round()}%'
+                                                  : '準備中',
+                                            ),
+                                          ],
+                                        ),
+                                      )
+                                      : county.available
+                                      ? TextButton(
+                                        onPressed:
+                                            downloadingCounty == null
+                                                ? () async {
+                                                  dialogSetState(() {
+                                                    downloadingCounty =
+                                                        county.code;
+                                                    message = null;
+                                                  });
+                                                  pollProgress(
+                                                    county.code,
+                                                    dialogSetState,
+                                                  );
+                                                  try {
+                                                    final result =
+                                                        await _addressPackStore
+                                                            .downloadCounty(
+                                                              county,
+                                                              allowMobileData:
+                                                                  allowMobileData,
+                                                            );
+                                                    if (result.ready) {
+                                                      installed.add(
+                                                        county.code,
+                                                      );
+                                                      if (mounted) {
+                                                        setState(() {
+                                                          _addressPackStore
+                                                              .installedCountyCodes
+                                                              .add(county.code);
+                                                        });
+                                                      }
+                                                    } else {
+                                                      message =
+                                                          result.message ??
+                                                          '目前無法下載門牌索引';
+                                                    }
+                                                  } on Object catch (error) {
+                                                    message = '下載或驗證失敗：$error';
+                                                  } finally {
+                                                    progressTimer?.cancel();
+                                                    downloadingCounty = null;
+                                                    if (dialogContext.mounted) {
+                                                      final latestProgress =
+                                                          await _addressPackStore
+                                                              .progress(
+                                                                county.code,
+                                                              );
+                                                      dialogSetState(() {
+                                                        progressByCounty[county
+                                                                .code] =
+                                                            latestProgress;
+                                                      });
+                                                    }
+                                                  }
+                                                }
+                                                : null,
+                                        child: const Text('下載'),
+                                      )
+                                      : const Icon(Icons.block, size: 20);
+                              return ListTile(
+                                dense: true,
+                                title: Text(county.name),
+                                subtitle: Text(details),
+                                trailing: SizedBox(
+                                  width: 88,
+                                  child: Center(child: trailing),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          catalog.attribution,
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ],
+                    ),
+                  ),
+                  actions: <Widget>[
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: const Text('關閉'),
+                    ),
+                  ],
+                ),
+          ),
     );
+    progressTimer?.cancel();
   }
 
   Future<TaiwanSearchAsset> _loadSearchAsset() async {
@@ -320,6 +564,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     _searchIndex = MapSearchIndex(
       staticFeatures.features,
       roadEntries: _searchAsset?.entries ?? const <TaiwanSearchEntry>[],
+      addressEntries: _addressSearchEntries,
       administrativeAreas:
           _administrativeIndex?.searchableAreas ??
           const <MapAdministrativeArea>[],
@@ -327,6 +572,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     _searchWorker?.update(
       staticFeatures.features,
       _administrativeIndex?.searchableAreas ?? const [],
+      _addressSearchEntries,
     );
     if (_searchText.isNotEmpty) unawaited(_refreshSearchResults(_searchText));
   }
@@ -1070,6 +1316,11 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     _reportSearchGeneration++;
     final draft = _reportDraft;
     if (draft == null || _reportSubmitting) return;
+    final coordinate = result.coordinate;
+    if (coordinate == null) {
+      _showMessage('這筆院所資料尚未定位，請改用已定位地址或在地圖上選點');
+      return;
+    }
     _reportAddressSearchDebounce?.cancel();
     final query = _reportAddressController.text.trim();
     final hint = _locationHintFor(result, query);
@@ -1079,11 +1330,11 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     );
     setState(() {
       _reportDraft = draft.copyWith(
-        location: result.coordinate,
+        location: coordinate,
         locationSource: CrowdReportLocationSource.mapPick,
         locationHint: hint,
       );
-      _focusPoint = result.coordinate;
+      _focusPoint = coordinate;
       _focusRequestId += 1;
       _searchSelection = result;
       _reportSheetVisible = false;
@@ -1214,10 +1465,39 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     final generation =
         report ? ++_reportSearchGeneration : ++_mapSearchGeneration;
     try {
-      final results =
+      final baseResults =
           _searchWorker == null
               ? _searchIndex?.query(text) ?? const <MapSearchResult>[]
               : (await _searchWorker!.search(text)).results;
+      var addressEntries = const <TaiwanSearchEntry>[];
+      if (!report) {
+        try {
+          addressEntries = await _addressPackStore.search(text);
+        } on Object {
+          // Address packs are an optional local index; keep the bundled search usable.
+        }
+      }
+      final addressResults = addressEntries.map(
+        (entry) => MapSearchResult(
+          feature: null,
+          title: entry.name,
+          typeLabel: '門牌位置',
+          coordinate: entry.coordinate,
+          region: entry.region,
+          address: entry.address,
+          resultId: entry.id,
+          searchKind: 'address',
+        ),
+      );
+      final prioritized = <MapSearchResult>[...addressResults, ...baseResults];
+      final resultIds = <String>{};
+      final results = prioritized
+          .where((result) {
+            final id = result.id;
+            return id == null || resultIds.add(id);
+          })
+          .take(MapSearchIndex.maxResults)
+          .toList(growable: false);
       if (!mounted ||
           generation !=
               (report ? _reportSearchGeneration : _mapSearchGeneration)) {
@@ -1256,6 +1536,22 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     if (staticFeatures == null) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
+    final visibleEvents = _visibleEvents;
+    final visibleFacilityCount =
+        staticFeatures.features
+            .where(
+              (feature) =>
+                  feature.geometry is PointGeometry &&
+                  ((_showShelters && feature.kind == 'shelter') ||
+                      (_showMedical && feature.kind == 'medical')),
+            )
+            .length;
+    final visibleEventCount =
+        _showEvents
+            ? visibleEvents
+                .where((event) => meshEventFocusPoint(event) != null)
+                .length
+            : 0;
     final searchResults = _mapSearchResults;
     final reportAddressQuery =
         _reportSheetVisible && _reportStep == CrowdReportSheetStep.edit
@@ -1272,7 +1568,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
             runtimeState: _runtimeState,
             staticFeatures: staticFeatures.features,
             administrativeIndex: _administrativeIndex,
-            visibleEvents: _visibleEvents,
+            visibleEvents: visibleEvents,
             showShelters: _showShelters,
             showMedical: _showMedical,
             showEvents: _showEvents,
@@ -1302,6 +1598,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                       results: searchResults,
                       onChanged: _onMapSearchChanged,
                       onSelected: _selectSearchResult,
+                      onAddressPacksPressed: _openAddressPackDialog,
                     ),
                   ),
                   const SizedBox(height: 8),
@@ -1313,6 +1610,8 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                           constraints: const BoxConstraints(maxWidth: 520),
                           child: _StatusOverlay(
                             snapshotAt: staticFeatures.snapshotAt,
+                            visibleFacilityCount: visibleFacilityCount,
+                            visibleEventCount: visibleEventCount,
                             hasCurrentLocation:
                                 _runtimeState.currentLocation != null,
                             reportDeliveryEventId: _reportDeliveryEventId,
@@ -1446,6 +1745,8 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
 class _StatusOverlay extends StatelessWidget {
   const _StatusOverlay({
     required this.snapshotAt,
+    required this.visibleFacilityCount,
+    required this.visibleEventCount,
     required this.hasCurrentLocation,
     required this.reportDeliveryEventId,
     this.staticFeaturesPending = false,
@@ -1453,6 +1754,8 @@ class _StatusOverlay extends StatelessWidget {
   });
 
   final String? snapshotAt;
+  final int visibleFacilityCount;
+  final int visibleEventCount;
   final bool hasCurrentLocation;
   final String? reportDeliveryEventId;
   final bool staticFeaturesPending;
@@ -1478,21 +1781,26 @@ class _StatusOverlay extends StatelessWidget {
               alignment: Alignment.centerLeft,
               fit: BoxFit.scaleDown,
               child: Text(
-                '更新時間：${formatUpdateTime(snapshotAt)}',
+                staticFeaturesPending && visibleFacilityCount == 0
+                    ? '全臺院所／避難所：載入中'
+                    : '全臺院所／避難所：$visibleFacilityCount',
                 maxLines: 1,
                 softWrap: false,
               ),
             ),
           ),
+          Text('警報標記：$visibleEventCount'),
+          if (snapshotAt != null && snapshotAt!.isNotEmpty)
+            Text('靜態資料更新：${formatUpdateTime(snapshotAt)}'),
           Text('目前位置：${hasCurrentLocation ? '已取得' : '尚未取得'}'),
           if (staticFeaturesPending)
             const Text(
-              '避難所資料驗證中…',
+              '院所與避難所資料驗證中…',
               key: ValueKey<String>('static-features-pending'),
             ),
           if (staticFeaturesFailed)
             const Text(
-              '避難所資料驗證失敗，未顯示',
+              '避難所與醫療資料尚未驗證，未顯示未核實點位',
               key: ValueKey<String>('static-features-failed'),
             ),
           if (reportDeliveryEventId != null) ...<Widget>[
@@ -1577,6 +1885,7 @@ class _SearchOverlay extends StatelessWidget {
     required this.results,
     required this.onChanged,
     required this.onSelected,
+    required this.onAddressPacksPressed,
   });
 
   final String text;
@@ -1584,6 +1893,7 @@ class _SearchOverlay extends StatelessWidget {
   final List<MapSearchResult> results;
   final ValueChanged<String> onChanged;
   final ValueChanged<MapSearchResult> onSelected;
+  final VoidCallback onAddressPacksPressed;
 
   @override
   Widget build(BuildContext context) => LayoutBuilder(
@@ -1609,7 +1919,7 @@ class _SearchOverlay extends StatelessWidget {
                     controller: controller,
                     onChanged: onChanged,
                     textInputAction: TextInputAction.search,
-                    decoration: const InputDecoration(
+                    decoration: InputDecoration(
                       border: InputBorder.none,
                       contentPadding: EdgeInsets.symmetric(
                         horizontal: 14,
@@ -1617,6 +1927,11 @@ class _SearchOverlay extends StatelessWidget {
                       ),
                       hintText: '搜尋醫院、避難所或道路',
                       prefixIcon: Icon(Icons.search),
+                      suffixIcon: IconButton(
+                        tooltip: '下載縣市門牌索引',
+                        onPressed: onAddressPacksPressed,
+                        icon: const Icon(Icons.download_outlined),
+                      ),
                     ),
                   ),
                 ),
@@ -1642,7 +1957,10 @@ class _SearchOverlay extends StatelessWidget {
                           dense: true,
                           title: Text(result.displayTitle),
                           subtitle: Text(subtitle),
-                          onTap: () => onSelected(result),
+                          onTap:
+                              result.coordinate == null
+                                  ? null
+                                  : () => onSelected(result),
                         );
                       },
                     ),

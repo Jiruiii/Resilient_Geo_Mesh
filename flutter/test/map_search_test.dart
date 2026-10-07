@@ -77,19 +77,19 @@ void main() {
         hospital,
       ]).query('n');
       expect(hospitalResult.single.typeLabel, '醫療院所');
-      expect(hospitalResult.single.coordinate.longitude, 121.59);
-      expect(hospitalResult.single.coordinate.latitude, 25.08);
+      expect(hospitalResult.single.coordinate!.longitude, 121.59);
+      expect(hospitalResult.single.coordinate!.latitude, 25.08);
 
       final shelterResult = MapSearchIndex(<StaticFeature>[
         shelter,
       ]).query('潭美');
       expect(shelterResult.single.typeLabel, '避難所');
-      expect(shelterResult.single.coordinate.longitude, 121.58);
+      expect(shelterResult.single.coordinate!.longitude, 121.58);
 
       final roadResult = MapSearchIndex(<StaticFeature>[road]).query('primary');
       expect(roadResult.single.typeLabel, '道路');
-      expect(roadResult.single.coordinate.longitude, 121.59);
-      expect(roadResult.single.coordinate.latitude, 25.08);
+      expect(roadResult.single.coordinate!.longitude, 121.59);
+      expect(roadResult.single.coordinate!.latitude, 25.08);
     },
   );
 
@@ -122,6 +122,27 @@ void main() {
     ]);
   });
 
+  test('address search uses county doorplate entries only for address-like queries', () {
+    final address = TaiwanSearchEntry(
+      id: 'address:63000:abc',
+      name: '臺北市松山區三民里三民路９５巷１號',
+      aliases: const <String>['臺北市松山區三民路95巷1號'],
+      kind: 'address',
+      region: '臺北市松山區',
+      coordinate: const GeoPoint(longitude: 121.5638, latitude: 25.0594),
+    );
+    final index = MapSearchIndex(
+      const <StaticFeature>[],
+      addressEntries: <TaiwanSearchEntry>[address],
+    );
+
+    final result = index.query('台北市 松山區 三民路 95巷1號').single;
+    expect(result.searchKind, 'address');
+    expect(result.address, '臺北市松山區三民里三民路９５巷１號');
+    expect(result.coordinate!.longitude, 121.5638);
+    expect(index.query('三民路'), isEmpty);
+  });
+
   test('ignores whitespace-only queries and features without coordinates', () {
     final missingGeometry = StaticFeature.fromJson(<String, dynamic>{
       'id': 'medical:missing',
@@ -133,6 +154,68 @@ void main() {
     expect(index.query('   '), isEmpty);
     expect(index.query('無座標'), isEmpty);
   });
+
+  test(
+    'searches unresolved medical directory rows without returning a coordinate',
+    () {
+      final unresolved = StaticFeature.fromJson(<String, dynamic>{
+        'id': 'medical-directory:h002',
+        'kind': 'medical-directory',
+        'name': '待定位診所',
+        'address': '花蓮縣花蓮市民生路1號',
+        'geometry_status': 'unresolved',
+        'point_feature_id': null,
+        'geometry': null,
+      });
+
+      final result =
+          MapSearchIndex(<StaticFeature>[unresolved]).query('花蓮市民生路').single;
+
+      expect(result.feature, same(unresolved));
+      expect(result.coordinate, isNull);
+      expect(result.typeLabel, '醫療院所（尚未定位）');
+    },
+  );
+
+  test(
+    'links located medical directory search to its verified map point once',
+    () {
+      final point = StaticFeature.fromJson(<String, dynamic>{
+        'id': 'medical:h001',
+        'kind': 'medical',
+        'name': '臺北醫院',
+        'address': '臺北市大安區仁愛路1號',
+        'geometry': <String, dynamic>{
+          'type': 'Point',
+          'coordinates': <double>[121.52, 25.04],
+        },
+      });
+      final directory = StaticFeature.fromJson(<String, dynamic>{
+        'id': 'medical-directory:h001',
+        'kind': 'medical-directory',
+        'name': '臺北醫院',
+        'address': '臺北市大安區仁愛路1號',
+        'geometry_status': 'located',
+        'point_feature_id': 'medical:h001',
+        'geometry': <String, dynamic>{
+          'type': 'Point',
+          'coordinates': <double>[121.52, 25.04],
+        },
+      });
+
+      final results = MapSearchIndex(<StaticFeature>[
+        point,
+        directory,
+      ]).query('臺北醫院');
+
+      expect(results, hasLength(1));
+      expect(results.single.feature, same(directory));
+      expect(
+        results.single.coordinate,
+        const GeoPoint(longitude: 121.52, latitude: 25.04),
+      );
+    },
+  );
 
   test('parses latitude then longitude within Taiwan', () {
     expect(

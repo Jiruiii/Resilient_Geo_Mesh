@@ -66,6 +66,34 @@ void main() {
     expect(north.dy, lessThan(400));
   });
 
+  test('translates cached marker positions with a moved camera', () {
+    const nextCamera = GeoPoint(longitude: 121.005, latitude: 23.502);
+    const marker = GeoPoint(longitude: 121.01, latitude: 23.51);
+    const zoom = 7.3;
+    final original = MapCameraProjection.projectPoint(
+      point: marker,
+      cameraTarget: cameraTarget,
+      zoom: zoom,
+      viewportSize: viewport,
+    );
+    final moved = MapCameraProjection.projectPoint(
+      point: marker,
+      cameraTarget: nextCamera,
+      zoom: zoom,
+      viewportSize: viewport,
+    );
+    final translated =
+        original +
+        MapCameraProjection.panTranslation(
+          fromCameraTarget: cameraTarget,
+          toCameraTarget: nextCamera,
+          zoom: zoom,
+        );
+
+    expect(translated.dx, closeTo(moved.dx, 0.001));
+    expect(translated.dy, closeTo(moved.dy, 0.001));
+  });
+
   test('wraps longitude across the antimeridian to the nearest world copy', () {
     final screen = MapCameraProjection.projectPoint(
       point: const GeoPoint(longitude: -179.9, latitude: 0),

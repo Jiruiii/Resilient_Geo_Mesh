@@ -35,6 +35,9 @@ class GovernmentFeedSync(
         val datasets = feed.getJSONArray("datasets")
         for (i in 0 until datasets.length()) {
             val dataset = datasets.getJSONObject(i)
+            // Official alerts in the App come from NCDR only. Do not fetch
+            // or ingest other signed government datasets.
+            if (dataset.optString("source_id") != "ncdr") continue
             val manifest = dataset.getJSONObject("manifest")
             val entries = manifest.getJSONArray("chunks")
             val paths = dataset.getJSONArray("chunk_paths")
@@ -66,7 +69,7 @@ class GovernmentFeedSync(
         fun validateBase(url: String, allowLocal: Boolean = false): URI {
             val uri = URI(url.trim().let { if (it.endsWith('/')) it else "$it/" })
             require(uri.host != null && uri.rawUserInfo == null && uri.rawQuery == null && uri.rawFragment == null) { "Invalid feed address" }
-            require(uri.scheme == "https" || allowLocal && uri.scheme == "http" && uri.host in setOf("127.0.0.1", "localhost")) {
+            require(uri.scheme == "https" || allowLocal && uri.scheme == "http" && uri.host in setOf("127.0.0.1", "localhost", "10.0.2.2")) {
                 "Government feed requires HTTPS"
             }
             return uri

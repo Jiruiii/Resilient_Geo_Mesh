@@ -73,4 +73,5 @@ void main() {
     await tester.pumpAndSettle();
     expect(loads[MapLibreMapConfig.darkStyleAsset], 1);
   });
+
 }

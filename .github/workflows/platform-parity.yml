@@ -1,0 +1,129 @@
+name: Cross-platform parity
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: platform-parity-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  node-server-tests:
+    name: node-server-tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: npm test
+      - run: npm run test:server
+
+  flutter-web:
+    name: flutter-web
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.29.2
+          channel: stable
+          cache: true
+          pub-cache: true
+
+      - name: Resolve Flutter dependencies
+        working-directory: flutter
+        run: flutter pub get
+
+      - name: Analyze Flutter
+        working-directory: flutter
+        run: flutter analyze --no-pub
+
+      - name: Test Flutter
+        working-directory: flutter
+        run: flutter test --no-pub --timeout 2m --concurrency 2
+
+      - name: Build offline Web release
+        working-directory: flutter
+        run: flutter build web --release --no-web-resources-cdn --no-pub
+
+  android:
+    name: android
+    # Run on the same macOS host family used for the local API 36 emulator check.
+    runs-on: macos-15-intel
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: gradle
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.29.2
+          channel: stable
+          cache: true
+          pub-cache: true
+
+      - name: Resolve Flutter module dependencies
+        working-directory: flutter
+        run: flutter pub get
+
+      - name: Configure Android SDK and Flutter module paths
+        shell: bash
+        run: |
+          FLUTTER_ROOT="$(dirname "$(dirname "$(command -v flutter)")")"
+          printf 'sdk.dir=%s\nflutter.sdk=%s\n' "$ANDROID_HOME" "$FLUTTER_ROOT" > android/local.properties
+
+      - name: Test and prebuild Android instrumentation APKs
+        working-directory: android
+        run: ./gradlew --no-daemon :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest
+
+      - name: Run Android instrumentation on API 36 emulator
+        uses: reactivecircus/android-emulator-runner@v2.38.0
+        with:
+          api-level: 36
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          script: cd android && ./gradlew --no-daemon :app:connectedDebugAndroidTest
+
+  platform-parity:
+    name: platform-parity
+    if: always()
+    needs:
+      - node-server-tests
+      - flutter-web
+      - android
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require all platform checks
+        env:
+          NODE_SERVER_RESULT: ${{ needs.node-server-tests.result }}
+          FLUTTER_WEB_RESULT: ${{ needs.flutter-web.result }}
+          ANDROID_RESULT: ${{ needs.android.result }}
+        shell: bash
+        run: |
+          printf 'Node/Server: %s\nFlutter Web: %s\nAndroid: %s\n' \
+            "$NODE_SERVER_RESULT" "$FLUTTER_WEB_RESULT" "$ANDROID_RESULT"
+          [[ "$NODE_SERVER_RESULT" == success ]]
+          [[ "$FLUTTER_WEB_RESULT" == success ]]
+          [[ "$ANDROID_RESULT" == success ]]

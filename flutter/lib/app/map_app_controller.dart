@@ -10,6 +10,9 @@ import '../data/attestation_index.dart';
 import '../data/map_bridge.dart';
 import '../data/map_models.dart';
 import '../data/ncdr_demo_events.dart';
+import '../data/ncdr_map_filter.dart';
+import '../data/offline_government_feed.dart';
+import '../data/offline_map_web_static_layers.dart';
 
 /// App-level presentation coordinator.
 ///
@@ -17,25 +20,40 @@ import '../data/ncdr_demo_events.dart';
 /// reads the verified event stream once and fans it out to the map and the
 /// notifications tab.
 typedef DemoEventLoader = Future<List<MeshEvent>> Function();
+typedef WebStaticLayerLoader = Future<String> Function();
+typedef WebGovernmentFeedLoader = Future<WebGovernmentFeedSnapshot> Function();
 
 class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
-  MapAppController({MapBridge? bridge, DemoEventLoader? demoEventLoader})
-    : bridge = bridge ?? MapBridge(),
-      _demoEventLoader = demoEventLoader ?? _loadBundledNcdrDemoEvents {
+  MapAppController({
+    MapBridge? bridge,
+    DemoEventLoader? demoEventLoader,
+    bool? isWeb,
+    WebStaticLayerLoader? webStaticLayerLoader,
+    WebGovernmentFeedLoader? webGovernmentFeedLoader,
+  }) : bridge = bridge ?? MapBridge(),
+       _demoEventLoader = demoEventLoader ?? _loadBundledNcdrDemoEvents,
+       _isWeb = isWeb ?? kIsWeb,
+       _webStaticLayerLoader = webStaticLayerLoader ?? loadWebNLSCStaticLayers,
+       _webGovernmentFeedLoader =
+           webGovernmentFeedLoader ?? loadWebGovernmentFeed {
     WidgetsBinding.instance.addObserver(this);
   }
 
   static const _themePreference = 'map.theme_mode';
   static const _animationPreference = 'map.animation_enabled';
   static const _readEventKeysPreference = 'map.read_event_keys';
-
   final MapBridge bridge;
   final DemoEventLoader _demoEventLoader;
+  final bool _isWeb;
+  final WebStaticLayerLoader _webStaticLayerLoader;
+  final WebGovernmentFeedLoader _webGovernmentFeedLoader;
   final StreamController<List<MeshEvent>> _eventUpdates =
       StreamController<List<MeshEvent>>.broadcast();
 
   StreamSubscription<List<MeshEvent>>? _eventSubscription;
   Timer? _expiryTimer;
+  Timer? _webFeedRefreshTimer;
+  bool _webFeedRefreshing = false;
   Object? eventUpdateError;
   bool retryingEvents = false;
   final Set<String> _readEventKeys = <String>{};
@@ -64,7 +82,7 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
 
   List<MeshEvent> get events {
     final byId = <String, MeshEvent>{};
-    for (final event in persistedEvents) {
+    for (final event in _withoutExpiredEvents(persistedEvents)) {
       byId[meshEventIdentity(event)] = event;
     }
     return byId.values.toList(growable: false);
@@ -84,7 +102,7 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
       try {
         final loadedState = await bridge.getInitialState();
         if (_disposed) return;
-        final verifiedEvents = _withoutDemoEvents(loadedState.events);
+        final verifiedEvents = _withoutUnsupportedEvents(loadedState.events);
         initialState = MapInitialState(
           events: verifiedEvents,
           emergencyModeEnabled: loadedState.emergencyModeEnabled,
@@ -117,29 +135,39 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
           unawaited(_loadVerifiedStaticFeatures());
         }
       } on MissingPluginException {
-        // Only hosts without the Android bridge may use preview assets.
-        // Verification, storage and decoding failures must reach the error UI.
-        if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) rethrow;
+        // The Web build uses the signed Server feed. Other hosts without an
+        // Android bridge may still use the development-only event preview.
+        // Static points always require a signed Server layer.
+        if (!_isWeb && defaultTargetPlatform == TargetPlatform.android) rethrow;
         final rawStatic = await _loadPreferredStaticAsset();
         if (_disposed) return;
         staticFeatures = StaticFeatureCollection.fromJson(
           Map<String, dynamic>.from(jsonDecode(rawStatic) as Map),
         );
-        try {
-          final demoEvents = await _demoEventLoader();
-          if (_disposed) return;
-          persistedEvents = List<MeshEvent>.unmodifiable(demoEvents);
-          initialState = MapInitialState(
-            events: persistedEvents,
-            emergencyModeEnabled: false,
-          );
-        } on Object catch (error) {
-          demoEventLoadError = error;
+        if (_isWeb) {
           persistedEvents = const <MeshEvent>[];
-          initialState = const MapInitialState(
-            events: <MeshEvent>[],
+          initialState = MapInitialState(
+            events: const <MeshEvent>[],
             emergencyModeEnabled: false,
           );
+          unawaited(_refreshWebGovernmentFeed());
+        } else {
+          try {
+            final demoEvents = await _demoEventLoader();
+            if (_disposed) return;
+            persistedEvents = List<MeshEvent>.unmodifiable(demoEvents);
+            initialState = MapInitialState(
+              events: persistedEvents,
+              emergencyModeEnabled: false,
+            );
+          } on Object catch (error) {
+            demoEventLoadError = error;
+            persistedEvents = const <MeshEvent>[];
+            initialState = const MapInitialState(
+              events: <MeshEvent>[],
+              emergencyModeEnabled: false,
+            );
+          }
         }
       }
 
@@ -178,7 +206,30 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<String> _loadPreferredStaticAsset() async {
-    return rootBundle.loadString('assets/data/taiwan/static-features.json');
+    if (_isWeb) {
+      try {
+        final downloaded = await _webStaticLayerLoader();
+        if (downloaded.isNotEmpty) return downloaded;
+        staticFeatureLoadError = StateError('瀏覽器不支援離線靜態資料儲存，尚未顯示避難所與醫療院所');
+      } on Object catch (error) {
+        staticFeatureLoadError = error;
+      }
+      // The bundled preview predates source-coordinate verification. Never
+      // show it as a substitute for the signed shelter and medical layers.
+      return jsonEncode(<String, Object?>{
+        'schema_version': 'feature-v0',
+        'dataset_id': 'resilientgeo-taiwan',
+        'snapshot_at': null,
+        'features': <Object>[],
+      });
+    }
+    staticFeatureLoadError = StateError('尚未取得已驗簽的避難所與醫療院所資料');
+    return jsonEncode(<String, Object?>{
+      'schema_version': 'feature-v0',
+      'dataset_id': 'resilientgeo-taiwan',
+      'snapshot_at': null,
+      'features': <Object>[],
+    });
   }
 
   Future<void> _loadPreferences() async {
@@ -196,7 +247,7 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
     _eventSubscription = bridge.events.listen(
       (events) {
         if (_disposed) return;
-        final verifiedEvents = _withoutDemoEvents(events);
+        final verifiedEvents = _withoutUnsupportedEvents(events);
         persistedEvents = verifiedEvents;
         eventUpdateError = null;
         _eventUpdates.add(List<MeshEvent>.unmodifiable(verifiedEvents));
@@ -212,7 +263,12 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> retryEventUpdates() async {
-    if (_disposed || retryingEvents || !nativeBridgeAvailable) return;
+    if (_disposed || retryingEvents) return;
+    if (_isWeb && !nativeBridgeAvailable) {
+      await _refreshWebGovernmentFeed(manual: true);
+      return;
+    }
+    if (!nativeBridgeAvailable) return;
     retryingEvents = true;
     _notifyIfAlive();
     try {
@@ -220,7 +276,7 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
       _eventSubscription = null;
       final state = await bridge.getInitialState();
       if (_disposed) return;
-      persistedEvents = _withoutDemoEvents(state.events);
+      persistedEvents = _withoutUnsupportedEvents(state.events);
       eventUpdateError = null;
       _eventUpdates.add(List<MeshEvent>.unmodifiable(persistedEvents));
       _listenToNativeEvents();
@@ -231,6 +287,48 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
       retryingEvents = false;
       _notifyIfAlive();
     }
+  }
+
+  Future<void> _refreshWebGovernmentFeed({bool manual = false}) async {
+    if (_disposed || !_isWeb || nativeBridgeAvailable || _webFeedRefreshing) {
+      return;
+    }
+    _webFeedRefreshing = true;
+    if (manual) {
+      retryingEvents = true;
+      _notifyIfAlive();
+    }
+    try {
+      final snapshot = await _webGovernmentFeedLoader();
+      if (_disposed) return;
+      persistedEvents = List<MeshEvent>.unmodifiable(
+        _withoutExpiredEvents(_withoutUnsupportedEvents(snapshot.events)),
+      );
+      initialState = MapInitialState(
+        events: persistedEvents,
+        emergencyModeEnabled: false,
+      );
+      eventUpdateError =
+          snapshot.warning == null ? null : StateError(snapshot.warning!);
+      _eventUpdates.add(persistedEvents);
+      _scheduleExpiryRefresh();
+    } on Object catch (error) {
+      if (_disposed) return;
+      eventUpdateError = error;
+    } finally {
+      _webFeedRefreshing = false;
+      if (manual) retryingEvents = false;
+      _scheduleWebFeedRefresh();
+      _notifyIfAlive();
+    }
+  }
+
+  void _scheduleWebFeedRefresh() {
+    _webFeedRefreshTimer?.cancel();
+    if (_disposed || !_isWeb || nativeBridgeAvailable) return;
+    _webFeedRefreshTimer = Timer(const Duration(minutes: 5), () {
+      if (!_disposed) unawaited(_refreshWebGovernmentFeed());
+    });
   }
 
   void _scheduleExpiryRefresh() {
@@ -248,19 +346,38 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
     if (next == null || _disposed) return;
     _expiryTimer = Timer(next.difference(now), () {
       if (_disposed) return;
+      persistedEvents = _withoutExpiredEvents(persistedEvents);
       _eventUpdates.add(List<MeshEvent>.unmodifiable(persistedEvents));
       _notifyIfAlive();
       _scheduleExpiryRefresh();
     });
   }
 
+  List<MeshEvent> _withoutExpiredEvents(
+    Iterable<MeshEvent> source, {
+    DateTime? at,
+  }) {
+    final now = (at ?? DateTime.now()).toUtc();
+    return source
+        .where((event) {
+          final expires = DateTime.tryParse(event.expiresAt ?? '')?.toUtc();
+          return expires == null || expires.isAfter(now);
+        })
+        .toList(growable: false);
+  }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state != AppLifecycleState.resumed || _disposed) return;
+    persistedEvents = _withoutExpiredEvents(persistedEvents);
     _eventUpdates.add(List<MeshEvent>.unmodifiable(persistedEvents));
     _scheduleExpiryRefresh();
     _notifyIfAlive();
-    if (eventUpdateError != null) unawaited(retryEventUpdates());
+    if (_isWeb && !nativeBridgeAvailable) {
+      unawaited(_refreshWebGovernmentFeed());
+    } else if (eventUpdateError != null) {
+      unawaited(retryEventUpdates());
+    }
   }
 
   Future<void> markEventRead(MeshEvent event) async {
@@ -291,6 +408,7 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
     _disposed = true;
     WidgetsBinding.instance.removeObserver(this);
     _expiryTimer?.cancel();
+    _webFeedRefreshTimer?.cancel();
     _eventSubscription?.cancel();
     _eventUpdates.close();
     super.dispose();
@@ -301,8 +419,15 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
   }
 }
 
-List<MeshEvent> _withoutDemoEvents(Iterable<MeshEvent> events) =>
-    List<MeshEvent>.unmodifiable(events.where((event) => !_isDemoEvent(event)));
+List<MeshEvent> _withoutUnsupportedEvents(Iterable<MeshEvent> events) =>
+    List<MeshEvent>.unmodifiable(
+      events.where(
+        (event) =>
+            !_isDemoEvent(event) &&
+            !event.isRetiredShelterStatus &&
+            isAppSupportedEvent(event),
+      ),
+    );
 
 bool _isDemoEvent(MeshEvent event) =>
     event.namespace?.startsWith('demo.') == true ||

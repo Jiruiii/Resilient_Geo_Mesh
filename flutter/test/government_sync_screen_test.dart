@@ -47,7 +47,7 @@ void main() {
             .where((call) => call.method == 'configureGovernmentSync')
             .single
             .arguments,
-        {'url': 'https://test.pages.dev/', 'enabled': true, 'area': 'taipei'},
+        {'url': 'https://test.pages.dev/', 'enabled': true, 'area': 'all'},
       );
       expect(
         calls.where((call) => call.method == 'syncGovernmentNow'),

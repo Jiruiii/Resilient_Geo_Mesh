@@ -1,6 +1,6 @@
 # 文件索引
 
-更新日期：2026-09-27。查目前完成狀態與下一步，先讀進度總表；實作計畫中的原始核取方塊不代表目前驗收結果。
+更新日期：2026-10-05。底圖使用方式見根目錄 [Map_description.md](../Map_description.md)；Server 與資料來源狀態見 [資料說明](../data_description.md) 和 [點位涵蓋報告](data-coverage-2026-10-04.md)。本機實作不代表已部署或通過實機驗收。
 
 ## 目前使用的文件
 
@@ -11,7 +11,10 @@
 | 資料一致性、TTL、推薦與兩機修正 | [可靠性與實機驗證](reliability-device-validation.md) |
 | 同步狀態頁與避難災害情境 | [功能與驗證紀錄](sync-status-disaster-filter.md) |
 | 事件更新與到期自動重算路線 | [自動重算與實機驗證](automatic-route-refresh.md) |
-| 政府 API 更新、Cloudflare Pages 與離線轉傳 | [政府資料更新](government-online-sync.md) |
+| Central Server 政府 API 更新、簽章 release 與離線轉傳邊界 | [Central Server 政府資料更新](government-online-sync.md) |
+| 目前 OSM 底圖與歷史 NLSC 試用範圍 | [Map description](../Map_description.md) |
+| Server、資料串接、門牌包與醫療／避難所涵蓋 | [資料說明](../data_description.md)、[點位涵蓋報告](data-coverage-2026-10-04.md) |
+| Web／Android 同步開發規則與資料整合 | [前端整合](frontend-real-data-integration.md#web-與-android-同步開發規則) |
 | 系統架構、開發階段與驗收條件 | [系統實作計畫](../system.md)，目前狀態以開頭進度表與 MVP 進度總表為準 |
 | 雙北路網與 Pixel 8a 效能 | [雙北離線路線紀錄](taipei-offline-routing.md) |
 | Android 建置與 Flutter 操作 | [Android README](../android/README.md)、[Flutter README](../flutter/README.md) |

@@ -37,6 +37,14 @@ test('exports nationwide feature-v0 records to the Flutter map shape without Raw
       },
     }),
     feature({
+      layerId: 'taiwan-medical',
+      featureId: 'medical:hl-0',
+      featureType: 'MEDICAL_FACILITY',
+      source: 'taiwan-medical',
+      geometry: { type: 'Point', coordinates: [121.63, 24.04] },
+      properties: { name: '花蓮一般醫療院所', address: '花蓮路3號', area_id: 'tw.10015010' },
+    }),
+    feature({
       layerId: 'medical',
       featureId: 'medical:hl-1',
       featureType: 'HOSPITAL',
@@ -48,10 +56,10 @@ test('exports nationwide feature-v0 records to the Flutter map shape without Raw
 
   assert.equal(output.schema_version, 'offline-map-display-v1');
   assert.equal(output.dataset_id, 'resilientgeo-taiwan');
-  assert.deepEqual(output.bounds, [121.61, 24.02, 121.62, 24.03]);
-  assert.deepEqual(output.features.map((item) => item.kind), ['medical', 'shelter']);
-  assert.equal(output.features[1].area_id, 'tw.10015010');
-  assert.equal(output.features[1].properties, undefined);
+  assert.deepEqual(output.bounds, [121.61, 24.02, 121.63, 24.04]);
+  assert.deepEqual(output.features.map((item) => item.kind), ['medical', 'medical', 'shelter']);
+  assert.equal(output.features[2].area_id, 'tw.10015010');
+  assert.equal(output.features[2].properties, undefined);
   assert.equal(JSON.stringify(output).includes('must-drop'), false);
   assert.deepEqual(output.sources.map((source) => source.source_id), ['taiwan-medical', 'taiwan-shelter']);
 });

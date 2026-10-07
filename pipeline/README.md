@@ -4,7 +4,9 @@ This directory implements the `system.md` phase-2 path with only Node.js built-i
 
 ## 第一階段：全台灣真實資料接入
 
-目前的預設 scope 仍是 `neihu`，用來保留既有 fixture/replay 測試；真實資料收集請明確使用 `--scope taiwan`。全台流程是：官方來源 → Raw snapshot → AreaCatalog 空間歸屬 → 正規化事件／靜態 feature → Ed25519 簽章 layer → Android 驗證 → Flutter 顯示。Flutter 不直接呼叫這些外部 API。
+目前的預設 scope 仍是 `neihu`，用來保留既有 fixture/replay 測試；真實資料收集請明確使用 `--scope taiwan`。正式流程是：官方來源 → Raw snapshot → AreaCatalog 空間歸屬 → 正規化事件／靜態 feature → Ed25519 簽章 feed/layer → 唯讀 API → Web／Android 驗證、快取及顯示。前端不直接呼叫上游資料 API；Server 部署網址仍需設定與外部驗證。門牌搜尋已接上 Web／Android；18 個縣市包由 `central-server-2026` 簽章並放入 `deploy/public/address-packs/`，但尚未部署到正式 HTTPS 服務。基隆市政府 11509 CSV 的 192,319 筆來源列已完成轉換與縣界檢查，192,269 點通過、50 筆排除；本機 catalog 已更新並驗證。連江、宜蘭、南投、嘉義市仍無可確認的完整公開來源，catalog 將這四縣市標為 `unavailable`；門牌列數不等於醫療院所定位數。
+
+2026-10-04 同一輪 collector 的涵蓋核對：避難所來源 5,973 筆，5,727 通過行政區／地址檢查、180 未定位、66 排除；醫療主檔 24,138 筆，479 配到已核實座標、23,659 未定位、0 排除。兩者皆逐縣市列出 22 縣市／離島數量，報告見[全台點位涵蓋](../docs/data-coverage-2026-10-04.md)。本輪 source-status 記錄在本機 release；本機唯讀 API 曾於 loopback 提供狀態和簽章 layer/feed，Web 與 Android API 36 模擬器都下載並驗簽同一批產物。測試服務不是正式部署；正式 Server 尚未部署。
 
 官方 7442／7441 下載檔是 TWD97 經緯度的 SHP／GML 資料；先以 GDAL／QGIS 轉成 EPSG:4326 GeoJSON，再交給 `area-catalog`。例如：
 
@@ -18,14 +20,14 @@ ogr2ogr -f GeoJSON -t_srs EPSG:4326 /tmp/town.geojson /tmp/TOWN_MOI_1140318.shp
 | 資料 | 官方來源／程式 source id | 認證 | 輸出與注意事項 |
 |---|---|---|---|
 | 縣市、鄉鎮市區界線 | [data.gov.tw 7442](https://data.gov.tw/dataset/7442)、[7441](https://data.gov.tw/dataset/7441)／`area-catalog` | 不需要 | 下載後轉成 EPSG:4326 GeoJSON，再合併產生 `area-catalog-v0`；每筆資料可得到 `county_code`、`town_code`、`area_id`。 |
-| NCDR 示警 | [NCDR Swagger](https://alerts.ncdr.nat.gov.tw/api_swagger/index.html)／`ncdr-hazard-events` | `NCDR_ALERT_API_KEY` | 全台採兩階段：`/api/datastore` 取得 `capid` 索引，再對每筆呼叫 `/api/dump/datastore` 取得完整 CAP；官方 `/api` 路由使用 query `apikey`。 |
+| NCDR 示警 | [NCDR Swagger](https://alerts.ncdr.nat.gov.tw/api_swagger/index.html)／`ncdr-hazard-events` | `NCDR_ALERT_API_KEY` | Server 全台採兩階段：`/api/datastore` 取得 `capid` 索引，再對每筆呼叫 `/api/dump/datastore` 取得完整 CAP；完整資料留在 private cache，公開 government feed 排除 `BACKGROUND`。 |
 | CWA 地震、縣市警報、颱風 | `E-A0015-001`、`W-C0033-001`、`W-C0034-001`／`cwa-earthquake`、`cwa-weather-warning`、`cwa-typhoon-warning` | `CWA_API_KEY` | `Authorization` 僅在 collector request 使用，Raw 不保存。 |
-| TDX 道路事件 | [TDX Swagger](https://tdx.transportdata.tw/api-service/swagger)／`tdx-road-events` | `TDX_CLIENT_ID`、`TDX_CLIENT_SECRET` | OAuth2 client credentials；全台使用 `TDX_API_ENDPOINTS`，未指定時使用內建縣市端點清單。部分端點失敗時保留成功結果並標記 `partial`。 |
-| 避難所位置 | [data.gov.tw 73242](https://data.gov.tw/dataset/73242)／`taiwan-shelter` | 不需要 | CSV 靜態 layer；沒有 Neihu filter。 |
-| 避難所開設狀態 | [data.gov.tw 12849](https://data.gov.tw/dataset/12849)／`taiwan-shelter-status` | 不需要 | XML `SHELTER_STATUS` event；缺狀態保留 `UNKNOWN`，不當作 `CLOSED`。 |
+| TDX 道路事件 | [TDX Swagger](https://tdx.transportdata.tw/api-service/swagger)／`tdx-road-events` | `TDX_CLIENT_ID`、`TDX_CLIENT_SECRET` | OAuth2 client credentials；保留 adapter 供手動收集，但目前不在 Central Server 預設排程，也不進核心災害 feed。 |
+| 避難所位置 | [data.gov.tw 73242](https://data.gov.tw/dataset/73242)／`taiwan-shelter` | 不需要 | CSV 靜態 layer；沒有 Neihu filter。全台模式要求 AreaCatalog，核對來源縣市／鄉鎮、地址及點位界線；2026-10-04 單次來源 5,973 筆，5,727 已定位、180 未定位、66 排除。未通過檢查的座標不進地圖 layer；本機暫存 bundle 已簽章驗證，但尚未部署正式服務。 |
 | 醫療機構主檔 | [data.gov.tw 15393](https://data.gov.tw/dataset/15393)／`taiwan-medical` | 不需要 | 目前官方資源是 ODS，pipeline 會解析 `content.xml`；主檔沒有座標，未定位資料保留在 `unresolved_medical`。 |
-| 醫療座標補足 | [NLSC 139250](https://data.gov.tw/dataset/139250)、[Overpass](https://overpass-api.de/api/interpreter) | 不需要 | 僅使用唯一且通過空間驗證的名稱／地址匹配；無法定位不畫 marker。 |
-| OSM 必要地物 | [Overpass API](https://overpass-api.de/api/interpreter)／`osm-taiwan` | 不需要 | 只抓醫療／避難所必要 POI；全台道路仍使用既有 PMTiles，不在第一階段建立離線導航圖。 |
+| 醫療座標補足 | [NLSC 139250](https://data.gov.tw/dataset/139250)／`nlsc-medical-coordinates` | 不需要 | 以台灣範圍半徑查詢與已審核官方 fallback 合併；院所配對檢查機構代碼、地址與縣市。2026-10-04 368 次查詢成功找到 3,686 個候選點；主檔 24,138 筆中 305 筆由 NLSC 定位，現有簽章門牌來源另配到 174 筆（10007 有 169 筆、65000 有 5 筆），合計 479 已定位、23,659 未定位。 |
+| 門牌搜尋包 | [逐縣市來源與數字](../data_description.md#門牌索引涵蓋) | 不需要 | 18 個已簽章包共 10,220,956 筆來源列，10,215,992 筆通過座標與縣界檢查，153 筆缺座標，4,811 筆排除。基隆市 11509 CSV 已由 `central-server-2026` 簽章加入 catalog；目前四縣市標示 unavailable。資料位於 `deploy/public/address-packs/`，尚未部署正式服務。這些數字是門牌來源筆數，不是醫療院所定位數。 |
+| OSM POI | [Overpass API](https://overpass-api.de/api/interpreter)／`osm-taiwan` | 不需要 | 保留 adapter 但 Central Server 預設 disabled；不作為醫療座標來源。地圖底圖使用隨 App 提供的 OSM／Protomaps PMTiles；道路名稱搜尋仍是獨立的 OSM 本機索引。 |
 
 ### API key 與簽章設定
 
@@ -80,28 +82,20 @@ node --env-file=pipeline/.env pipeline/cli.mjs collect \
 node --env-file=pipeline/.env pipeline/cli.mjs collect \
   --scope taiwan --boundary "$BOUNDARY" \
   --source ncdr-hazard-events --out-dir "$LIVE/ncdr"
-node --env-file=pipeline/.env pipeline/cli.mjs collect \
-  --scope taiwan --boundary "$BOUNDARY" \
-  --source tdx-road-events --out-dir "$LIVE/tdx"
 
 node --env-file=pipeline/.env pipeline/cli.mjs collect \
   --scope taiwan --boundary "$BOUNDARY" \
   --source taiwan-shelter --out-dir "$LIVE/shelter"
 node --env-file=pipeline/.env pipeline/cli.mjs collect \
   --scope taiwan --boundary "$BOUNDARY" \
-  --source taiwan-shelter-status --out-dir "$LIVE/shelter-status"
-node --env-file=pipeline/.env pipeline/cli.mjs collect \
-  --scope taiwan --boundary "$BOUNDARY" \
-  --source osm-taiwan --out-dir "$LIVE/osm"
-node --env-file=pipeline/.env pipeline/cli.mjs collect \
-  --scope taiwan --boundary "$BOUNDARY" \
-  --source taiwan-medical --out-dir "$LIVE/medical" \
-  --coordinate-input "$LIVE/osm/osm-taiwan.features.json"
+  --source taiwan-medical --out-dir "$LIVE/medical"
 ```
 
-醫療座標補足的實際順序是先收集 `osm-taiwan`，再收集 `taiwan-medical`；若某些醫療資料仍無法唯一匹配，會保留在 `unresolved_medical`，不會被估算成座標。
+Server collector 收集 `taiwan-medical` 時會先讀 MOHW 主檔，再用 NLSC `COM_010` 建立可重現的半徑查詢網格；可透過 `MEDICAL_COORDINATE_FALLBACK_ENDPOINTS` 加入已審核的官方衛生局座標來源，也會在目前 17 個已簽章門牌包的縣市以唯一、正規化後的完整地址與同縣市門牌點位精確配對。基隆官方 CSV 已完成實檔試跑但尚未簽章加入客戶端 catalog。一次性 `normalize` 若使用 `--coordinate-input`，輸入也必須是官方座標 snapshot；不可使用 OSM 代替。若某些醫療資料仍無法唯一匹配，會保留在 `unresolved_medical`，不會被估算成座標。地址來源有不完整或人工建置等精度限制，配對結果仍須符合機構代碼、完整地址與縣界檢查。
 
-`taiwan-shelter-status` 會同時產生 `taiwan-shelter-status.features.json`（保留正規化報告）與 `taiwan-shelter-status.events.json`（可直接交給 `build` 的 `event-batch-v0`）；位置 layer 與狀態 event 分開簽章／驗證，並以 `shelter_id` 對應。
+TDX 與 OSM 不是上述中央 Server 的預設收集步驟。它們的 adapter 與 legacy fixture 仍保留供相容性測試；若日後要 opt-in，必須另行確認端點、quota、全台覆蓋與發布用途，不能把舊快取當成即時資料。
+
+目前 collector 只下載並發布靜態避難所位置、名稱、地址、預計容量與適用災害類別。會不定期更新的開設狀態 XML 不在目前收集範圍；靜態 layer 的容量是規劃容量，不代表即時收容人數或開設狀態。
 
 靜態 layer 需要逐 layer 簽章與驗證，不能把未簽章的 `features.json` 直接交給 App：
 
@@ -116,7 +110,7 @@ node pipeline/cli.mjs verify-layer \
   --public-key /path/to/public-key.pem
 ```
 
-把通過 `verify-layer` 的 `manifest.json` 與 `chunks/*.json` 放到 `android/app/src/main/assets/static/taiwan/<layer-id>/` 後，Android `LayerBundleVerifier` 會在 bridge 回傳前驗證 manifest、chunk、feature hash 與 Ed25519 signature。缺少 layer asset 會回傳空集合；存在但驗證失敗則 fail closed。Flutter 的 `export-map` 輸出是預覽／資產格式，不是繞過 Android 驗證的替代品。
+`build-layer` 和 `verify-layer` 仍可供人工檢查 layer bundle。正式 collector 則把 layer 發布到 signed release API；Android `LayerBundleVerifier` 與 Web verifier 會在顯示前驗證 manifest、chunk、feature hash 與 Ed25519 signature，並各自保存離線副本。缺少可信 release 時不得以未核實的醫療座標替代。舊的 `android/app/src/main/assets/static/taiwan/<layer-id>/` 手動放置指令只適用於舊版打包流程；目前 server 發布與同步限制見 [中央 Server 文件](../docs/government-online-sync.md)。
 
 若要產生 Flutter 的 versioned display asset，將已正規化的 feature batches 合併輸出；實際加入 `pubspec.yaml` 前應先完成簽章 layer 與資料審查：
 
@@ -126,7 +120,7 @@ node pipeline/cli.mjs export-map \
   --out flutter/assets/data/taiwan/static-features.json
 ```
 
-避難所狀態資料以 `shelter_id` 對應位置 layer；官方狀態 XML 若缺少或無法驗證座標，Raw 仍會保留該筆資料，並在收集結果標示 `unresolved_status_count`，不會把它誤判為關閉。
+舊版 fixture 與 replay 仍可包含 `SHELTER_STATUS`，供離線相容情境使用；目前 Web／Android App 會忽略 `SHELTER_STATUS / FIRE_AGENCY`，Central Server 也不再收集或發布即時避難所狀態。
 
 認證失敗會標示 `blocked_by_auth`，多端點部分成功標示 `partial`，來源過期快照可標示 `stale`；`null`、`unknown`、`unresolved` 不會被轉成零或關閉。完整 source registry 在 [`sources/catalog.json`](sources/catalog.json)。
 
@@ -232,10 +226,8 @@ Task 5 keeps three different products separate:
 - OSM roads and selected POIs become `feature-v0` records in `osm-road` and
   `osm-poi` layers.
 - Shelter location, address, capacity and supported disaster types remain
-  static `feature-v0` properties. If a source response includes opening status,
-  it is emitted separately as an unsigned `SHELTER_STATUS` Event for the later
-  event signing step; the point file without that field does not create an
-  artificial `UNKNOWN` status.
+  static `feature-v0` properties. Opening status is not collected or generated
+  by the current shelter collector; planned capacity is not current occupancy.
 - Taipei medical institutions become `feature-v0` records in the `medical`
   layer. The original source row is retained in `properties.source_record`.
 
@@ -325,10 +317,10 @@ node --test pipeline/test/neihu-replay.test.mjs
   byte-identical Android test copy). Fixed-seed, fixture-only keys.
 - `node pipeline/tools/generate-walk-graph.mjs` → `android/app/src/main/assets/routing/walk-roads.json`,
   the walkable Neihu OSM network the Android route engine loads.
-- Android ships the nationwide shelter layer at `android/app/src/main/assets/static/taiwan/shelter/`
-  (collected 2026-09-26 from data.gov.tw 73242, `build-layer --target-size-bytes 262144`, key
-  `taiwan-static-2026`, written as compact JSON). The private key stays with whoever built it;
-  a rebuild with a new key must also replace that entry in both `trusted-keys.json` copies.
+- Android downloads signed nationwide shelter and medical layers from the Server, then retains
+  verified bundles in app-private storage for offline use. It does not fall back to the legacy APK
+  shelter snapshot. The private signing key stays with the trusted release operator; client builds
+  contain public trust keys only.
 - `lib/geo.mjs` caches each boundary's validated geometry and envelope, so `collect --scope taiwan`
   no longer re-validates the whole 390-area catalog per record (the shelter collection went from
   not finishing in 5 minutes to about 6 seconds).

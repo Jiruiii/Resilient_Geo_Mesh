@@ -310,32 +310,12 @@
       "auth_required": false,
       "license": "政府資料開放授權條款第1版",
       "coordinate_system": "EPSG:4326 coordinates supplied by the source; validate before use",
-      "ttl_policy": "versioned_snapshot",
+      "ttl_policy": "versioned_snapshot; signed static layer manifest is valid for 30 days after publication",
       "integration_stage": "P1",
       "taiwan_filter": "No Neihu text filter; retain records inside the AreaCatalog union and preserve unresolved source values as null.",
       "verification": {
         "status": "adapter_defined",
-        "note": "The opening status is collected separately from the XML feed."
-      }
-    },
-    {
-      "source_id": "taiwan-shelter-status",
-      "category": "消防署避難所開設情形",
-      "data_product": "dynamic_event",
-      "access_mode": "event_feed",
-      "endpoint_or_url": "https://portal2.emic.gov.tw/Pub/EEA2/OpenData/Shelter.xml",
-      "documentation_url": "https://data.gov.tw/dataset/12849",
-      "format": "XML",
-      "coverage": "Taiwan shelter opening state",
-      "update_frequency": "source-dependent event feed",
-      "auth_required": false,
-      "license": "政府資料開放授權條款第1版",
-      "coordinate_system": "EPSG:4326 lat/lon in the feed",
-      "ttl_policy": "status event expiry is assigned by the pipeline; missing status is UNKNOWN, not CLOSED",
-      "integration_stage": "P1",
-      "taiwan_filter": "Join by shelterCode/shelterId where available and retain UNKNOWN when the source omits openstatus.",
-      "verification": {
-        "status": "adapter_defined"
+        "note": "The collector publishes static locations and planned capacity; it does not publish current opening status."
       }
     },
     {
@@ -351,7 +331,7 @@
       "auth_required": false,
       "license": "政府資料開放授權條款第1版",
       "coordinate_system": "No coordinates in the master; supplement only from validated NLSC/OSM point matches",
-      "ttl_policy": "versioned_snapshot; unresolved records remain in the report and are not drawn as points",
+      "ttl_policy": "versioned_snapshot; signed static layer manifest is valid for 30 days after publication; unresolved records remain in the report and are not drawn as points",
       "integration_stage": "P1",
       "taiwan_filter": "No Neihu filter; retain all nationwide records and add county_code/town_code/area_id when resolved.",
       "verification": {

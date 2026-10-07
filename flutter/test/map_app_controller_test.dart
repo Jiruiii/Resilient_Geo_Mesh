@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:resilientgeo_flutter/app/map_app_controller.dart';
 import 'package:resilientgeo_flutter/data/map_bridge.dart';
 import 'package:resilientgeo_flutter/data/map_models.dart';
+import 'package:resilientgeo_flutter/data/offline_government_feed.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
@@ -42,6 +43,31 @@ void main() {
     },
   );
 
+  test('expired alerts leave active app state at their expiry time', () async {
+    final expiresAt = DateTime.now().toUtc().add(
+      const Duration(milliseconds: 150),
+    );
+    final event = MeshEvent.fromJson(<String, dynamic>{
+      'namespace': 'official.ncdr',
+      'event_id': 'ncdr:expiring-test',
+      'event_version': 1,
+      'event_type': 'NCDR_HAZARD',
+      'source': 'NCDR',
+      'issued_at': DateTime.now().toUtc().toIso8601String(),
+      'expires_at': expiresAt.toIso8601String(),
+    });
+    final controller = MapAppController(bridge: _InitialEventBridge(event));
+    addTearDown(controller.dispose);
+
+    await controller.load();
+    expect(controller.events, contains(event));
+
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+
+    expect(controller.events, isEmpty);
+    expect(controller.persistedEvents, isEmpty);
+  });
+
   test(
     'native bridge without verified layers fails closed instead of using preview JSON',
     () async {
@@ -53,6 +79,104 @@ void main() {
       expect(controller.nativeBridgeAvailable, isTrue);
       expect(controller.staticFeatures, isNotNull);
       expect(controller.staticFeatures!.features, isEmpty);
+    },
+  );
+
+  test(
+    'Web does not fall back to the old unverified static snapshot',
+    () async {
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      var assetReads = 0;
+      messenger.setMockMessageHandler('flutter/assets', (_) async {
+        assetReads++;
+        return null;
+      });
+      addTearDown(
+        () => messenger.setMockMessageHandler('flutter/assets', null),
+      );
+
+      final controller = MapAppController(
+        bridge: _UnavailableBridge(),
+        isWeb: true,
+        webStaticLayerLoader: () async => '',
+        demoEventLoader: () async => <MeshEvent>[],
+      );
+      addTearDown(controller.dispose);
+
+      await controller.load();
+
+      expect(controller.staticFeatures, isNotNull);
+      expect(controller.staticFeatures!.features, isEmpty);
+      expect(controller.staticFeatureLoadError, isNotNull);
+      expect(controller.loadError, isNull);
+      expect(assetReads, 0);
+    },
+  );
+
+  test('Web does not use the bundled NCDR preview as current alerts', () async {
+    var demoLoads = 0;
+    var feedLoads = 0;
+    final event = MeshEvent.fromJson(<String, dynamic>{
+      'namespace': 'official.live.ncdr',
+      'event_id': 'ncdr:web-feed-test',
+      'event_type': 'NCDR_HAZARD',
+      'severity': 'HIGH',
+      'source': 'NCDR',
+      'issued_at': DateTime.now().toUtc().toIso8601String(),
+      'expires_at':
+          DateTime.now()
+              .toUtc()
+              .add(const Duration(hours: 1))
+              .toIso8601String(),
+    });
+    final snapshots = <WebGovernmentFeedSnapshot>[
+      WebGovernmentFeedSnapshot(revision: 1, events: <MeshEvent>[event]),
+      const WebGovernmentFeedSnapshot(revision: 2, events: <MeshEvent>[]),
+    ];
+    final controller = MapAppController(
+      bridge: _UnavailableBridge(),
+      isWeb: true,
+      webStaticLayerLoader: () async => '',
+      webGovernmentFeedLoader: () async => snapshots[feedLoads++],
+      demoEventLoader: () async {
+        demoLoads++;
+        return <MeshEvent>[event];
+      },
+    );
+    addTearDown(controller.dispose);
+
+    await controller.load();
+    await pumpEventQueue();
+
+    expect(demoLoads, 0);
+    expect(feedLoads, 1);
+    expect(controller.events, contains(event));
+    expect(controller.initialState.events, contains(event));
+
+    await controller.retryEventUpdates();
+
+    expect(feedLoads, 2);
+    expect(controller.events, isEmpty);
+    expect(controller.initialState.events, isEmpty);
+  });
+
+  test(
+    'host without the Android bridge keeps old static points out of the map',
+    () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+      final controller = MapAppController(
+        bridge: _UnavailableBridge(),
+        demoEventLoader: () async => <MeshEvent>[],
+      );
+      addTearDown(controller.dispose);
+
+      await controller.load();
+
+      expect(controller.staticFeatures, isNotNull);
+      expect(controller.staticFeatures!.features, isEmpty);
+      expect(controller.staticFeatureLoadError, isNotNull);
+      expect(controller.loadError, isNull);
     },
   );
 
@@ -234,6 +358,19 @@ class _EmptyVerifiedBridge extends MapBridge {
 
   @override
   Stream<List<MeshEvent>> get events => const Stream<List<MeshEvent>>.empty();
+}
+
+class _InitialEventBridge extends _EmptyVerifiedBridge {
+  _InitialEventBridge(this.event);
+
+  final MeshEvent event;
+
+  @override
+  Future<MapInitialState> getInitialState() async => MapInitialState(
+    events: <MeshEvent>[event],
+    emergencyModeEnabled: false,
+    staticFeatures: const <StaticFeature>[],
+  );
 }
 
 class _RecoverableBridge extends _EmptyVerifiedBridge {

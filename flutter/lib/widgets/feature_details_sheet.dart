@@ -96,7 +96,6 @@ class FeatureDetailsSheet extends StatelessWidget {
       return <Widget>[
         _DetailLine('地址', _text(details['address'])),
         _DetailLine('預計收容人數', _peopleText(details['capacity'])),
-        _DetailLine('收容人數', _peopleText(details['available_count'])),
         _DetailLine('適用災害類別', _listText(details['disaster_types'])),
         _DetailLine('來源', _text(details['source'])),
         _DetailLine('更新時間', formatUpdateTime(snapshotAt)),
@@ -126,6 +125,14 @@ class FeatureDetailsSheet extends StatelessWidget {
         _DetailLine('地址', _text(details['address'])),
         _DetailLine('來源', _text(details['source'])),
         _DetailLine('更新時間', formatUpdateTime(snapshotAt)),
+      ];
+    }
+    if (kind == 'medical-directory') {
+      final located = details['geometry_status'] == 'located';
+      return <Widget>[
+        _DetailLine('地址', _text(details['address'])),
+        _DetailLine('地圖定位', located ? '已連到核實點位' : '尚未定位，未顯示地圖標記'),
+        _DetailLine('資料來源', '衛生福利部醫療機構主檔'),
       ];
     }
     return <Widget>[

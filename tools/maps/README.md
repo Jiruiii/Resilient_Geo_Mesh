@@ -1,18 +1,8 @@
-# 台灣 Protomaps PMTiles
+# 台灣離線地圖、搜尋與路網
 
-> 2026-09-27：除了全台底圖與道路搜尋，已新增雙北離線步行路網產生器、APK 資產檢查及 Pixel 8a USB 延遲量測工具。底圖涵蓋全台，路線目前只涵蓋雙北及邊界緩衝區。
+> 2026-10-05：目前 Web 與 Android 使用隨 App 內附的 OSM／Protomaps PMTiles，不提供底圖下載服務。NLSC 原始檔 `TaiwanEMap6.mbtiles` 僅作為歷史試用資料保留；來源範圍、zoom 與舊版底圖變更記錄見根目錄 [Map_description.md](../../Map_description.md)。
 
-Flutter 的 MapLibre 樣式使用五個本機 PMTiles 檔案：
-
-| 檔案 | bbox（minLon,minLat,maxLon,maxLat） | zoom |
-| --- | --- | --- |
-| `taiwan.pmtiles` | `118.0,21.8,122.2,26.5` | z0–12 |
-| `taiwan-north.pmtiles` | `118.0,24.0,122.2,26.5` | z13–15 |
-| `taiwan-central.pmtiles` | `118.0,23.0,121.6,24.1` | z13–15 |
-| `taiwan-south.pmtiles` | `118.0,21.8,121.6,23.8` | z13–15 |
-| `taiwan-east.pmtiles` | `120.8,21.8,122.2,25.5` | z13–15 |
-
-資料來源是 Protomaps daily build；以 Git LFS 管理，不要把大型檔案轉成一般 Git blob。
+地圖使用 `flutter/assets/map/pmtiles/` 內的五個向量套件：全台概覽與北、中、南、東分區。Android 安裝時將內建 Flutter assets 複製到 App 私有目錄供 PMTiles 隨機讀取；Web 直接讀取隨建置輸出的資產。Server 不提供 `/maps/*` 路由，也不參與底圖更新。相機縮放和台灣可視邊界以 [Map_description.md](../../Map_description.md) 所列程式設定為準。
 
 ## Chrome MapLibre Web runtime
 
@@ -43,34 +33,15 @@ Medium 兩個 asset 名稱宣告，讓 Material text theme 在不同 weight 仍�
 這個本機目錄，因此 App runtime 不需要從外部字型 CDN 載入 UI 字型；若需要更新
 字型，必須更新 commit、hash 與來源紀錄。
 
-## 重建與驗證
+## Web runtime 與建置驗證
 
-先安裝 [PMTiles CLI](https://docs.protomaps.com/pmtiles/cli)，再執行：
-
-```bash
-git lfs pull
-PMTILES_BIN=pmtiles SOURCE_DATE=20260921 \
-  ./tools/maps/build_taiwan_pmtiles.sh
-```
-
-腳本會對每個 archive 執行 `show --header-json`、`verify` 與 SHA-256。來源日期、bbox、zoom 與目前檔案 hash 也必須同步更新
-`flutter/lib/data/offline_map_manifest.dart`，再執行：
+Flutter Web 使用隨 App 內嵌的 MapLibre GL JS runtime，不使用 CDN。以一般發佈參數建置 Web app 後，Flutter service worker 快取程式外殼與隨 App 提供的 PMTiles 資產。
 
 ```bash
-cd flutter
-flutter test test/offline_map_manifest_test.dart \
-  test/offline_map_package_files_test.dart
-```
-
-Chrome UI 與 offline preview：
-
-```bash
-cd flutter
-flutter run -d chrome --no-web-resources-cdn --web-port 8787
 flutter build web --release --no-web-resources-cdn
 ```
 
-PMTiles 內容依 OSM／Protomaps 授權保留 attribution；樣式中的 attribution 不可移除。
+目前向量底圖與道路搜尋索引皆使用 OSM 衍生資料，依 ODbL 保留 `© OpenStreetMap contributors` attribution。歷史 NLSC MBTiles 的來源聲明與範圍記錄見 [Map_description.md](../../Map_description.md)。
 
 ## 台灣離線道路搜尋索引
 

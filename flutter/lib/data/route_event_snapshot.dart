@@ -7,6 +7,7 @@ import 'map_models.dart';
 class RouteEventSnapshot {
   RouteEventSnapshot(Iterable<MeshEvent> events, DateTime now) {
     for (final event in events) {
+      if (event.isRetiredShelterStatus) continue;
       final kind = _kind(event);
       if (kind == null) continue;
       final expires = DateTime.tryParse(event.expiresAt ?? '');

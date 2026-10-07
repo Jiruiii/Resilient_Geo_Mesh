@@ -15,7 +15,8 @@ import java.time.Instant
  *  3. An older or equal version is rejected outright — the store is left untouched.
  *  4. `official.*` and `crowd.*` (or any other) namespaces never overwrite each other,
  *     because identity is (namespace, event_id), not event_id alone.
- *  5. Expired events are still stored (for audit / "last known state"), just flagged.
+ *  5. An expired event's payload is removed by local retention; its version floor
+ *     remains so an older peer copy cannot make it active again.
  */
 object EventIngestor {
 
@@ -28,6 +29,15 @@ object EventIngestor {
         val eventId = event.getString("event_id")
         val eventVersion = event.getInt("event_version")
         val existing = store.find(namespace, eventId)
+        val versionFloor = maxOf(existing?.eventVersion ?: Int.MIN_VALUE, store.versionFloor(namespace, eventId) ?: Int.MIN_VALUE)
+
+        if (existing == null && eventVersion <= versionFloor) {
+            return if (eventVersion < versionFloor) {
+                IngestResult.RejectedVersionRollback(versionFloor, eventVersion)
+            } else {
+                IngestResult.RejectedSameVersionConflict(versionFloor, eventVersion)
+            }
+        }
 
         if (existing == null) {
             val state = ApplyState.at(namespace, event.getString("expires_at"), now)
@@ -42,11 +52,11 @@ object EventIngestor {
             return IngestResult.Updated(existing.eventVersion, eventVersion, state)
         }
 
-        if (eventVersion < existing.eventVersion) {
-            return IngestResult.RejectedVersionRollback(existing.eventVersion, eventVersion)
+        if (eventVersion < versionFloor) {
+            return IngestResult.RejectedVersionRollback(versionFloor, eventVersion)
         }
 
-        return IngestResult.RejectedSameVersionConflict(existing.eventVersion, eventVersion)
+        return IngestResult.RejectedSameVersionConflict(versionFloor, eventVersion)
     }
 
     private fun toStoredEvent(event: JSONObject, namespace: String, eventId: String, eventVersion: Int, state: ApplyState) = StoredEvent(

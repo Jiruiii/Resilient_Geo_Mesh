@@ -3,13 +3,24 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "government:collect": "node --env-file-if-exists=pipeline/.env pipeline/government-publisher.mjs",
-    "government:serve": "node pipeline/serve-government.mjs",
-    "government:deploy": "node pipeline/deploy-government.mjs",
+    "server:start": "node server/src/api-entrypoint.mjs",
+    "collector:start": "node server/src/collector-entrypoint.mjs",
+    "server:health": "node server/src/ops/health-check.mjs",
+    "server:backup": "node server/src/ops/maintenance-cli.mjs backup",
+    "server:restore": "node server/src/ops/maintenance-cli.mjs restore",
+    "server:snapshot": "node server/src/ops/maintenance-cli.mjs snapshot",
+    "server:verify-snapshot": "node server/src/ops/maintenance-cli.mjs verify-snapshot",
+    "server:restore-snapshot": "node server/src/ops/maintenance-cli.mjs restore-snapshot",
+    "server:cleanup": "node server/src/ops/maintenance-cli.mjs cleanup",
+    "build:address-packs": "node pipeline/tools/build-address-packs.mjs",
     "test": "node --test pipeline/test/*.test.mjs simulator/test/*.test.mjs",
+    "test:server": "node --test server/test/*.test.mjs",
     "test:sim": "node --test simulator/test/*.test.mjs",
     "sim:matrix": "node simulator/cli.mjs matrix --out experiments/results",
     "sim:check": "node simulator/cli.mjs matrix --check",
     "generate:android-fixture": "node pipeline/tools/generate-android-fixture.mjs"
+  },
+  "dependencies": {
+    "fastify": "^5.0.0"
   }
 }

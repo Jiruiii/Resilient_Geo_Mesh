@@ -11,17 +11,45 @@
   <meta name="apple-mobile-web-app-title" content="ResilientGeo">
   <title>ResilientGeo 台灣離線地圖</title>
   <style>
-    /* Keep attribution in the bundled map metadata without covering the map
-       with the generated MapLibre web control. */
-    .maplibregl-ctrl-attrib {
-      display: none !important;
-    }
   </style>
 </head>
 <body>
   <!-- PMTiles is served locally so Chrome can exercise the same packaged data. -->
   <script src="pmtiles.js"></script>
   <script src="pmtiles_protocol.js"></script>
+  <script src="nlsc_static_layers.js"></script>
+  <script src="nlsc_government_feed.js"></script>
   <script src="flutter_bootstrap.js" async></script>
+  <script>
+    void (async () => {
+      if (!('serviceWorker' in navigator)) return;
+
+      try {
+        await navigator.serviceWorker.ready;
+        if (!navigator.serviceWorker.controller) {
+          await new Promise((resolve) => {
+            const onControllerChange = () => {
+              navigator.serviceWorker.removeEventListener('controllerchange', onControllerChange);
+              resolve();
+            };
+            navigator.serviceWorker.addEventListener('controllerchange', onControllerChange, { once: true });
+            if (navigator.serviceWorker.controller) resolve();
+          });
+        }
+
+        if (navigator.serviceWorker.controller && navigator.onLine) {
+          const shellScripts = [...document.querySelectorAll('script[src]')]
+            .map((script) => new URL(script.src, window.location.href))
+            .filter((url) => url.origin === window.location.origin);
+          await Promise.all([
+            fetch(window.location.href),
+            ...shellScripts.map((url) => fetch(url.href)),
+          ]);
+        }
+      } catch (_) {
+        // Keep the app usable if service workers or offline caching are unavailable.
+      }
+    })();
+  </script>
 </body>
 </html>

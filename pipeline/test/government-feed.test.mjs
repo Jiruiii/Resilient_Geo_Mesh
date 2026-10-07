@@ -12,8 +12,47 @@ function event(status = 'CLOSED') {
   return { ...JSON.parse(readFileSync('fixtures/events-batch-1.json')).events[0],
     expires_at: '2026-09-28T12:00:00Z', attributes: { area_id: 'tw.63000100', theme: 'road', status } };
 }
+function ncdrEvent(relevance, eventId) {
+  const value = event();
+  value.event_id = eventId;
+  value.event_type = 'NCDR_HAZARD';
+  value.attributes = { ...value.attributes, theme: 'hazard', operational_relevance: relevance };
+  return value;
+}
 function build(results, extra = {}) { return buildGovernmentFeed({ ...keys, now, results, ...extra }); }
 async function restore(output) { return readPreviousEvents(output.feed, async name => output.files.get(name), keys.publicKey); }
+
+test('public NCDR feed excludes BACKGROUND events while retaining operational events', () => {
+  const output = build([{
+    id: 'ncdr',
+    status: 'ok',
+    events: [
+      ncdrEvent('BACKGROUND', 'ncdr:background'),
+      ncdrEvent('HIGH_IMPACT', 'ncdr:high-impact'),
+    ],
+  }]);
+
+  const publishedEvents = [...output.files.values()].flatMap((chunk) => chunk.events);
+  assert.deepEqual(publishedEvents.map((value) => value.event_id), ['ncdr:high-impact']);
+  assert.equal(output.feed.sources[0].event_count, 1);
+});
+
+test('public NCDR rebuild removes BACKGROUND events from the previous public ledger', () => {
+  const first = build([{ id: 'ncdr', status: 'ok', events: [ncdrEvent('HIGH_IMPACT', 'ncdr:active')] }]);
+  const second = build([{ id: 'ncdr', status: 'unavailable' }], {
+    previous: first.feed,
+    previousEvents: {
+      ncdr: [
+        ncdrEvent('BACKGROUND', 'ncdr:background'),
+        ncdrEvent('HIGH_IMPACT', 'ncdr:active'),
+      ],
+    },
+  });
+
+  const publishedEvents = [...second.files.values()].flatMap((chunk) => chunk.events);
+  assert.deepEqual(publishedEvents.map((value) => value.event_id), ['ncdr:active']);
+});
+
 test('publisher rejects conflicting revisions and detects rollback before upload', async () => {
   const first = build([{ id: 'tdx-road', status: 'ok', events: [event()] }]);
   const conflict = build([{ id: 'tdx-road', status: 'ok', events: [event('OPEN')] }]);
@@ -31,6 +70,17 @@ test('government release verifies every layer and excludes credential-bearing pr
   const bundle = { manifest: output.feed.datasets[0].manifest, chunks: [...output.files.values()] };
   assert.equal(verifyBundle(bundle, keys.publicKey, { trustedKeyIds: ['government-feed-2026'] }).valid, true);
   assert.equal(JSON.stringify([...output.files.values()]).includes('apikey=secret'), false);
+});
+
+test('government feed signing key metadata comes from the server publisher when provided', () => {
+  const output = build([{ id: 'tdx-road', status: 'ok', events: [event()] }], {
+    signingKeyId: 'server-government-2026',
+  });
+  assert.equal(output.feed.signing_key_id, 'server-government-2026');
+  assert.equal(output.files.values().next().value.signing_key_id, 'server-government-2026');
+  assert.doesNotThrow(() => verifyFeed(output.feed, keys.publicKey, {
+    signingKeyId: 'server-government-2026',
+  }));
 });
 test('unchanged events reuse immutable chunks and do not download new versions', async () => {
   const first = build([{ id: 'tdx-road', status: 'ok', events: [event()] }]);

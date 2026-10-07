@@ -1,0 +1,117 @@
+name: Azure data service
+
+on:
+  workflow_dispatch:
+    inputs:
+      emergency_medical_roster_configured:
+        description: Use reviewed roster and crosswalk files already staged in the private Azure Files share
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: azure-production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sign in with GitHub OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Provision Azure prerequisites
+        id: bootstrap
+        shell: bash
+        env:
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          DEPLOYMENT_PRINCIPAL_OBJECT_ID: ${{ vars.AZURE_DEPLOYMENT_PRINCIPAL_OBJECT_ID }}
+        run: |
+          test -n "$AZURE_RESOURCE_GROUP"
+          test -n "$DEPLOYMENT_PRINCIPAL_OBJECT_ID"
+          az deployment group create \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "resilientgeo-bootstrap-${GITHUB_RUN_ID}" \
+            --template-file deploy/azure/main.bicep \
+            --parameters location=eastasia enableApps=false deploymentPrincipalObjectId="$DEPLOYMENT_PRINCIPAL_OBJECT_ID" \
+            --output none
+          ACR_NAME="$(az deployment group show \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "resilientgeo-bootstrap-${GITHUB_RUN_ID}" \
+            --query properties.outputs.acrName.value --output tsv)"
+          VAULT_NAME="$(az deployment group show \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "resilientgeo-bootstrap-${GITHUB_RUN_ID}" \
+            --query properties.outputs.keyVaultName.value --output tsv)"
+          REGISTRY="$(az deployment group show \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "resilientgeo-bootstrap-${GITHUB_RUN_ID}" \
+            --query properties.outputs.acrLoginServer.value --output tsv)"
+          echo "acr_name=$ACR_NAME" >> "$GITHUB_OUTPUT"
+          echo "vault_name=$VAULT_NAME" >> "$GITHUB_OUTPUT"
+          echo "registry=$REGISTRY" >> "$GITHUB_OUTPUT"
+
+      - name: Sign in to ACR
+        env:
+          ACR_NAME: ${{ steps.bootstrap.outputs.acr_name }}
+        run: az acr login --name "$ACR_NAME"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build and push immutable container image
+        id: image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile
+          push: true
+          provenance: false
+          tags: ${{ steps.bootstrap.outputs.registry }}/resilientgeo:${{ github.sha }}
+
+      - name: Store runtime secrets in Key Vault
+        env:
+          VAULT_NAME: ${{ steps.bootstrap.outputs.vault_name }}
+          SIGNING_PRIVATE_KEY_PEM: ${{ secrets.GOVERNMENT_SIGNING_PRIVATE_KEY }}
+          CWA_API_KEY: ${{ secrets.CWA_API_KEY }}
+          NCDR_API_KEY: ${{ secrets.NCDR_ALERT_API_KEY }}
+        shell: bash
+        run: |
+          test -n "$SIGNING_PRIVATE_KEY_PEM"
+          test -n "$CWA_API_KEY"
+          test -n "$NCDR_API_KEY"
+          SIGNING_PUBLIC_KEY_DER="$(printf '%s' "$SIGNING_PRIVATE_KEY_PEM" | openssl pkey -pubout -outform DER | base64 | tr -d '\n')"
+          EXPECTED_PUBLIC_KEY_DER="$(node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+
+          const trustedKeys = JSON.parse(readFileSync('flutter/assets/data/trusted-keys.json', 'utf8'));
+          process.stdout.write(trustedKeys['government-feed-2026'] ?? '');
+          NODE
+          )"
+          test -n "$EXPECTED_PUBLIC_KEY_DER"
+          test "$SIGNING_PUBLIC_KEY_DER" = "$EXPECTED_PUBLIC_KEY_DER"
+          SIGNING_PUBLIC_KEY_PEM="$(printf '%s' "$SIGNING_PRIVATE_KEY_PEM" | openssl pkey -pubout)"
+          az keyvault secret set --vault-name "$VAULT_NAME" --name signing-private-key-pem --value "$SIGNING_PRIVATE_KEY_PEM" --output none
+          az keyvault secret set --vault-name "$VAULT_NAME" --name signing-public-key-pem --value "$SIGNING_PUBLIC_KEY_PEM" --output none
+          az keyvault secret set --vault-name "$VAULT_NAME" --name cwa-api-key --value "$CWA_API_KEY" --output none
+          az keyvault secret set --vault-name "$VAULT_NAME" --name ncdr-api-key --value "$NCDR_API_KEY" --output none
+
+      - name: Deploy API and scheduled jobs by image digest
+        env:
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+          REGISTRY: ${{ steps.bootstrap.outputs.registry }}
+          EMERGENCY_MEDICAL_ROSTER_CONFIGURED: ${{ inputs.emergency_medical_roster_configured }}
+        run: |
+          az deployment group create \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "resilientgeo-apps-${GITHUB_RUN_ID}" \
+            --template-file deploy/azure/main.bicep \
+            --parameters location=eastasia enableApps=true emergencyMedicalRosterConfigured="$EMERGENCY_MEDICAL_ROSTER_CONFIGURED" imageDigest="${REGISTRY}/resilientgeo@${IMAGE_DIGEST}" \
+            --output none

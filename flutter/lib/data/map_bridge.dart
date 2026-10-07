@@ -24,7 +24,7 @@ class MapBridge {
   Future<Map<String, dynamic>> configureGovernmentSync({
     required String url,
     required bool enabled,
-    String area = 'taipei',
+    String area = 'all',
   }) => _invokeRequiredMap('configureGovernmentSync', {
     'url': url,
     'enabled': enabled,

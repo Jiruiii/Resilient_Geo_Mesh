@@ -10,6 +10,7 @@ const FEATURE_TYPES = new Set([
   'SHELTER',
   'HOSPITAL',
   'CLINIC',
+  'MEDICAL_FACILITY',
   'POI',
   'OSM_FEATURE',
 ]);
@@ -165,7 +166,22 @@ export function validateFeatureShape(feature, { signed = true } = {}) {
   }
   if (feature.schema_version !== 'feature-v0') errors.push('schema_version must be feature-v0');
   errors.push(...requiredStringErrors(feature));
-  errors.push(...geometryErrors(feature.geometry));
+  const directoryEntry = feature.layer_id === 'taiwan-medical-directory'
+    && feature.feature_type === 'MEDICAL_DIRECTORY_ENTRY';
+  if (directoryEntry) {
+    if (feature.geometry !== null) errors.push('medical directory geometry must be null');
+    const status = feature.properties?.geometry_status;
+    const pointId = feature.properties?.point_feature_id;
+    if (!['located', 'unresolved', 'excluded'].includes(status)) {
+      errors.push('medical directory geometry_status is invalid');
+    } else if (status === 'located' && (typeof pointId !== 'string' || pointId.length === 0)) {
+      errors.push('located medical directory entries require point_feature_id');
+    } else if (status !== 'located' && pointId !== null) {
+      errors.push('unlocated medical directory entries cannot have point_feature_id');
+    }
+  } else {
+    errors.push(...geometryErrors(feature.geometry));
+  }
   if (!isObject(feature.properties)) errors.push('properties must be an object');
   let issuedAt;
   let expiresAt;

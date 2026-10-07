@@ -9,7 +9,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 import java.time.Instant
-import kotlin.math.cos
 
 /**
  * Replays data/fixtures/neihu/evacuation-scenario.json the way a phone would:
@@ -23,34 +22,11 @@ class EvacuationScenarioTest {
     private val origin = scenario.getJSONObject("origin").let { LonLat(it.getDouble("lon"), it.getDouble("lat")) }
     private val graph = RoutingTestSupport.realGraph()
 
-    /**
-     * What Flutter asks Android about: the five packaged shelters nearest by
-     * air distance (shortlistShelterCandidates in evacuation_models.dart),
-     * keyed by name.
-     */
-    private val shelters: Map<String, Pair<String, LonLat>> by lazy {
-        val all = File("src/main/assets/static/taiwan/shelter/chunks").listFiles()!!.sortedBy { it.name }
-            .flatMap { file ->
-                val features = JSONObject(file.readText()).getJSONArray("features")
-                (0 until features.length()).map { features.getJSONObject(it) }
-            }
-            .filter { it.getJSONObject("geometry").optString("type") == "Point" }
-            .map { feature ->
-                val coordinates = feature.getJSONObject("geometry").getJSONArray("coordinates")
-                Triple(
-                    feature.getString("feature_id"),
-                    feature.getJSONObject("properties").optString("name"),
-                    LonLat(coordinates.getDouble(0), coordinates.getDouble(1)),
-                )
-            }
-        val cosLat = cos(Math.toRadians(origin.lat))
-        all.sortedWith(
-            compareBy<Triple<String, String, LonLat>>(
-                { (it.third.lon - origin.lon).let { d -> d * cosLat * d * cosLat } + (it.third.lat - origin.lat).let { d -> d * d } },
-                { it.first },
-            ),
-        ).take(5).associate { (id, name, point) -> name to (id to point) }
-    }
+    /** Small route fixture: production shelter data is downloaded and cached by MeshRepository. */
+    private val shelters = mapOf(
+        "西湖國小" to ("shelter:5582" to LonLat(121.5657, 25.0838)),
+        "西湖國中" to ("shelter:5593" to LonLat(121.5657, 25.0858)),
+    )
 
     private fun chunkEvents(name: String): List<String> {
         val text = checkNotNull(javaClass.classLoader?.getResourceAsStream("fixtures/evacuation-scenario/$name")) {

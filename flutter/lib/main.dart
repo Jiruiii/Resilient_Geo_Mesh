@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:maplibre_gl/maplibre_gl.dart';
 
 import 'app/map_app_controller.dart';
 import 'data/app_performance.dart';
@@ -15,6 +18,11 @@ import 'widgets/startup_splash.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+    // The emulator's Virtual Display path can leave the GL map black while
+    // Flutter overlays continue to paint. Create the map as a TextureView.
+    MapLibreMap.useHybridComposition = true;
+  }
   AppPerformance.register();
   if (kIsWeb) {
     MapLibreWebRuntime.configure();
@@ -105,7 +113,7 @@ class _MapAppHomeState extends State<_MapAppHome> {
             SafeArea(
               bottom: false,
               child: MaterialBanner(
-                content: const Text('事件更新失敗，目前顯示上次取得的資料'),
+                content: const Text('事件更新失敗，目前保留最後一份已驗證資料'),
                 actions: <Widget>[
                   TextButton(
                     onPressed:
@@ -126,7 +134,6 @@ class _MapAppHomeState extends State<_MapAppHome> {
                   staticFeatures: controller.staticFeatures,
                   staticFeaturesPending: controller.staticFeaturesPending,
                   staticFeaturesFailed:
-                      controller.nativeBridgeAvailable &&
                       controller.staticFeatureLoadError != null,
                   initialState: controller.initialState,
                   bridge: controller.bridge,

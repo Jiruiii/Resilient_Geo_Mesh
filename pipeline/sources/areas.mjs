@@ -1,10 +1,8 @@
 import { isGeometryInBoundary } from '../lib/geo.mjs';
 
-const AREA_CODE_FIELDS = [
-  'COUNTYCODE', 'COUNTY_CODE', 'county_code', '縣市代碼', 'COUNTYID',
-  'TOWNCODE', 'TOWN_CODE', 'town_code', '鄉鎮市區代碼', 'TOWNID',
-  'VILLAGECODE', 'VILLAGE_CODE', 'village_code', '村里代碼',
-];
+const COUNTY_CODE_FIELDS = ['COUNTYCODE', 'COUNTY_CODE', 'county_code', '縣市代碼', 'COUNTYID'];
+const TOWN_CODE_FIELDS = ['TOWNCODE', 'TOWN_CODE', 'town_code', '鄉鎮市區代碼', 'TOWNID'];
+const VILLAGE_CODE_FIELDS = ['VILLAGECODE', 'VILLAGE_CODE', 'village_code', '村里代碼'];
 
 const AREA_NAME_FIELDS = [
   'COUNTYNAME', 'COUNTY_NAME', 'county_name', '縣市名稱', '縣市', 'CountyName', 'County', 'county', 'City', 'city',
@@ -187,14 +185,6 @@ function recordText(record) {
     .join('|');
 }
 
-function recordCodes(record) {
-  return AREA_CODE_FIELDS
-    .map((field) => record?.[field])
-    .filter((value) => value !== undefined && value !== null)
-    .map(normalizeCode)
-    .filter(Boolean);
-}
-
 function levelRank(level) {
   return { area: 0, county: 1, town: 2, village: 3 }[level] ?? 0;
 }
@@ -214,18 +204,30 @@ function chooseMostSpecific(areas) {
 
 function matchArea(catalog, record, geometry) {
   const textValue = recordText(record);
-  const codes = new Set(recordCodes(record));
-  const codeMatches = catalog.areas.filter((area) => (
-    [area.village_code, area.town_code, area.county_code].some((code) => code && codes.has(code))
-  ));
-  if (codeMatches.length > 0) return chooseMostSpecific(codeMatches);
+  const codes = {
+    county: normalizeCode(propertyValue(record, ...COUNTY_CODE_FIELDS)),
+    town: normalizeCode(propertyValue(record, ...TOWN_CODE_FIELDS)),
+    village: normalizeCode(propertyValue(record, ...VILLAGE_CODE_FIELDS)),
+  };
+  for (const [recordLevel, areaField] of [
+    ['village', 'village_code'],
+    ['town', 'town_code'],
+  ]) {
+    const code = codes[recordLevel];
+    if (!code) continue;
+    const codeMatches = catalog.areas.filter((area) => area[areaField] === code);
+    if (codeMatches.length > 0) return chooseMostSpecific(codeMatches);
+  }
 
   // A point is the strongest area signal. This also handles CWA/TDX records
   // that carry a city name but have a precise WGS84 point. A polygon fallback
   // is deliberately evaluated after names because a county warning polygon
   // can intersect many town/village boundaries.
   if (geometry?.type === 'Point') {
-    const geometryMatches = catalog.areas.filter((area) => isGeometryInBoundary(geometry, area.geometry));
+    const geometryMatches = catalog.areas.filter((area) => (
+      (!codes.county || !area.county_code || area.county_code === codes.county)
+      && isGeometryInBoundary(geometry, area.geometry)
+    ));
     if (geometryMatches.length > 0) return chooseMostSpecific(geometryMatches);
   }
 
@@ -234,13 +236,24 @@ function matchArea(catalog, record, geometry) {
       const matchedNames = namesForArea(area).filter((name) => textValue.includes(name));
       return { area, matchedNames };
     })
-    .filter(({ matchedNames }) => matchedNames.length > 0)
+    .filter(({ area, matchedNames }) => (
+      matchedNames.length > 0 && (!codes.county || !area.county_code || area.county_code === codes.county)
+    ))
     .sort((left, right) => (
       right.matchedNames.length - left.matchedNames.length
       || levelRank(right.area.level) - levelRank(left.area.level)
       || left.area.area_id.localeCompare(right.area.area_id)
-    ));
+  ));
   if (nameMatches.length > 0) return nameMatches[0].area;
+  if (codes.county) {
+    const countyMatches = catalog.areas.filter((area) => (
+      area.level === 'county' && area.county_code === codes.county
+    ));
+    if (countyMatches.length > 0) return chooseMostSpecific(countyMatches);
+    const sameCountyAreas = catalog.areas.filter((area) => area.county_code === codes.county);
+    if (sameCountyAreas.length === 1) return sameCountyAreas[0];
+    return undefined;
+  }
   if (!geometry) return undefined;
   return chooseMostSpecific(catalog.areas.filter((area) => isGeometryInBoundary(geometry, area.geometry)));
 }
@@ -262,5 +275,53 @@ export function createAreaResolvers(catalog) {
         ? { type: 'Feature', properties: { area_id: area.area_id }, geometry: area.geometry }
         : undefined;
     },
+  };
+}
+
+/** Return canonical town names keyed by their area-catalog town code. */
+export function townNameMapFromAreaCatalog(catalog) {
+  if (catalog?.schema_version !== 'area-catalog-v0' || !Array.isArray(catalog.areas)) {
+    throw new AreaCatalogError('townNameMapFromAreaCatalog requires an area-catalog-v0 value', {
+      code: 'AREA_CATALOG_INVALID',
+    });
+  }
+  return Object.fromEntries(catalog.areas
+    .filter((area) => area.level === 'town' && area.town_code && area.town_name)
+    .map((area) => [area.town_code, area.town_name]));
+}
+
+/**
+ * Resolve legacy source town codes from an already-verified official point.
+ * A code is restored only when that point falls inside exactly one catalog town.
+ */
+export function createTownCodeResolver(catalog) {
+  if (catalog?.schema_version !== 'area-catalog-v0' || !Array.isArray(catalog.areas)) {
+    throw new AreaCatalogError('createTownCodeResolver requires an area-catalog-v0 value', {
+      code: 'AREA_CATALOG_INVALID',
+    });
+  }
+  const towns = catalog.areas.filter((area) => area.level === 'town' && area.town_code);
+  const canonicalTownCodes = new Set(towns.map((area) => area.town_code));
+  const resolvedBySourcePoint = new Map();
+  return (sourceTownCode, coordinate, countyCode = null) => {
+    const normalizedSourceCode = normalizeCode(sourceTownCode);
+    if (normalizedSourceCode && canonicalTownCodes.has(normalizedSourceCode)) {
+      const canonical = towns.find((area) => area.town_code === normalizedSourceCode);
+      if (!countyCode || canonical?.county_code === countyCode) return normalizedSourceCode;
+    }
+    if (!Array.isArray(coordinate) || coordinate.length !== 2 || !coordinate.every(Number.isFinite)) return null;
+    const cacheKey = normalizedSourceCode
+      ? `${countyCode ?? ''}\u0000${normalizedSourceCode}\u0000${coordinate[0]}\u0000${coordinate[1]}`
+      : null;
+    if (cacheKey && resolvedBySourcePoint.has(cacheKey)) return resolvedBySourcePoint.get(cacheKey);
+    const point = { type: 'Point', coordinates: coordinate };
+    const matches = new Set(towns
+      .filter((area) => !countyCode || area.county_code === countyCode)
+      .filter((area) => isGeometryInBoundary(point, area.geometry))
+      .map((area) => area.town_code));
+    if (matches.size !== 1) return null;
+    const [townCode] = matches;
+    if (cacheKey) resolvedBySourcePoint.set(cacheKey, townCode);
+    return townCode;
   };
 }

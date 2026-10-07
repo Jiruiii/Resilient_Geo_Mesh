@@ -12,12 +12,10 @@ import {
 export const DEFAULT_TDX_ENDPOINT = 'https://tdx.transportdata.tw/api/basic/v1/Traffic/RoadEvent/LiveEvent/City/Taipei?$format=JSON';
 export const DEFAULT_TDX_TOKEN_ENDPOINT = 'https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token';
 export const DEFAULT_TDX_FRESHNESS_SECONDS = 900;
+export const DEFAULT_TDX_ENDPOINT_DELAY_MS = 1000;
 export const DEFAULT_TDX_CITY_CODES = [
   'Taipei', 'NewTaipei', 'Taoyuan', 'Taichung', 'Tainan', 'Kaohsiung',
-  'Keelung', 'Hsinchu', 'HsinchuCounty', 'MiaoliCounty', 'ChanghuaCounty',
-  'NantouCounty', 'YunlinCounty', 'Chiayi', 'ChiayiCounty', 'PingtungCounty',
-  'YilanCounty', 'HualienCounty', 'TaitungCounty', 'PenghuCounty',
-  'KinmenCounty', 'LienchiangCounty',
+  'Keelung', 'MiaoliCounty', 'ChiayiCounty', 'PingtungCounty', 'YilanCounty', 'KinmenCounty',
 ];
 export const DEFAULT_TDX_NATIONWIDE_ENDPOINTS = DEFAULT_TDX_CITY_CODES.map(
   (city) => `https://tdx.transportdata.tw/api/basic/v1/Traffic/RoadEvent/LiveEvent/City/${city}?$format=JSON`,
@@ -25,6 +23,20 @@ export const DEFAULT_TDX_NATIONWIDE_ENDPOINTS = DEFAULT_TDX_CITY_CODES.map(
 
 const RFC3339_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/u;
 const SEVERITIES = new Set(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL', 'UNKNOWN']);
+
+function wait(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function validateEndpointDelay(value) {
+  const delay = Number(value);
+  if (!Number.isInteger(delay) || delay < 0 || delay > 60_000) {
+    throw new TdxSourceError('TDX endpoint delay must be an integer from 0 to 60000 milliseconds', {
+      code: 'TDX_ENDPOINT_DELAY_INVALID',
+    });
+  }
+  return delay;
+}
 
 export class TdxCredentialError extends Error {
   constructor(message = 'TDX credentials are required: set TDX_CLIENT_ID and TDX_CLIENT_SECRET') {
@@ -568,12 +580,16 @@ export async function fetchTdxRoadEvents({
   fetchImpl = globalThis.fetch,
   retrievedAt = new Date().toISOString(),
   timeoutMs = 30000,
+  endpointDelayMs = process.env.TDX_ENDPOINT_DELAY_MS ?? DEFAULT_TDX_ENDPOINT_DELAY_MS,
+  sleepImpl = wait,
 } = {}) {
   if (typeof clientId !== 'string' || clientId.length === 0 || typeof clientSecret !== 'string' || clientSecret.length === 0) {
     throw new TdxCredentialError();
   }
   if (typeof fetchImpl !== 'function') throw new TypeError('fetchImpl must be a function');
+  if (typeof sleepImpl !== 'function') throw new TypeError('sleepImpl must be a function');
   if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) throw new TypeError('timeoutMs must be positive');
+  const endpointDelay = validateEndpointDelay(endpointDelayMs);
   assertTimestamp(retrievedAt, 'retrievedAt');
 
   const accessToken = await fetchTdxAccessToken({
@@ -594,7 +610,8 @@ export async function fetchTdxRoadEvents({
   const allowPartial = scope === 'taiwan' && requestedEndpoints.length > 1;
   const results = [];
   const sourceEntries = [];
-  for (const requestedEndpoint of requestedEndpoints) {
+  for (const [endpointIndex, requestedEndpoint] of requestedEndpoints.entries()) {
+    if (endpointIndex > 0 && endpointDelay > 0) await sleepImpl(endpointDelay);
     try {
       const result = await requestJson(requestedEndpoint, {
         fetchImpl,
