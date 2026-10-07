@@ -8,6 +8,7 @@ import {
   requestJson,
   validateRawSnapshot,
 } from '../lib/source.mjs';
+import { sha256Canonical } from '../lib/canonical.mjs';
 
 // NCDR's authenticated alert datastore path is configurable because the
 // concrete dataset route is assigned during API onboarding.
@@ -517,7 +518,11 @@ function normalizeRecord(record, index, rawSnapshot, options) {
     description: sourceDescription,
     affectedArea,
   });
-  const area = areaMetadataForRecord(options, record, curated.geometry);
+  // Resolve administrative metadata from the source geometry. When an
+  // nationwide alert has no geometry, curatedGeometry deliberately falls
+  // back to the nationwide boundary; resolving that huge fallback polygon
+  // against every catalog area would repeat a very expensive scan.
+  const area = areaMetadataForRecord(options, record, geometry);
   return {
     schema_version: 'event-v0',
     namespace: options.namespace ?? 'official.ncdr',
@@ -600,6 +605,7 @@ export async function fetchNcdrHazards({
   timeoutMs = 30000,
   query = { format: 'JSON' },
   detailConcurrency = process.env.NCDR_DETAIL_CONCURRENCY ?? 4,
+  previousSnapshot,
 } = {}) {
   const token = credentialValue(credentials);
   if (typeof token !== 'string' || token.trim() === '') throw new NcdrCredentialError();
@@ -630,6 +636,9 @@ export async function fetchNcdrHazards({
     }
 
     const resolvedDetailEndpoint = detailEndpointFor(endpoint, detailEndpoint);
+    const previousDetails = new Map((previousSnapshot?.payload?.details ?? [])
+      .filter((detail) => detail?.capid && detail?.index_record)
+      .map((detail) => [String(detail.capid), detail]));
     const detailResults = new Array(indexRecords.length);
     let nextIndex = 0;
     async function fetchDetailWorker() {
@@ -641,6 +650,11 @@ export async function fetchNcdrHazards({
         const capid = capidFromIndexRecord(indexRecord);
         if (!capid) {
           detailResults[index] = { failure: detailFailure({ code: 'NCDR_CAPID_MISSING' }, null) };
+          continue;
+        }
+        const previousDetail = previousDetails.get(String(capid));
+        if (previousDetail && sha256Canonical(previousDetail.index_record) === sha256Canonical(indexRecord)) {
+          detailResults[index] = { detail: previousDetail };
           continue;
         }
         try {

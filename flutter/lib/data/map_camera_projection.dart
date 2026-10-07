@@ -66,6 +66,23 @@ class MapCameraProjection {
     );
   }
 
+  /// Returns the shared screen translation for a camera pan at a fixed zoom.
+  /// Cached marker positions can use this offset instead of projecting each
+  /// point again for every camera callback.
+  static Offset panTranslation({
+    required GeoPoint fromCameraTarget,
+    required GeoPoint toCameraTarget,
+    required double zoom,
+  }) {
+    final worldSize = _tileSize * math.pow(2, zoom).toDouble();
+    final fromX = _longitudeToWorld(fromCameraTarget.longitude);
+    final toX = _longitudeToWorld(toCameraTarget.longitude);
+    final deltaX = _wrapWorldDelta(fromX - toX);
+    final fromY = _latitudeToWorld(fromCameraTarget.latitude);
+    final toY = _latitudeToWorld(toCameraTarget.latitude);
+    return Offset(deltaX * worldSize, (fromY - toY) * worldSize);
+  }
+
   static List<Offset> projectPoints({
     required Iterable<GeoPoint> points,
     required GeoPoint cameraTarget,

@@ -21,6 +21,9 @@
 .env.*
 !.env.example
 
+# Installed JavaScript dependencies.
+node_modules/
+
 # Python test/runtime artifacts.
 __pycache__/
 *.py[cod]

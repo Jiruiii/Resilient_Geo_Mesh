@@ -31,7 +31,7 @@ class GovernmentSyncManager private constructor(context: Context) {
         }
     }
 
-    fun configure(url: String, enabled: Boolean, area: String = prefs.getString("area", "taipei").orEmpty()) {
+    fun configure(url: String, enabled: Boolean, area: String = prefs.getString("area", "all").orEmpty()) {
         require(area in setOf("taipei", "all"))
         val normalized = if (url.isBlank()) "" else GovernmentFeedSync.validateBase(url, debug).toString()
         prefs.edit().putString("url", normalized).putBoolean("enabled", enabled).putString("area", area).commit()
@@ -40,7 +40,7 @@ class GovernmentSyncManager private constructor(context: Context) {
     fun message(): Map<String, Any?> {
         val sources = runCatching { JSONArray(prefs.getString("sources", "[]")) }.getOrElse { JSONArray() }
         return mapOf("url" to prefs.getString("url", ""), "enabled" to prefs.getBoolean("enabled", true),
-            "syncing" to syncing, "area" to prefs.getString("area", "taipei"), "last_attempt" to prefs.getString("attempt", null),
+            "syncing" to syncing, "area" to prefs.getString("area", "all"), "last_attempt" to prefs.getString("attempt", null),
             "last_success" to prefs.getString("success", null), "error" to prefs.getString("error", null),
             "revision" to prefs.getLong("revision", 0), "downloaded" to prefs.getInt("downloaded", 0),
             "sources" to (0 until sources.length()).map { i ->
@@ -48,7 +48,7 @@ class GovernmentSyncManager private constructor(context: Context) {
                 mapOf("id" to source.optString("id"), "status" to source.optString("status"),
                     "last_success_at" to source.optString("last_success_at").takeIf { it != "null" && it.isNotBlank() },
                     "event_count" to source.optInt("event_count"), "unresolved_count" to source.optInt("unresolved_count"))
-            })
+            }.filter { it["id"] == "ncdr" })
     }
     suspend fun sync(automatic: Boolean = false): Map<String, Any?> = withContext(Dispatchers.IO) {
         mutex.withLock {
@@ -61,8 +61,9 @@ class GovernmentSyncManager private constructor(context: Context) {
             prefs.edit().putString("attempt", Instant.now().toString()).putLong("attempt_millis", System.currentTimeMillis()).commit()
             try {
                 val repository = MeshRepository(context)
+                repository.purgeUnsupportedOfficialEventData()
                 val trust = TrustedKeyStore.fromJson(context.assets.open("trust/trusted-keys.json").bufferedReader().use { it.readText() })
-                val downloadAll = prefs.getString("area", "taipei") == "all"
+                val downloadAll = prefs.getString("area", "all") == "all"
                 val sync = GovernmentFeedSync(trust, { GovernmentFeedSync.download(it) },
                     { dataset, namespace, id -> repository.cachedChunkJson(dataset, namespace, id) },
                     { chunk -> repository.ingestChunk(chunk) is ChunkIngestResult.Applied }, includeArea = { area ->

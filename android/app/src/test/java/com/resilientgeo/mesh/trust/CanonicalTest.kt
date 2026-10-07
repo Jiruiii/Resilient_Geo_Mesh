@@ -66,6 +66,21 @@ class CanonicalTest {
     }
 
     @Test
+    fun `streamed canonical array hash matches canonical JSON array output`() {
+        val values = listOf<Any?>(
+            JSONObject().put("name", "臺灣").put("count", 24),
+            JSONObject().put("name", "line1\nline2").put("value", 121.599),
+            JSONObject.NULL,
+        )
+        val array = org.json.JSONArray().apply { values.forEach(::put) }
+
+        assertEquals(
+            Canonical.sha256Canonical(array),
+            Canonical.sha256CanonicalArray(values.asSequence()),
+        )
+    }
+
+    @Test
     fun `fast key comparison agrees with UTF-8 byte order, surrogates included`() {
         // U+E000..U+FFFF sort *before* surrogate pairs in UTF-16 units but *after*
         // them in UTF-8 bytes; the comparator must follow the bytes.

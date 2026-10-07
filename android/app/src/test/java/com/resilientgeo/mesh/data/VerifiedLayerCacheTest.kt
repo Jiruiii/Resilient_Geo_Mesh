@@ -2,8 +2,10 @@ package com.resilientgeo.mesh.data
 
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -49,5 +51,17 @@ class VerifiedLayerCacheTest {
         cache.write("shelter", key, features)
         folder.root.listFiles()!!.single().writeText("{\"cache_key\":\"$key\",\"features\":[")
         assertNull(cache.read("shelter", key))
+    }
+
+    @Test
+    fun `verified bundle marker only matches the exact content key`() {
+        val cache = VerifiedLayerCache(folder.root)
+        val exactKey = "sha256:0123456789abcdef"
+
+        assertFalse(cache.matchesVerified("taiwan-medical-directory", exactKey))
+        cache.markVerified("taiwan-medical-directory", exactKey)
+
+        assertTrue(cache.matchesVerified("taiwan-medical-directory", exactKey))
+        assertFalse(cache.matchesVerified("taiwan-medical-directory", "$exactKey-different"))
     }
 }

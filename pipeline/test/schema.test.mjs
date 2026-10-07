@@ -244,7 +244,6 @@ test('catalog registers every data category and keeps GNSS device-local', () => 
     'CWA',
     'NCDR',
     '消防署避難所',
-    '消防署避難所開設情形',
     '醫療資料',
     'DEM / DSM',
     '網路資料',

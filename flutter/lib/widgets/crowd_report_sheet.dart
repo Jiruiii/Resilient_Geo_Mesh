@@ -243,10 +243,11 @@ class CrowdReportSheet extends StatelessWidget {
                     final isRoad =
                         result.searchKind == 'road' ||
                         result.feature?.kind == 'road';
+                    final coordinate = result.coordinate;
                     final subtitle = <String>[result.typeLabel];
-                    if (isRoad) {
+                    if (isRoad && coordinate != null) {
                       subtitle.add(
-                        '座標：${_searchResultCoordinateText(result.coordinate)}',
+                        '座標：${_searchResultCoordinateText(coordinate)}',
                       );
                     } else {
                       if (result.region != null && result.region!.isNotEmpty) {
@@ -262,7 +263,7 @@ class CrowdReportSheet extends StatelessWidget {
                       title: Text(result.displayTitle),
                       subtitle: Text(subtitle.join('・')),
                       onTap:
-                          onAddressSelected == null
+                          onAddressSelected == null || result.coordinate == null
                               ? null
                               : () => onAddressSelected!(result),
                     );

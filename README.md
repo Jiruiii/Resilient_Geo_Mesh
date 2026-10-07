@@ -6,7 +6,7 @@
 
 > 2026-09-27 更新：路線已支援事件更新、到期及災害情境變更自動重算；推薦模式會重新比較可達避難所，並顯示更新原因。驗證方式見 [路線自動重算](docs/automatic-route-refresh.md)。
 
-> 政府動態資料已支援收集、簽章發布、HTTPS 增量下載及離線 BLE 轉傳。App 在「個人設定 → 政府資料更新」顯示來源最近取得時間；免費發布預設每兩小時，不能視為即時推送。設定與部署見 [政府資料更新](docs/government-online-sync.md)。
+> 2026-10-05 地圖更新：Web 與 Android 已恢復使用隨 App 提供的 OSM／Protomaps PMTiles；NLSC／OSM 切換介面、底圖下載器及 Server `/maps/*` 路徑已移除，只保留 `TaiwanEMap6.mbtiles` 作為歷史試用來源。五個 OSM PMTiles、zoom 與經緯度限制見 [Map_description.md](Map_description.md)。政府簽章 feed、靜態圖層、門牌包及 Web／Android 資料串接仍保留；本機資料與逐縣市涵蓋見[資料說明](data_description.md)及[點位涵蓋報告](docs/data-coverage-2026-10-04.md)。正式 HTTPS Server 與 Android 實機驗收仍待完成。
 
 ## 問題與目標
 
@@ -38,7 +38,7 @@
 
 ## 核心功能
 
-- **Flutter 離線優先的災情地圖** — MapLibre 讀取以 Git LFS 管理的台灣 Protomaps PMTiles 向量底圖，並疊加本機行政區、離島、著名地標與道路搜尋索引；避難所、醫療院所與事件以版本化 asset／Room 提供。關掉網路、強制結束 App 再重開，地圖與已驗證事件照常顯示，並以 CURRENT／EXPIRED／UNVERIFIED 分色標示新鮮度與可信狀態。
+- **離線災情地圖** — Web 與 Android 使用隨 App 提供的 OSM／Protomaps 五個 PMTiles 向量套件，不透過 Server 下載底圖。相機縮放為 z5–17，地理限制與來源細節見 [Map_description.md](Map_description.md)。道路搜尋索引和雙北路網是獨立的本機資料；避難所／醫療點位使用簽章靜態 layer，告警由簽章 feed 更新。Server 尚未部署時不代表新點位已下載；缺少已驗證點位資料時，不顯示舊的未核實醫療快照。
 - **Peer-to-peer 分片交換** — 兩台手機經 BLE GATT 完成 `HELLO`（交換資料集摘要）→ `DIFF`（算出雙方缺哪些分片）→ `REQUEST`（依 critical／稀有度／大小／TTL 排序）→ `TRANSFER`（分段、位元組級可中斷續傳）→ `VERIFY/APPLY`（驗證後原子寫入），**只交換對方缺少的分片**。
 - **Store-Carry-Forward（DTN）** — A 傳給 B，B 移動後遇到 C 再傳給 C；A 與 C 從不需要同時連線。已用三台實機驗證：force-stop A 之後，C 仍經 B 收到並驗證全部事件。節點會把通過驗證的分片記進本機庫存，因此收到資料後能對下一個 peer 如實宣告「我有這些」，而不是回報空手。
 - **端到端可信度** — 伺服器端以 Ed25519 簽章，手機端在寫入前驗證 hash、簽章、版本與 TTL。版本倒退一律拒絕；官方資料與群眾回報分屬不同 namespace，永不互相覆蓋。私鑰從不進入 repo，也不隨 App 出貨。
@@ -65,9 +65,9 @@ flowchart LR
 
 **協作方式**：後端（`pipeline/`）是純 Node.js CLI，負責把多來源資料正規化成統一的 `event-v0` 格式，依 `(area_id, theme)` 分組切片、計算 canonical SHA-256 並以 Ed25519 簽章，輸出 manifest + chunks。**私鑰只存在伺服器端**。行動端（`android/`）在收到任何分片時，先由 `ChunkVerifier` 驗證 chunk hash 與簽章、再由 `EventVerifier` 逐筆驗證事件，最後才交給 `EventIngestor` 套用版本／TTL／namespace 規則寫入 Room；驗證不過的資料絕不進入 APPLY，也不覆蓋既有資料。傳輸層藏在 `PeerTransport` 介面後方（實作為 `BleGattTransport`），同步邏輯不綁死任何單一 Android API。模擬器（`simulator/`）直接使用 `pipeline/lib` 的 JavaScript 決策與驗證函式，Android 則使用 Kotlin 移植版本；兩者透過共同資料契約與 fixture 核對行為。模擬器的接觸模型不等同實機傳輸，跨語言實作仍需各自測試。
 
-Android host 直接載入原生已驗證的靜態地物與事件，不依賴 Flutter 預覽 JSON。原生驗證、儲存或格式錯誤會顯示載入失敗；只有非 Android 的預覽環境在缺少 native bridge 時，才使用打包的展示快照。
+Android host 直接載入原生已驗證的靜態地物與事件，不依賴 Flutter 預覽 JSON。Web 在缺少 native bridge 時，會從同源服務驗證並快取簽章 layer 與告警 feed。任一端沒有已驗證資料或驗證失敗時，保留底圖並顯示資料不可用，不回退到打包的舊展示快照。
 
-沒有雲端資料庫、沒有後端服務相依；唯一的例外是把民眾回報升級為「已查證」需要政府端簽發確認事件，但沒有政府端時系統照常運作。App 固定使用單一 `MapLibreMap` renderer：台灣 Protomaps PMTiles、glyph、sprite、樣式、行政區／地標 GeoJSON 與 `taiwan-roads.json` 搜尋索引全部隨 App 內嵌；Android 啟動時將 PMTiles 串流複製到 app-private `files/maps/`，因此地圖與道路搜尋不需要網路或地圖服務憑證。ADR-001 否決的 Nearby Connections 與 Wi-Fi Direct 實作已連同它們所需的 Wi-Fi／Play Services 權限一併移除，只保留在 git 歷史與 ADR 記錄中。
+App 使用單一 `MapLibreMap` renderer。OSM／Protomaps 底圖、glyph、sprite、樣式、行政區／地標與道路搜尋索引隨 App 提供；政府簽章 feed、靜態圖層與門牌包另走 Server/API 資料流程並在用戶端驗證和快取。底圖與資料各自的範圍、來源及限制分別見 [Map_description.md](Map_description.md) 和[資料說明](data_description.md)。ADR-001 否決的 Nearby Connections 與 Wi-Fi Direct 實作已連同它們所需的 Wi-Fi／Play Services 權限一併移除，只保留在 git 歷史與 ADR 記錄中。
 
 ## 使用技術
 
@@ -75,8 +75,8 @@ Android host 直接載入原生已驗證的靜態地物與事件，不依賴 Flu
 | ------------------ | ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | AI 模型            | 未使用                                                                                | 本專案為協定與傳輸層研究，不涉及模型推論；所有排程決策（critical-first、rarest-first、地理過濾）皆為決定性規則，以利可重現量測    |
 | 前端（行動端）     | Kotlin Android host（minSdk 26／targetSdk 37）+ Flutter module                        | Flutter launcher、Room／BLE bridge、Emergency Mode 權限與原生服務                                                                 |
-| 前端（地圖）       | Flutter `maplibre_gl` + Protomaps PMTiles                                             | 台灣 z0–12 概覽與北／中／南／東 z13–15 街道向量資料；z17 僅為 overzoom；疊加行政區／離島／地標標籤、Lucide 災情、避難所、醫療 marker 與事件 GeoJSON 圖層 |
-| 後端（資料管線）   | Node.js（零外部相依，僅用內建模組）、`node:crypto` Ed25519                            | 來源擷取、正規化、分片、簽章與驗證 CLI                                                                                            |
+| 前端（地圖）       | Flutter `maplibre_gl` + OSM／Protomaps PMTiles                                      | 五個隨 App 提供的向量套件；道路搜尋索引與路網獨立；疊加行政區／離島／地標標籤、避難所、醫療 marker 與事件 GeoJSON 圖層。底圖縮放及地理範圍見 `Map_description.md` |
+| 後端（資料管線）   | Node.js、`node:crypto` Ed25519、Fastify HTTP API                                          | Pipeline 收集與簽章；Fastify 提供唯讀 Server API                                                                                |
 | 後端（模擬與分析） | Node.js 決定性模擬器、`node:test`                                                     | DTN 擴散模擬、四指標報告、位元級可重現性檢查                                                                                      |
 | 資料庫             | Room 2.6.1 / SQLite（KSP 註解處理）                                                   | 手機本機事件、版本、到期時間儲存                                                                                                  |
 | 密碼學             | Bouncy Castle `bcprov-jdk18on` 1.78.1                                                 | Android 端 Ed25519 驗簽（平台 provider 至 API 33 才支援 EdDSA）                                                                   |
@@ -136,20 +136,20 @@ python3 -m http.server 8788 --directory build/web
 # ---------- 5. Android 離線地圖（需實機或模擬器） ----------
 # 先建立 android/local.properties，內容為 sdk.dir=<Android SDK 路徑>
 cd ../android
-./gradlew assembleDebug                    # 產生含台灣 PMTiles 的 debug APK
+./gradlew assembleDebug                    # 建置地圖 App；OSM PMTiles 隨 App 提供
 ./gradlew installDebug                     # 安裝到已連線的裝置
 
 # ---------- 6. Android／資料層測試 ----------
-./gradlew testDebugUnitTest                # 48 項 JVM 單元測試
-./gradlew connectedDebugAndroidTest        # 14 項 instrumented 測試（需接實機）
+./gradlew testDebugUnitTest                # 目前 168 項 JVM 單元測試
+./gradlew connectedDebugAndroidTest        # API 36 模擬器目前 37 項 instrumented 測試
 ```
 
 地圖搜尋是離線本機查詢：`flutter/assets/map/search/taiwan-roads.json` 由指定日期的
 Geofabrik Taiwan OSM PBF 產生，資產內保存 `source_url`、`source_sha256`、snapshot
 日期與 `© OpenStreetMap contributors` attribution。可輸入道路名稱或
-`latitude, longitude`（例如 `25.011549, 121.545053`）；執行期間不呼叫 Nominatim、
-Google Geocoding 或 Places API。PMTiles 的分區街道資料上限是 z15，z17 只代表向量
-overzoom，不宣稱有 z17 的新增巷弄資料。完整重建與 hash 驗證命令見
+`latitude, longitude`（例如 `25.011549, 121.545053`）；門牌地址則使用已下載的縣市包。
+執行期間不呼叫 Nominatim、Google Geocoding 或 Places API。OSM／Protomaps PMTiles 是向量底圖，
+道路搜尋索引與路線網路仍是獨立資料。底圖與相機限制見 [Map_description.md](Map_description.md)；道路索引的重建與 hash 驗證命令見
 [`tools/maps/README.md`](tools/maps/README.md)。
 
 Chrome debug 使用本機 MapLibre GL JS、PMTiles、glyph、sprite、CanvasKit 與 UI
@@ -157,7 +157,7 @@ Chrome debug 使用本機 MapLibre GL JS、PMTiles、glyph、sprite、CanvasKit 
 真正的無網路檢查，使用上面的 release preview，在瀏覽器 Network 面板確認請求都
 留在 `localhost`。
 
-App 主畫面直接進入 Flutter 台灣離線地圖，提供道路／建物／水域／POI 向量底圖、縣市到村里的分級地名、離島與著名地標、避難所／醫療院所／事件圖層、本機搜尋、百分比縮放、目前位置、圖層設定、點位詳情與重疊點位選擇；避難所、醫療院所與事件 marker 在縮小時會聚合成圓點，點擊後再展開或進入下一層。下方另有首頁、通知、個人設定三個頁籤。「載入內建 fixture」與 Emergency Mode 仍由 Android bridge 執行。Peer Sync、BLE spike 與量測畫面是 debug-only 的原生測試 harness，不放在一般地圖主畫面。
+App 主畫面直接進入 Flutter 台灣離線地圖，底圖使用隨 App 提供的 OSM／Protomaps 向量 PMTiles，並疊加縣市到村里的分級地名、離島與著名地標、避難所／醫療院所／事件圖層。本機搜尋、百分比縮放、目前位置、圖層設定、點位詳情與重疊點位選擇仍由獨立資料提供；marker 在縮小時會聚合成圓點，點擊後再展開或進入下一層。下方另有首頁、通知、個人設定三個頁籤。「載入內建 fixture」與 Emergency Mode 仍由 Android bridge 執行。Peer Sync、BLE spike 與量測畫面是 debug-only 的原生測試 harness，不放在一般地圖主畫面。
 
 **兩機 peer sync 實測**需要兩台開啟藍牙的 Android 裝置，debug APK 可由 Android Studio 啟動對應的 `PeerSyncMilestoneActivity`，再分別指定 NODE_A（requester）／NODE_B（server）角色。逐步 demo 講稿見 [`experiments/demo.md`](experiments/demo.md)；Android 端建置細節與踩雷紀錄見 [`android/README.md`](android/README.md)。
 
@@ -196,13 +196,13 @@ App 主畫面直接進入 Flutter 台灣離線地圖，提供道路／建物／�
 
 **已知限制**
 
-- **地圖與靜態點位是版本化快照；App 仍不直接呼叫官方 API。** 地圖幾何與道路索引取自 OSM／Protomaps 快照，避難所與醫療院所使用已保存的政府資料快照；pipeline 已完成 NCDR 真實全台 snapshot smoke test，但事件尚未由正式部署的 pipeline 持續供應到 App。TDX／CWA 仍待各自的正式 live smoke test。
+- **地圖與點位採離線版本。** OSM／Protomaps 底圖隨 App 提供；NLSC 試用底圖下載器已移除，地理範圍與 zoom 記錄在 `Map_description.md`。簽章靜態資料、告警 feed 與門牌搜尋串接仍在 Web／Android 保留；17 個縣市的門牌包已簽章產生。基隆市官方 CSV 已找到且完成實檔試跑，但簽章金鑰未設定，尚未併入 catalog；連江、宜蘭、南投與嘉義市仍未找到可用的完整門牌座標來源。新 Server 尚未部署，尚未證明兩端已下載同一個正式發布版本。2026-10-04 本機重收集的醫療主檔有 479／24,138 筆已定位，另有 23,659 筆未定位；避難處所有 5,727／5,973 筆通過座標與行政區核對。本機暫存點位 bundle 已簽章並由 Web、Android 模擬器下載驗證。當日 Android 模擬器對 NLSC 試用底圖做過 SHA-256 與飛航模式驗證，API 36 模擬器也曾驗證底圖下載；這些是 10-05 移除 NLSC 下載流程前的歷史驗收，不能代表目前隨 App 內附 OSM 底圖的重新驗收。正式 HTTPS 服務與 Android 實機驗收仍待完成。
 - **不宣稱在任何固定時間覆蓋全城。** 所有模擬數字只適用於 [`experiments/scenario.md`](experiments/scenario.md) 描述的內湖情境與接觸模型，單一 seed，非多次抽樣的信賴區間。
 - **模擬參數只校準了一半。** `max_bytes_per_round` 已用實機 BLE 接觸窗量測校準；`contact_probability`（社交接觸機率）與 `transfer_failure_prob` 仍是工程估計值 — 現有實機數據沒有一項直接對應到這兩個參數，硬套上去會是假精確。
 - **耗電只有單一機型、單一 60 秒視窗、只涵蓋持續傳輸**，不是 Emergency Mode 真實的間歇性接觸型態，也未涵蓋鎖屏情境。
 - **自動同步已通過兩機初步實測，完整驗收仍待完成。** 2026-09-27 在 Pixel 8a／Sharp SH-M32 關閉 Wi-Fi 與行動數據後，真實 BLE 與同步引擎完成互補缺片；重建 transport 再次相遇時不重複傳片。測試使用獨立資料庫；正式服務另確認熄屏時可以完成已有資料的 HELLO 核對。三機自動中繼、長時間 Doze 及正式成功率統計仍待完成，詳見 [可靠性與實機驗證](docs/reliability-device-validation.md)。
 - **民眾回報與逃生路線仍需現場驗證。** 兩者都有 JS／Kotlin JVM／Flutter 自動化測試（含用真實簽章重播 A→B→C 轉傳，以及逃生路線的三步驟 demo 情境）；雙北路線另有 Pixel 8a USB instrumentation 與 profile 畫面量測，並非實際災害或多人現場測試。回報送到政府端、確認事件送回手機，目前都靠 debug build 的 `adb` 匯出／匯入。裝置金鑰沒有撤銷機制，同一把金鑰的回報可以被串起來；「N 人回報」可以被一人多機灌票，所以不等於驗證。
-- **逃生路線只有步行、涵蓋雙北及邊界緩衝區**，遵守 OSM `oneway:foot` 與步行存取限制，但沒有高程資料。避難所開設狀態靠位置比對；使用者可選六種災害情境篩選，類別不明時保留警告，不自動推斷情境。路網外或未連接的場所仍可能無可達路線。原始內湖路網與測試保留。路線不是官方疏散指示；操作與同步狀態頁見 [功能紀錄](docs/sync-status-disaster-filter.md)。
+- **逃生路線只有步行、涵蓋雙北及邊界緩衝區**，遵守 OSM `oneway:foot` 與步行存取限制，但沒有高程資料。中央 Server 目前只收集靜態避難所位置與預計容量，不收集更新不定期的開設狀態；舊 fixture/replay 與手機端既有狀態處理仍保留，不代表即時狀態可用。使用者可選六種災害情境篩選，類別不明時保留警告，不自動推斷情境。路網外或未連接的場所仍可能無可達路線。原始內湖路網與測試保留。路線不是官方疏散指示；操作與同步狀態頁見 [功能紀錄](docs/sync-status-disaster-filter.md)。
 - **自動同步不支援跨接觸續傳。** 如果接觸窗關閉導致真的斷線，傳到一半的分片不會保留狀態，下次相遇會從第 0 個 byte 重傳。位元組級續傳目前只在同一條連線還開著時有效。
 - **長時間 Doze 與跨機型 20 次連線成功率尚未補齊。** 本輪正式前景服務已有短時間熄屏心跳及 HELLO 核對證據；USB 充電時裝置 idle 狀態仍是 ACTIVE，不能視為 Doze 驗收。
 - **前景服務耗電量測只涵蓋「持續發現」，不含傳輸。** +54 mW 是舊版 discovery-only 服務的待命成本，目前自動同步服務的耗電尚未量測；舊量測只有 1 台機型、鄰居數固定為 1。（同日稍早那組 22.35→26.78 mW 已作廢——當時手機插著 USB 且滿電，量到的是計量器雜訊，詳見 `experiments/results/energy-raw/README.md`。）
@@ -213,17 +213,17 @@ App 主畫面直接進入 Flutter 台灣離線地圖，提供道路／建物／�
 
 **未來工作**
 
-- 完成 TDX／CWA live smoke test，並把 NCDR 的本機全台 snapshot 接到正式簽章與部署流程，讓 App 只讀取驗證後資料。
+- 部署新 Server／Web build 與簽章門牌 catalog，外部驗證 HTTPS，並把 Android 服務網址切到該網域；簽署新版本時納入已驗證的基隆包。
+- 以正式發布的同一批資料完成 Web／Android 實機離線驗收；OSM 內建底圖須確認安裝容量、縮放和地理範圍，另有 5 縣市門牌來源待補。
 - 以 **Bloom filter 或對 manifest 順序的 bitmap** 取代逐條列舉的 HELLO（同樣 183 chunk 只要 23 bytes，省約 1,500 倍），讓資料集可擴展到全台規模。
 - 導入**內容導向切分（CDC / rolling hash）或組內單事件對齊**，讓版本更新能真正 delta 傳輸而非整組重傳。
 - 補齊跨機型連線成功率統計、鎖屏／Doze 長時存活驗證，以及間歇性接觸模式下的耗電量測。
 - 讓 Emergency Mode 服務自行完成連線與同步（含兩台裝置相遇時的自動角色協商），把「開著就會自己交換」變成真的。
 - 讓節點能重新供應自己持有的分片位元組，而不只是宣告持有。
-- 依實際容量需求擴充 PMTiles 的台灣街道資料與未來離線路徑規劃；第一版資料固定 z15，z17 仍只是 overzoom，不宣稱 z17 巷弄細節。
 - 用兩機、三機實機驗證 Emergency Mode 的自動同步與中繼轉傳，並補上跨接觸的續傳狀態保存。
 - **民眾回報的後續**：真的上傳 API 與政府端後台（取代 debug 匯出／匯入）、現場授權人員的離線確認（需要授權憑證鏈與撤銷機制）、定期更換裝置金鑰以降低可串連性、信譽評分。
 - **逃生路線的後續**：擴大到全台路網、高程與垂直避難建議、以及把 `CONFIRMED` 的封路回報改由政府直接簽發 `ROAD_STATUS`，讓路線真正避開。
-- 擴大目前版本化 raster tiles 的覆蓋範圍。
+- 完成基隆包重簽發布；再為目前沒有來源的連江、宜蘭、南投、嘉義市尋找合法完整座標資料，或持續明確標示 unavailable。
 
 完整版見 [`experiments/limitations.md`](experiments/limitations.md) 與 [`docs/mvp-remaining-tasks.md`](docs/mvp-remaining-tasks.md)。
 
@@ -235,21 +235,21 @@ repo 內不含任何 API 金鑰、Token 或個人資料。金鑰僅由本機 git
 
 | 來源                            | 連結                                                                                          | 授權                                                     | 用途與現況                                                                                                              |
 | ------------------------------- | --------------------------------------------------------------------------------------------- | -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| OpenStreetMap（Overpass API）   | <https://overpass-api.de/api/interpreter>                                                     | ODbL，需標示 attribution（© OpenStreetMap contributors） | 保留內湖 legacy 快照；第一階段 `osm-taiwan` 收集全台醫療／避難所必要 POI，道路仍由台灣 PMTiles 提供                         |
+| OpenStreetMap（Overpass API）   | <https://overpass-api.de/api/interpreter>                                                     | ODbL，需標示 attribution（© OpenStreetMap contributors） | 保留內湖 legacy 快照；Central Server 的 `osm-taiwan` 目前停用，不作為醫療座標來源；道路名稱搜尋另用 OSM 本機索引                         |
 | Geofabrik Taiwan OSM PBF        | <https://download.geofabrik.de/asia/taiwan-latest.osm.pbf>                                    | ODbL，需保留 OpenStreetMap attribution                   | `flutter/assets/map/search/taiwan-roads.json` 的離線道路搜尋來源；產生日期與 SHA-256 保存在資產 metadata                |
-| Protomaps daily basemap         | <https://docs.protomaps.com/basemaps/downloads>                                               | ODbL，需保留 OSM attribution                             | 台灣 bbox 與北／中／南／東分區 PMTiles；來源日期、zoom、bbox 與 SHA-256 見 `flutter/lib/data/offline_map_manifest.dart` |
+| NLSC 臺灣通用電子地圖           | <https://maps.nlsc.gov.tw/pro/download.jsp>                                                   | 政府資料開放授權；保留來源 attribution                    | 僅保留原始 `TaiwanEMap6.mbtiles` 作為歷史試用資料；不由目前 App 或 Server 發布。metadata 與試用範圍見 `Map_description.md` |
 | 臺灣行政區邊界與地名資料         | <https://cdn.jsdelivr.net/npm/taiwan-atlas/towns-10t.json>                                    | MIT（來源為臺灣內政部資料衍生集）                         | `flutter/assets/map/labels/taiwan-reference-labels.geojson` 的縣市、區／鄉鎮、市／村里分級標籤；離線隨 App 載入。同一資產另維護離島名稱與著名地標 |
 | 臺北市區界圖                    | <https://data.taipei/dataset/detail?id=1601ef3a-c253-4988-b047-943d9e786143>                  | 臺北市資料開放授權                                       | **僅供 pipeline 的內湖空間過濾**，不是 Flutter 全台底圖來源                                                                   |
-| 消防署避難收容處所點位檔        | <https://data.gov.tw/dataset/73242>                                                           | 政府資料開放授權條款第 1 版                              | 第一階段接全台避難所位置；內湖 legacy 快照仍保留。開設狀態另接 <https://data.gov.tw/dataset/12849> XML feed                |
-| 醫療機構與人員基本資料          | <https://data.gov.tw/dataset/15393>                                                           | 政府資料開放授權條款第 1 版                              | 第一階段接全台 MOHW ODS 主檔；座標以 NLSC／OSM 補足，無法唯一定位者保留 `unresolved`，不畫 marker                 |
-| TDX 運輸資料流通服務 — 道路事件 | <https://tdx.transportdata.tw/api-service/swagger/basic/60abfa19-ffe3-4eef-a4b1-0539435dfca9> | TDX 服務條款與資料授權                                   | 第一階段 collector 支援 OAuth2 與全台端點彙整；真實 snapshot 不提交 repo，App 只接驗證後資料                         |
+| 消防署避難收容處所點位檔        | <https://data.gov.tw/dataset/73242>                                                           | 政府資料開放授權條款第 1 版                              | 第一階段接全台靜態避難所位置與預計容量；不收集更新不定期的開設狀態，內湖 legacy 快照仍保留                |
+| 醫療機構與人員基本資料          | <https://data.gov.tw/dataset/15393>                                                           | 政府資料開放授權條款第 1 版                              | Central Server 接全台 MOHW ODS 主檔；座標以 NLSC 與已審核官方來源補足，無法唯一定位者保留 `unresolved`，不畫 marker |
+| TDX 運輸資料流通服務 — 道路事件 | <https://tdx.transportdata.tw/api-service/swagger/basic/60abfa19-ffe3-4eef-a4b1-0539435dfca9> | TDX 服務條款與資料授權                                   | 保留 OAuth2 adapter 供日後 opt-in；目前 Central Server 停用，不進核心災害 feed                         |
 | 中央氣象署 CWA — 地震與警特報   | <https://opendata.cwa.gov.tw/dataset/earthquake/E-A0015-001>                                  | CWA 氣象開放資料平臺服務條款                             | 第一階段接地震、縣市警報、颱風；API key 僅在 pipeline 本機使用，App 不直接呼叫                                           |
 | NCDR 災害示警                   | <https://alerts.ncdr.nat.gov.tw/api_swagger/index.html>                                      | NCDR 平臺條款或來源機關授權                              | 第一階段 adapter 使用 `/api/datastore` → `/api/dump/datastore` 兩階段 CAP API；key 僅在 pipeline 本機使用，App 不直接呼叫 |
 | NCC 鄉鎮區基地臺統計            | <https://data.gov.tw/dataset/41256>                                                           | 政府資料開放授權條款第 1 版                              | 僅保留來源 metadata，尚未接入地圖或計算訊號覆蓋／中斷風險                                                             |
 | 內政部 20m DTM／DEM·DSM         | <https://data.gov.tw/dataset/176927>                                                          | 政府資料開放授權條款第 1 版                              | 僅保留來源 metadata，尚未接入地圖或地形分析                                                                         |
 | Copernicus Data Space（STAC）   | <https://documentation.dataspace.copernicus.eu/APIs/STAC.html>                                | Copernicus Data Space Ecosystem 資料條款                 | 僅保留來源 metadata，尚未下載影像或進行災害判釋                                                                     |
 
-> **重要聲明**：地圖底圖、道路搜尋、行政區與靜態點位都是隨 App 內嵌的**版本化本機資料**；`data/fixtures/neihu/` 與 Android `fixtures/signed-events.json` 內的災情事件（哪條路封閉、哪個避難所開設、哪段邊坡警戒）是**可重播／合成資料**，不代表任何真實災況，也不得呈現為即時官方警報。完整來源盤點與線上驗證記錄見 [`docs/neihu-online-data-sources.md`](docs/neihu-online-data-sources.md) 與機器可讀的 [`pipeline/sources/catalog.json`](pipeline/sources/catalog.json)。
+> **重要聲明**：OSM／Protomaps 底圖隨 App 提供，可離線使用；政府簽章靜態 layer、告警 feed 與門牌包透過資料服務串接。Server 尚未部署時，不能宣稱 Web／Android 已取得最新院所資料；舊的靜態預覽不作為 Web 驗證失敗時的替代點位。`data/fixtures/neihu/` 與 Android `fixtures/signed-events.json` 是可重播／合成資料，不代表真實災況。底圖限制見 [Map_description.md](Map_description.md)，資料來源及驗收狀態見[資料說明](data_description.md)與[`pipeline/sources/catalog.json`](pipeline/sources/catalog.json)。
 
 **軟體相依**
 
@@ -260,10 +260,11 @@ repo 內不含任何 API 金鑰、Token 或個人資料。金鑰僅由本機 git
 | Bouncy Castle `bcprov-jdk18on`                                       | Bouncy Castle License（MIT 風格） | Ed25519 驗簽                                        |
 | `org.json`                                                           | Public Domain                     | JVM 單元測試中的 JSON 解析（Android 內建版為 stub） |
 | kotlinx.coroutines                                                   | Apache-2.0                        | 非同步傳輸流程                                      |
+| Fastify                                                              | MIT                               | Central Server 的 HTTP API                         |
 | Google Play Services Nearby                                          | Google APIs 服務條款              | ADR-001 評估用，**已否決**，程式碼保留作為決策佐證  |
 | JUnit 4                                                              | EPL-1.0                           | 單元測試                                            |
 
-pipeline 與 simulator **不使用任何第三方 npm 套件**，僅使用 Node.js 內建模組；Python 測試僅使用標準庫。啟動畫面使用專案內的 Geo light/dark phone logo；Android 原生 starting window 使用對應的 square logo，會依系統深色模式切換。
+pipeline 與 simulator 的資料處理使用 Node.js 內建模組；Central Server 使用 Fastify 提供 HTTP API。Python 測試僅使用標準庫。啟動畫面使用專案內的 Geo light/dark phone logo；Android 原生 starting window 使用對應的 square logo，會依系統深色模式切換。
 
 ## 團隊成員
 
@@ -280,7 +281,7 @@ pipeline 與 simulator **不使用任何第三方 npm 套件**，僅使用 Node.
 
 **Apache License 2.0** — 完整條文見儲存庫根目錄的 [`LICENSE`](LICENSE)。
 
-> 注意：程式碼授權與**資料授權相互獨立**。本專案的 OSM 衍生資料（`data/fixtures/neihu/osm-snapshot.json`、`flutter/assets/map/search/taiwan-roads.json` 與 PMTiles）受 **ODbL** 規範，散布時須保留 OpenStreetMap attribution；行政區標籤、政府開放資料與其他素材則依各自來源的授權條款（見上方「第三方服務、資料與素材」）。
+> 注意：程式碼授權與**資料授權相互獨立**。本專案的 OSM 衍生資料（底圖 PMTiles、`data/fixtures/neihu/osm-snapshot.json`、`flutter/assets/map/search/taiwan-roads.json` 與雙北步行路網）受 **ODbL** 規範，散布時須保留 OpenStreetMap attribution。保留的 NLSC MBTiles 依其政府資料授權標示來源；行政區標籤與其他素材則依各自來源的授權條款（見上方「第三方服務、資料與素材」）。
 
 ---
 

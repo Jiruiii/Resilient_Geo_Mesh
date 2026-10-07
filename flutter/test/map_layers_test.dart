@@ -112,6 +112,27 @@ void main() {
     expect(hits, contains(markers.single));
   });
 
+  test('hit-tests markers at the translated cached position', () {
+    final markers = MapLayers.buildMarkers(
+      features: const <StaticFeature>[_shelter],
+      events: const <MeshEvent>[],
+      showShelters: true,
+      showMedical: false,
+      showEvents: false,
+      onStaticFeatureSelected: (_) {},
+      onEventSelected: (_) {},
+    );
+
+    final hits = hitTestMapMarkers(
+      markers: markers,
+      positions: <Key, Offset>{markers.single.key: const Offset(100, 80)},
+      translation: const Offset(20, 10),
+      point: const Offset(134, 104),
+    );
+
+    expect(hits, contains(markers.single));
+  });
+
   test('does not hit a marker outside its compact bounds', () {
     final markers = MapLayers.buildMarkers(
       features: const <StaticFeature>[_shelter],
@@ -173,7 +194,7 @@ void main() {
     expect(markers.single.height, lessThanOrEqualTo(26));
   });
 
-  testWidgets('overview cluster is a small dot without a count', (
+  testWidgets('overview cluster shows the exact count from zero percent', (
     tester,
   ) async {
     final markers = MapLayers.buildMarkers(
@@ -190,7 +211,7 @@ void main() {
     );
 
     expect(markers.single.kind, MapMarkerKind.cluster);
-    expect(markers.single.width, lessThanOrEqualTo(18));
+    expect(markers.single.itemCount, 2);
 
     await tester.pumpWidget(
       MaterialApp(
@@ -198,12 +219,164 @@ void main() {
       ),
     );
 
-    expect(find.text('2'), findsNothing);
+    expect(find.text('2'), findsOneWidget);
   });
 
-  testWidgets('county cluster count appears from twenty-five percent', (
+  test(
+    'zero-percent totals follow enabled layers and exclude expired events',
+    () {
+      final live = _event(
+        'ncdr:live-count',
+        issuedAt: '2026-09-26T03:00:00Z',
+        expiresAt: '2026-09-26T05:00:00Z',
+      );
+      final expired = _event(
+        'ncdr:expired-count',
+        issuedAt: '2026-09-26T01:00:00Z',
+        expiresAt: '2026-09-26T02:00:00Z',
+      );
+
+      List<MapMarkerData> build({required bool showMedical}) =>
+          MapLayers.buildMarkers(
+            features: const <StaticFeature>[_shelter, _medical],
+            events: <MeshEvent>[live, expired],
+            showShelters: true,
+            showMedical: showMedical,
+            showEvents: true,
+            onStaticFeatureSelected: (_) {},
+            onEventSelected: (_) {},
+            onClusterSelected: (_, {targetZoom}) {},
+            zoom: 6,
+            zoomPercentage: 0,
+            now: DateTime.utc(2026, 9, 26, 4),
+          );
+
+      final allLayers = build(showMedical: true);
+      final sheltersAndEvents = build(showMedical: false);
+
+      expect(
+        allLayers.fold<int>(0, (sum, marker) => sum + marker.itemCount),
+        3,
+      );
+      expect(
+        sheltersAndEvents.fold<int>(0, (sum, marker) => sum + marker.itemCount),
+        2,
+      );
+    },
+  );
+
+  testWidgets('four-digit overview totals fit inside the cluster bubble', (
     tester,
   ) async {
+    final features = List<StaticFeature>.generate(
+      1234,
+      (index) => _feature('shelter-$index', 121.5, 25.0),
+      growable: false,
+    );
+    final markers = MapLayers.buildMarkers(
+      features: features,
+      events: const <MeshEvent>[],
+      showShelters: true,
+      showMedical: false,
+      showEvents: false,
+      onStaticFeatureSelected: (_) {},
+      onEventSelected: (_) {},
+      onClusterSelected: (_, {targetZoom}) {},
+      zoom: 6,
+      zoomPercentage: 0,
+    );
+
+    expect(markers, hasLength(1));
+    expect(markers.single.itemCount, 1234);
+    expect(markers.single.width, greaterThanOrEqualTo(40));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SizedBox(width: 64, height: 64, child: markers.single.child),
+      ),
+    );
+    expect(find.text('1234'), findsOneWidget);
+  });
+
+  test('county bubbles merge only when their circles overlap', () {
+    final index = MapAdministrativeIndex.fromJson(<String, dynamic>{
+      'features': <Map<String, dynamic>>[
+        _label('甲市', 'city', 121.500, 25.000),
+        _label('乙市', 'city', 121.501, 25.000),
+        _label('丙市', 'city', 120.000, 23.000),
+      ],
+    });
+    final markers = MapLayers.buildMarkers(
+      features: <StaticFeature>[
+        _feature('facility-a', 121.500, 25.000),
+        _feature('facility-b', 121.501, 25.000),
+        _feature('facility-c', 120.000, 23.000),
+      ],
+      events: const <MeshEvent>[],
+      showShelters: true,
+      showMedical: false,
+      showEvents: false,
+      onStaticFeatureSelected: (_) {},
+      onEventSelected: (_) {},
+      onClusterSelected: (_, {targetZoom}) {},
+      administrativeIndex: index,
+      revealAllAtZoom: 15,
+      zoom: 6,
+      zoomPercentage: 0,
+    );
+
+    expect(markers, hasLength(2));
+    expect(
+      markers.map((marker) => marker.kind),
+      everyElement(MapMarkerKind.cluster),
+    );
+    expect(markers.map((marker) => marker.itemCount).toSet(), <int>{1, 2});
+    final merged = markers.singleWhere((marker) => marker.itemCount == 2);
+    expect(merged.point.longitude, closeTo(121.5005, 0.001));
+    expect(merged.point.latitude, closeTo(25.000, 0.001));
+    expect(
+      markers.singleWhere((marker) => marker.itemCount == 1).point,
+      const GeoPoint(longitude: 120.000, latitude: 23.000),
+    );
+  });
+
+  test('overview bubbles regroup when the camera zoom changes', () {
+    final index = MapAdministrativeIndex.fromJson(<String, dynamic>{
+      'features': <Map<String, dynamic>>[
+        _label('甲市', 'city', 121.500, 25.000),
+        _label('乙市', 'city', 121.950, 25.000),
+      ],
+    });
+    final features = <StaticFeature>[
+      _feature('facility-a', 121.500, 25.000),
+      _feature('facility-b', 121.950, 25.000),
+    ];
+
+    List<MapMarkerData> layoutAt(double zoom, int percentage) =>
+        MapLayers.buildMarkers(
+          features: features,
+          events: const <MeshEvent>[],
+          showShelters: true,
+          showMedical: false,
+          showEvents: false,
+          onStaticFeatureSelected: (_) {},
+          onEventSelected: (_) {},
+          onClusterSelected: (_, {targetZoom}) {},
+          administrativeIndex: index,
+          revealAllAtZoom: 15,
+          zoom: zoom,
+          zoomPercentage: percentage,
+        );
+
+    final zeroPercent = layoutAt(6, 0);
+    final homeView = layoutAt(7.26, 14);
+
+    expect(zeroPercent, hasLength(2));
+    expect(zeroPercent.map((marker) => marker.itemCount), everyElement(1));
+    expect(homeView, hasLength(2));
+    expect(homeView.map((marker) => marker.itemCount), everyElement(1));
+  });
+
+  testWidgets('county cluster count appears at zero percent', (tester) async {
     final hiddenMarkers = MapLayers.buildMarkers(
       features: const <StaticFeature>[_shelter, _medical],
       events: const <MeshEvent>[],
@@ -227,7 +400,7 @@ void main() {
       ),
     );
 
-    expect(find.text('2'), findsNothing);
+    expect(find.text('2'), findsOneWidget);
 
     final visibleMarkers = MapLayers.buildMarkers(
       features: const <StaticFeature>[_shelter, _medical],
@@ -276,8 +449,8 @@ void main() {
 
       expect(markers, hasLength(1));
       expect(markers.single.itemCount, 30);
-      expect(markers.single.width, lessThanOrEqualTo(30));
-      expect(markers.single.height, lessThanOrEqualTo(30));
+      expect(markers.single.width, lessThanOrEqualTo(48));
+      expect(markers.single.height, lessThanOrEqualTo(48));
     },
   );
 
@@ -530,7 +703,7 @@ void main() {
     expect(find.bySemanticsLabel(RegExp('內湖區')), findsOneWidget);
   });
 
-  testWidgets('district cluster count appears from forty-five percent', (
+  testWidgets('district cluster count appears at every cluster level', (
     tester,
   ) async {
     final index = MapAdministrativeIndex.fromJson(<String, dynamic>{
@@ -568,7 +741,7 @@ void main() {
         home: SizedBox(width: 80, height: 80, child: buildMarker(26).child),
       ),
     );
-    expect(find.text('1'), findsNothing);
+    expect(find.text('1'), findsOneWidget);
 
     await tester.pumpWidget(
       MaterialApp(
@@ -636,9 +809,9 @@ void main() {
     expect(icons.every((marker) => marker.width == 28), isTrue);
   });
 
-  test('keeps nationwide shelter and medical features in area buckets', () {
+  test('keeps the legacy large point fixture in area buckets', () {
     final featuresJson = jsonDecode(
-      File('assets/data/taiwan/static-features.json').readAsStringSync(),
+      File('test/fixtures/static-features-legacy.json').readAsStringSync(),
     );
     final labelsJson = jsonDecode(
       File(

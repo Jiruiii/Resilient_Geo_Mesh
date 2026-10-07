@@ -114,9 +114,10 @@ class MapLayers {
   static const double _subdivisionClusterMaxZoom = 11.5;
   static const double _countyDrillZoom = 10.2;
   static const double _subdivisionDrillZoom = 11.6;
-  static const int _countyCountPercentage = 25;
-  static const int _subdivisionCountPercentage = 45;
-  static const int _genericCountPercentage = 25;
+  static const int _countyClusterMaxPercentage = 25;
+  static const int _countyCountPercentage = 0;
+  static const int _subdivisionCountPercentage = 0;
+  static const int _genericCountPercentage = 0;
 
   static List<MapMarkerData> buildMarkers({
     required List<StaticFeature> features,
@@ -261,10 +262,13 @@ class MapLayers {
     for (final group in groups.values) {
       final cluster = MapMarkerCluster(
         members: List<MapMarkerData>.unmodifiable(group.members),
-        // The reference label is used for the name/bucket only. Its
-        // representative coordinate can be far from the app data, especially
-        // for village/hamlet labels, so keep the bubble beside its members.
-        point: _clusterPoint(group.members),
+        // County-level bubbles belong to their administrative label. This
+        // keeps a low-zoom marker in each county instead of placing many
+        // counties on the weighted centre of their facilities.
+        point:
+            level == MapAdministrativeLevel.county
+                ? group.area.point
+                : _clusterPoint(group.members),
       );
       output.add(
         _clusterMarker(
@@ -292,7 +296,31 @@ class MapLayers {
         ),
       );
     }
-    return output;
+    final bubbles = output
+        .where((marker) => marker.kind == MapMarkerKind.cluster)
+        .toList(growable: false);
+    final mergedBubbles = clusterMapMarkers(
+      bubbles,
+      zoom: zoom,
+      mergeOverlappingBubbles: level == MapAdministrativeLevel.county,
+    ).map((cluster) {
+      if (cluster.members.length == 1) return cluster.members.single;
+      return _clusterMarker(
+        cluster,
+        onClusterSelected: onClusterSelected,
+        zoomPercentage: zoomPercentage,
+        targetZoom: _nextAdministrativeZoom(
+          level,
+          revealAllAtZoom: revealAllAtZoom,
+        ),
+        countThreshold: countThreshold,
+        forceBubble: true,
+      );
+    });
+    return <MapMarkerData>[
+      ...output.where((marker) => marker.kind != MapMarkerKind.cluster),
+      ...mergedBubbles,
+    ];
   }
 
   static MapAdministrativeLevel _administrativeLevelForZoom(
@@ -300,7 +328,7 @@ class MapLayers {
     int? zoomPercentage,
   }) {
     if (zoomPercentage != null) {
-      if (zoomPercentage <= _countyCountPercentage) {
+      if (zoomPercentage <= _countyClusterMaxPercentage) {
         return MapAdministrativeLevel.county;
       }
       if (zoomPercentage < MapLibreMapConfig.revealAllPercentage) {
@@ -586,7 +614,6 @@ MapMarkerData _clusterMarker(
   final diameter = _clusterDiameter(
     itemCount: cluster.itemCount,
     zoomPercentage: zoomPercentage,
-    countThreshold: countThreshold,
     showCount: showCount,
   );
   final child = _MapClusterBubble(
@@ -619,37 +646,42 @@ MapMarkerData _clusterMarker(
 double _clusterDiameter({
   required int itemCount,
   required int zoomPercentage,
-  required int countThreshold,
   required bool showCount,
 }) {
   if (!showCount) return 18;
-
-  final countContribution = math.log(math.max(1, itemCount) + 1) / math.ln2;
-  final zoomRange = math.max(1, 100 - countThreshold);
-  final zoomShrink =
-      (((zoomPercentage - countThreshold) / zoomRange).clamp(0, 1).toDouble()) *
-      2;
-  return (20 + countContribution * 0.55 - zoomShrink).clamp(20, 26).toDouble();
+  final digitContribution = math.max(0, itemCount.toString().length - 1) * 5.5;
+  final zoomShrink = (zoomPercentage / 100).clamp(0, 1) * 3;
+  return (25 + digitContribution - zoomShrink).clamp(24, 48).toDouble();
 }
 
 List<MapMarkerCluster> clusterMapMarkers(
   List<MapMarkerData> markers, {
   required double zoom,
   double radius = 44,
+  bool mergeOverlappingBubbles = false,
 }) {
+  final cellSize =
+      mergeOverlappingBubbles
+          ? markers.fold<double>(
+            1,
+            (largest, marker) =>
+                math.max(largest, math.max(marker.width, marker.height)),
+          )
+          : radius;
   final clusterable = <int>[];
   final positions = <int, Offset>{};
   final cells = <({int x, int y}), List<int>>{};
   for (var index = 0; index < markers.length; index += 1) {
     final marker = markers[index];
     if (marker.kind != MapMarkerKind.facility &&
-        marker.kind != MapMarkerKind.event) {
+        marker.kind != MapMarkerKind.event &&
+        marker.kind != MapMarkerKind.cluster) {
       continue;
     }
     final point = _worldPixel(marker.point, zoom);
     final cell = (
-      x: (point.dx / radius).floor(),
-      y: (point.dy / radius).floor(),
+      x: (point.dx / cellSize).floor(),
+      y: (point.dy / cellSize).floor(),
     );
     clusterable.add(index);
     positions[index] = point;
@@ -687,7 +719,17 @@ List<MapMarkerCluster> clusterMapMarkers(
           for (final right in neighbour) {
             if (left >= right) continue;
             final difference = positions[left]! - positions[right]!;
-            if (difference.distance <= radius) join(left, right);
+            final overlaps =
+                mergeOverlappingBubbles
+                    ? difference.distance <=
+                        (math.max(markers[left].width, markers[left].height) +
+                                math.max(
+                                  markers[right].width,
+                                  markers[right].height,
+                                )) /
+                            2
+                    : difference.distance <= radius;
+            if (overlaps) join(left, right);
           }
         }
       }
@@ -706,7 +748,8 @@ List<MapMarkerCluster> clusterMapMarkers(
   for (var index = 0; index < markers.length; index += 1) {
     final marker = markers[index];
     if (marker.kind != MapMarkerKind.facility &&
-        marker.kind != MapMarkerKind.event) {
+        marker.kind != MapMarkerKind.event &&
+        marker.kind != MapMarkerKind.cluster) {
       output.add(
         MapMarkerCluster(members: <MapMarkerData>[marker], point: marker.point),
       );
@@ -762,10 +805,12 @@ List<MapMarkerData> hitTestMapMarkers({
   required List<MapMarkerData> markers,
   required Map<Key, Offset> positions,
   required Offset point,
+  Offset translation = Offset.zero,
 }) => markers
     .where((marker) {
-      final center = positions[marker.key];
-      if (center == null) return false;
+      final cachedCenter = positions[marker.key];
+      if (cachedCenter == null) return false;
+      final center = cachedCenter + translation;
       final halfWidth = marker.width / 2;
       final halfHeight = marker.height / 2;
       return point.dx >= center.dx - halfWidth &&

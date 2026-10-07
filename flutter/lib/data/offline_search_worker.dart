@@ -53,9 +53,15 @@ class OfflineSearchWorker {
     }
   }
 
-  void update(List<StaticFeature> features, List<MapAdministrativeArea> areas) {
+  void update(
+    List<StaticFeature> features,
+    List<MapAdministrativeArea> areas, [
+    List<TaiwanSearchEntry> addressEntries = const <TaiwanSearchEntry>[],
+  ]) {
     if (!_closed) {
-      _ready.future.then((port) => port.send(['data', features, areas]));
+      _ready.future.then(
+        (port) => port.send(['data', features, areas, addressEntries]),
+      );
     }
   }
 
@@ -100,6 +106,8 @@ void _serveSearch(List<dynamic> arguments) {
           roadEntries: asset.entries,
           administrativeAreas:
               (request[2] as List).cast<MapAdministrativeArea>(),
+          addressEntries:
+              (request[3] as List).cast<TaiwanSearchEntry>(),
         );
         index.prepare();
       } else {

@@ -69,8 +69,26 @@ object FeatureVerifier {
             val value = feature.opt(field)
             if (value !is String || value.isEmpty()) errors += "$field must be a non-empty string"
         }
-        if (feature.opt("geometry") !is JSONObject) errors += "geometry must be an object"
-        if (feature.opt("properties") !is JSONObject) errors += "properties must be an object"
+        val directoryEntry = feature.optString("layer_id") == "taiwan-medical-directory" &&
+            feature.optString("feature_type") == "MEDICAL_DIRECTORY_ENTRY"
+        val properties = feature.optJSONObject("properties")
+        if (directoryEntry) {
+            if (!feature.isNull("geometry")) errors += "medical directory geometry must be null"
+            val status = properties?.optString("geometry_status")
+            val hasPointFeatureId = properties?.has("point_feature_id") == true
+            val pointFeatureId = if (hasPointFeatureId) properties?.opt("point_feature_id") else null
+            if (!hasPointFeatureId) errors += "medical directory point_feature_id is required"
+            if (status !in setOf("located", "unresolved", "excluded")) {
+                errors += "medical directory geometry_status is invalid"
+            } else if (status == "located" && (pointFeatureId !is String || pointFeatureId.isEmpty())) {
+                errors += "located medical directory entries require point_feature_id"
+            } else if (status != "located" && pointFeatureId != null && pointFeatureId != org.json.JSONObject.NULL) {
+                errors += "unlocated medical directory entries cannot have point_feature_id"
+            }
+        } else if (feature.opt("geometry") !is JSONObject) {
+            errors += "geometry must be an object"
+        }
+        if (properties == null) errors += "properties must be an object"
         if (feature.optString("signature_algorithm") != "Ed25519") errors += "signature_algorithm must be Ed25519"
         if (feature.opt("provenance") !is JSONObject) errors += "provenance must be an object"
         val hash = feature.optString("payload_hash", "")

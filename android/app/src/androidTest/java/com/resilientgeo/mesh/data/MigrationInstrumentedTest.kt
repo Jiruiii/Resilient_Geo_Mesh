@@ -11,7 +11,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
- * Exercises the real v1 -> v2 upgrade path against a v1 database file.
+ * Exercises the real v1 -> v3 upgrade path against a v1 database file.
  *
  * The other instrumented tests use `inMemoryDatabaseBuilder`, which always
  * creates the schema from scratch and therefore never runs a migration at
@@ -67,16 +67,16 @@ class MigrationInstrumentedTest {
         db.close()
     }
 
-    private fun openV2(): AppDatabase =
+    private fun openLatest(): AppDatabase =
         Room.databaseBuilder(context, AppDatabase::class.java, dbName)
-            .addMigrations(AppDatabase.MIGRATION_1_2)
+            .addMigrations(AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3)
             .build()
 
     @Test
     fun upgradingFromV1KeepsExistingEvents() {
         createV1DatabaseHoldingOneEvent()
 
-        val db = openV2()
+        val db = openLatest()
         try {
             val events = db.eventDao().allSync()
             assertEquals(1, events.size)
@@ -92,10 +92,10 @@ class MigrationInstrumentedTest {
     fun upgradingFromV1AddsAUsableChunkInventory() {
         createV1DatabaseHoldingOneEvent()
 
-        val db = openV2()
+        val db = openLatest()
         try {
             // Room validates the migrated schema against what it expects for
-            // v2 when the database is first opened, so simply getting here
+            // v3 when the database is first opened, so simply getting here
             // proves the hand-written CREATE TABLE matches. Writing and
             // reading a row proves it is actually usable.
             assertEquals(0, db.chunkDao().countSync())
@@ -122,7 +122,7 @@ class MigrationInstrumentedTest {
     fun aFreshInstallStillCreatesBothTables() {
         // No v1 file at all — the normal install path must not depend on the
         // migration having run.
-        val db = openV2()
+        val db = openLatest()
         try {
             assertEquals(0, db.eventDao().allSync().size)
             assertEquals(0, db.chunkDao().countSync())

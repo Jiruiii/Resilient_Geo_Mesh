@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
@@ -105,7 +107,7 @@ class _MapAppHomeState extends State<_MapAppHome> {
             SafeArea(
               bottom: false,
               child: MaterialBanner(
-                content: const Text('事件更新失敗，目前顯示上次取得的資料'),
+                content: const Text('事件更新失敗，目前保留最後一份已驗證資料'),
                 actions: <Widget>[
                   TextButton(
                     onPressed:
@@ -126,7 +128,6 @@ class _MapAppHomeState extends State<_MapAppHome> {
                   staticFeatures: controller.staticFeatures,
                   staticFeaturesPending: controller.staticFeaturesPending,
                   staticFeaturesFailed:
-                      controller.nativeBridgeAvailable &&
                       controller.staticFeatureLoadError != null,
                   initialState: controller.initialState,
                   bridge: controller.bridge,

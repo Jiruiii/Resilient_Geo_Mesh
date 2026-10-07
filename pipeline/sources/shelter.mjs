@@ -12,10 +12,9 @@ import {
 } from '../lib/feature-source.mjs';
 import { areaMetadataForRecord } from '../lib/coverage.mjs';
 import { normalizeCoordinate } from '../lib/geo.mjs';
-import { makeRawSnapshot, requestText } from '../lib/source.mjs';
+import { TAIWAN_COUNTIES } from './taiwan-counties.mjs';
 
 export const DEFAULT_SHELTER_ENDPOINT = 'https://opdadm.moi.gov.tw/api/v1/no-auth/resource/api/dataset/ED6CF735-6C03-4573-A882-72C1BEC799CB/resource/54550E2F-4567-4C8F-BD2E-E54E9D0386B8/download';
-export const DEFAULT_SHELTER_STATUS_ENDPOINT = 'https://portal2.emic.gov.tw/Pub/EEA2/OpenData/Shelter.xml';
 
 export class ShelterSourceError extends Error {
   constructor(message, { code = 'SHELTER_SOURCE_ERROR', status = null, cause } = {}) {
@@ -64,6 +63,61 @@ function disasterTypes(record) {
   const value = fieldText(record, '適用災害類別', '災害類別', 'disaster_type', 'disaster_types', 'disastertype');
   if (value === undefined) return [];
   return value.split(/[;,、，|/]+/u).map((item) => item.trim()).filter(Boolean);
+}
+
+function normalizeAreaText(value) {
+  return String(value ?? '').replaceAll('台', '臺').replace(/[\s,，]/gu, '');
+}
+
+function textNamesTown(value, area) {
+  return Boolean(area?.town_name && normalizeAreaText(value).includes(normalizeAreaText(area.town_name)));
+}
+
+function shelterLocationIssue(record, geometry, options) {
+  const areaResolver = options.areaResolver;
+  const sourceArea = areaResolver(record, undefined);
+  const coordinateArea = areaResolver({}, geometry);
+  if (!sourceArea || !coordinateArea) return 'administrative_area_unresolved';
+
+  if (sourceArea.county_code && coordinateArea.county_code
+      && sourceArea.county_code !== coordinateArea.county_code) {
+    return 'coordinate_admin_area_mismatch';
+  }
+  const sourceAreaText = administrativeArea(record);
+  if (textNamesTown(sourceAreaText, sourceArea)
+      && sourceArea.town_code && coordinateArea.town_code
+      && sourceArea.town_code !== coordinateArea.town_code) {
+    return 'coordinate_admin_area_mismatch';
+  }
+
+  const address = fieldText(record, '避難收容處所地址', '地址', 'address');
+  if (!address) return undefined;
+  const addressArea = areaResolver({ '縣市及鄉鎮市區': address }, undefined);
+  if (!addressArea) return undefined;
+
+  const addressText = normalizeAreaText(address);
+  const addressHasCounty = addressArea.county_name
+    && addressText.includes(normalizeAreaText(addressArea.county_name));
+  if (!addressHasCounty) return undefined;
+  if (sourceArea.county_code && addressArea.county_code
+      && sourceArea.county_code !== addressArea.county_code) {
+    return 'address_area_mismatch';
+  }
+  if (coordinateArea.county_code && addressArea.county_code
+      && coordinateArea.county_code !== addressArea.county_code) {
+    return 'address_area_mismatch';
+  }
+  if (textNamesTown(address, addressArea)
+      && addressArea.town_code && coordinateArea.town_code
+      && addressArea.town_code !== coordinateArea.town_code) {
+    return 'address_area_mismatch';
+  }
+  return undefined;
+}
+
+function incrementCountyMetric(metrics, countyCode, field) {
+  const county = metrics.countyCounts.get(countyCode) ?? metrics.unassignedCounty;
+  county[field] += 1;
 }
 
 function shelterId(record, index) {
@@ -140,103 +194,36 @@ function shelterGeometry(record, index) {
   return geometry;
 }
 
-function statusValue(record) {
-  const value = firstValue(
-    fieldText(record, '開設狀態', '開設情形', '開設狀況', '收容所狀態', 'openstatus', 'openStatus', 'status', 'Status'),
-  );
-  if (value === undefined) return undefined;
-  const raw = String(value).trim().toUpperCase();
-  if (/FULL|滿|額滿/u.test(raw)) return 'FULL';
-  if (/CLOSED|關閉|未開設|停用|撤除/u.test(raw)) return 'CLOSED';
-  if (/OPEN|開設|啟用|可用/u.test(raw)) return 'OPEN';
-  return 'UNKNOWN';
-}
-
-function decodeXml(value) {
-  return String(value)
-    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/gu, '$1')
-    .replace(/&lt;/gu, '<')
-    .replace(/&gt;/gu, '>')
-    .replace(/&quot;/gu, '"')
-    .replace(/&apos;/gu, "'")
-    .replace(/&amp;/gu, '&')
-    .replace(/<[^>]+>/gu, '')
-    .trim();
-}
-
-function parseShelterStatusXml(xml) {
-  if (typeof xml !== 'string' || xml.trim() === '') {
-    throw new ShelterSourceError('shelter status XML body is empty', { code: 'SHELTER_STATUS_XML_INVALID' });
-  }
-  const records = [];
-  // The official feed uses a misspelled, nested <ShletersInfo> wrapper. Keep
-  // the parser tolerant of both that shape and the simple test/documentation
-  // shapes, while selecting only innermost shelter blocks.
-  const blockPattern = /<(ShletersInfo|shelter|item|record|row)\b[^>]*>([\s\S]*?)<\/\1>/giu;
-  for (const match of xml.matchAll(blockPattern)) {
-    if (match[1].toLowerCase() === 'shletersinfo' && /<ShletersInfo\b/iu.test(match[2])) continue;
-    const record = {};
-    const fieldPattern = /<([A-Za-z][\w:.-]*)\b[^>]*>([\s\S]*?)<\/\1>/gu;
-    for (const field of match[2].matchAll(fieldPattern)) {
-      record[field[1]] = decodeXml(field[2]);
-    }
-    if (Object.keys(record).length > 0) records.push(record);
-  }
-  if (records.length === 0) {
-    throw new ShelterSourceError('shelter status XML contains no shelter records', { code: 'SHELTER_STATUS_XML_INVALID' });
-  }
-  const unique = new Map();
-  for (const record of records) {
-    const identity = firstValue(record.shelterCode, record.shelterId, record.id);
-    if (identity === undefined) {
-      unique.set(`row:${unique.size}`, record);
-    } else {
-      unique.set(`id:${identity}`, record);
-    }
-  }
-  return [...unique.values()];
-}
-
-function statusEvent({ rawSnapshot, record, id, geometry, issuedAt, expiresAt, eventVersion, status, options }) {
-  const area = areaMetadataForRecord(options, record, geometry);
-  return {
-    schema_version: 'event-v0',
-    namespace: options.namespace ?? 'official.fire',
-    event_id: `shelter:${id}:status`,
-    event_type: 'SHELTER_STATUS',
-    geometry,
-    severity: 'UNKNOWN',
-    source: 'FIRE_AGENCY',
-    source_version: sourceVersion(rawSnapshot, record, id),
-    event_version: eventVersion,
-    issued_at: issuedAt,
-    expires_at: expiresAt,
-    attributes: {
-      ...area,
-      theme: 'shelter',
-      ...(options.coverage ? { coverage: options.coverage } : {}),
-      shelter_id: id,
-      status,
-      source_record: record,
-    },
-    signature_algorithm: 'Ed25519',
-    signing_key_id: options.signingKeyId ?? 'fire-agency-source-2026',
-    provenance: {
-      original_source: options.originalSource ?? rawSnapshot.request.url,
-      received_at: options.receivedAt ?? rawSnapshot.retrieved_at,
-      transport_source: options.transportSource ?? { kind: 'server', node_id: 'shelter-collector' },
-    },
-  };
-}
-
-function normalizeShelterRecord(record, index, rawSnapshot, options) {
+function normalizeShelterRecord(record, index, rawSnapshot, options, metrics) {
   if (!record || typeof record !== 'object' || Array.isArray(record)) {
     throw new ShelterSourceError(`shelter record ${index} must be an object`, { code: 'SHELTER_RECORD_INVALID' });
   }
-  if (options.scope !== 'taiwan' && !isNeihuRecord(record)) return undefined;
+  if (options.scope !== 'taiwan' && !isNeihuRecord(record)) {
+    metrics.excluded_count += 1;
+    metrics.excluded_reason_counts.outside_source_scope = (metrics.excluded_reason_counts.outside_source_scope ?? 0) + 1;
+    return undefined;
+  }
+  const sourceArea = options.scope === 'taiwan'
+    ? options.areaResolver(record, undefined)
+    : undefined;
+  if (options.scope === 'taiwan') incrementCountyMetric(metrics, sourceArea?.county_code, 'source_count');
   const id = shelterId(record, index);
   const geometry = shelterGeometry(record, index);
-  if (!isInsideBoundary(geometry, options.boundary, ShelterSourceError)) return undefined;
+  if (!isInsideBoundary(geometry, options.boundary, ShelterSourceError)) {
+    metrics.excluded_count += 1;
+    metrics.excluded_reason_counts.outside_boundary = (metrics.excluded_reason_counts.outside_boundary ?? 0) + 1;
+    if (options.scope === 'taiwan') incrementCountyMetric(metrics, sourceArea?.county_code, 'excluded_count');
+    return undefined;
+  }
+  if (options.scope === 'taiwan') {
+    const issue = shelterLocationIssue(record, geometry, options);
+    if (issue) {
+      metrics.unlocated_count += 1;
+      metrics.location_issue_counts[issue] = (metrics.location_issue_counts[issue] ?? 0) + 1;
+      incrementCountyMetric(metrics, sourceArea?.county_code, 'unlocated_count');
+      return undefined;
+    }
+  }
   const name = fieldText(record, '避難收容處所名稱', '收容所名稱', '名稱', 'name');
   const address = fieldText(record, '避難收容處所地址', '地址', 'address');
   const area = areaMetadataForRecord(options, record, geometry);
@@ -251,15 +238,7 @@ function normalizeShelterRecord(record, index, rawSnapshot, options) {
     ...(options.coverage ? { coverage: options.coverage } : {}),
     source_record: record,
   };
-  const eventVersion = Number(firstValue(
-    fieldText(record, '事件版本', '資料版本', '版本', 'event_version', 'version'),
-    1,
-  ));
-  if (!Number.isInteger(eventVersion) || eventVersion < 1) {
-    throw new ShelterSourceError(`shelter ${id} event version is invalid`, { code: 'SHELTER_EVENT_VERSION_INVALID' });
-  }
   const sourceVersionValue = sourceVersion(rawSnapshot, record, id);
-  const status = statusValue(record);
   const feature = featureBase({
     datasetId: options.datasetId,
     layerId: 'shelter',
@@ -274,20 +253,9 @@ function normalizeShelterRecord(record, index, rawSnapshot, options) {
     options,
     originalSource: rawSnapshot.request.url,
   });
-  return {
-    feature,
-    statusEvent: status === undefined ? undefined : statusEvent({
-      rawSnapshot,
-      record,
-      id,
-      geometry,
-      issuedAt: options.issuedAt,
-      expiresAt: options.expiresAt,
-      eventVersion,
-      status,
-      options,
-    }),
-  };
+  metrics.located_count += 1;
+  if (options.scope === 'taiwan') incrementCountyMetric(metrics, sourceArea?.county_code, 'located_count');
+  return feature;
 }
 
 export function normalizeShelters(rawSnapshot, options = {}) {
@@ -296,70 +264,52 @@ export function normalizeShelters(rawSnapshot, options = {}) {
   if (!['taipei-shelter', 'taiwan-shelter'].includes(sourceId)) {
     throw new ShelterSourceError(`shelter normalizer requires source_id=taipei-shelter or taiwan-shelter`, { code: 'STATIC_SOURCE_ID_INVALID' });
   }
-  assertRawFeatureSnapshot(rawSnapshot, sourceId, ShelterSourceError);
-  const times = staticTimes(rawSnapshot, options, ShelterSourceError);
-  const normalizedOptions = { ...options, ...times };
-  const pairs = recordsFromPayload(rawSnapshot.payload)
-    .map((record, index) => normalizeShelterRecord(record, index, rawSnapshot, normalizedOptions))
-    .filter(Boolean)
-    .sort((left, right) => left.feature.feature_id.localeCompare(right.feature.feature_id));
-  return {
-    features: pairs.map((pair) => pair.feature),
-    statusEvents: pairs.map((pair) => pair.statusEvent).filter(Boolean),
-  };
-}
-
-export function normalizeShelterStatuses(rawSnapshot, options = {}) {
-  if (!options.boundary) throw new ShelterSourceError('Shelter status scope boundary is required for curation', { code: 'SHELTER_BOUNDARY_MISSING' });
-  const sourceId = options.sourceId ?? rawSnapshot.source_id;
-  if (sourceId !== 'taiwan-shelter-status') {
-    throw new ShelterSourceError('shelter status normalizer requires source_id=taiwan-shelter-status', { code: 'STATIC_SOURCE_ID_INVALID' });
+  if (options.scope === 'taiwan' && typeof options.areaResolver !== 'function') {
+    throw new ShelterSourceError('Taiwan shelter normalization requires county and town area resolution', {
+      code: 'SHELTER_AREA_RESOLVER_REQUIRED',
+    });
   }
   assertRawFeatureSnapshot(rawSnapshot, sourceId, ShelterSourceError);
   const times = staticTimes(rawSnapshot, options, ShelterSourceError);
   const normalizedOptions = { ...options, ...times };
-  let unresolvedCount = 0;
-  const statusEvents = recordsFromPayload(rawSnapshot.payload)
-    .map((record, index) => {
-      if (!record || typeof record !== 'object' || Array.isArray(record)) {
-        throw new ShelterSourceError(`shelter status record ${index} must be an object`, { code: 'SHELTER_RECORD_INVALID' });
-      }
-      if (options.scope !== 'taiwan' && !isNeihuRecord(record)) return undefined;
-      const id = shelterId(record, index);
-      let geometry;
-      try {
-        geometry = shelterGeometry(record, index);
-      } catch (error) {
-        if (['SHELTER_GEOMETRY_MISSING', 'STATIC_SOURCE_GEOMETRY_INVALID'].includes(error.code)) {
-          unresolvedCount += 1;
-          return undefined;
-        }
-        throw error;
-      }
-      if (!isInsideBoundary(geometry, options.boundary, ShelterSourceError)) return undefined;
-      const eventVersion = Number(firstValue(
-        fieldText(record, '事件版本', '資料版本', '版本', 'event_version', 'version'),
-        1,
-      ));
-      if (!Number.isInteger(eventVersion) || eventVersion < 1) {
-        throw new ShelterSourceError(`shelter ${id} event version is invalid`, { code: 'SHELTER_EVENT_VERSION_INVALID' });
-      }
-      return statusEvent({
-        rawSnapshot,
-        record,
-        id,
-        geometry,
-        issuedAt: normalizedOptions.issuedAt,
-        expiresAt: normalizedOptions.expiresAt,
-        eventVersion,
-        status: statusValue(record) ?? 'UNKNOWN',
-        options: normalizedOptions,
-      });
-    })
+  const records = recordsFromPayload(rawSnapshot.payload);
+  const countyCounts = new Map(TAIWAN_COUNTIES.map(({ code, name }) => [code, {
+    county_code: code,
+    county_name: name,
+    source_count: 0,
+    located_count: 0,
+    unlocated_count: 0,
+    excluded_count: 0,
+  }]));
+  const metrics = {
+    located_count: 0,
+    unlocated_count: 0,
+    excluded_count: 0,
+    excluded_reason_counts: {},
+    location_issue_counts: {},
+    countyCounts,
+    unassignedCounty: {
+      county_code: null,
+      county_name: '未辨識縣市',
+      source_count: 0,
+      located_count: 0,
+      unlocated_count: 0,
+      excluded_count: 0,
+    },
+  };
+  const features = records
+    .map((record, index) => normalizeShelterRecord(record, index, rawSnapshot, normalizedOptions, metrics))
     .filter(Boolean)
-    .sort((left, right) => left.event_id.localeCompare(right.event_id));
-  Object.defineProperty(statusEvents, 'unresolved_count', { value: unresolvedCount, enumerable: false });
-  return statusEvents;
+    .sort((left, right) => left.feature_id.localeCompare(right.feature_id));
+  const { countyCounts: _countyCounts, unassignedCounty, ...summary } = metrics;
+  return {
+    features,
+    source_count: records.length,
+    ...summary,
+    ...(options.scope === 'taiwan'
+      ? { county_coverage: [...countyCounts.values(), unassignedCounty] }
+      : {}),
+  };
 }
 
 export function fetchShelters({
@@ -388,38 +338,4 @@ export function fetchTaiwanShelters({
     retrievedAt,
     ErrorClass: ShelterSourceError,
   });
-}
-
-export async function fetchShelterStatuses({
-  endpoint = process.env.SHELTER_STATUS_ENDPOINT ?? DEFAULT_SHELTER_STATUS_ENDPOINT,
-  fetchImpl = globalThis.fetch,
-  retrievedAt = new Date().toISOString(),
-  timeoutMs = 30000,
-} = {}) {
-  try {
-    const result = await requestText(endpoint, {
-      fetchImpl,
-      timeoutMs,
-      headers: { Accept: 'application/xml, text/xml;q=0.9' },
-    });
-    return makeRawSnapshot({
-      sourceId: 'taiwan-shelter-status',
-      request: { method: 'GET', url: endpoint, query: {} },
-      responseStatus: result.status,
-      responseHeaders: result.headers,
-      retrievedAt,
-      payload: {
-        format: 'xml',
-        records: parseShelterStatusXml(result.body),
-        raw_xml: result.body,
-      },
-    });
-  } catch (error) {
-    if (error instanceof ShelterSourceError) throw error;
-    throw new ShelterSourceError(`shelter status request failed: ${error.message}`, {
-      code: error.code === 'HTTP_ERROR' ? 'SHELTER_HTTP_ERROR' : 'SHELTER_REQUEST_ERROR',
-      status: error.status ?? null,
-      cause: error,
-    });
-  }
 }

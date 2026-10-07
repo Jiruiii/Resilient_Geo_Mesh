@@ -14,6 +14,8 @@ class TaiwanSearchEntry {
     required this.kind,
     required this.region,
     required this.coordinate,
+    this.address,
+    this.searchKey,
   });
 
   final String id;
@@ -22,6 +24,8 @@ class TaiwanSearchEntry {
   final String kind;
   final String? region;
   final GeoPoint coordinate;
+  final String? address;
+  final String? searchKey;
 
   factory TaiwanSearchEntry.fromJson(Map<String, dynamic> json) {
     final id = _requiredString(json, 'id');
@@ -53,6 +57,14 @@ class TaiwanSearchEntry {
         regionValue is String && regionValue.trim().isNotEmpty
             ? regionValue.trim()
             : null;
+    final addressValue = json['address'];
+    if (addressValue != null && addressValue is! String) {
+      throw const FormatException('search entry address must be a string');
+    }
+    final searchKeyValue = json['search_key'];
+    if (searchKeyValue != null && searchKeyValue is! String) {
+      throw const FormatException('search_key must be a string');
+    }
 
     return TaiwanSearchEntry(
       id: id,
@@ -61,6 +73,14 @@ class TaiwanSearchEntry {
       kind: kind,
       region: region,
       coordinate: coordinate,
+      address:
+          addressValue is String && addressValue.trim().isNotEmpty
+              ? addressValue.trim()
+              : null,
+      searchKey:
+          searchKeyValue is String && searchKeyValue.trim().isNotEmpty
+              ? searchKeyValue.trim()
+              : null,
     );
   }
 }

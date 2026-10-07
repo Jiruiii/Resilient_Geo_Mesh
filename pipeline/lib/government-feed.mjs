@@ -8,12 +8,16 @@ function distributable(event, now) {
   return Date.parse(event.expires_at) > now.getTime() || event.attributes?.publication_retracted === true &&
     Date.parse(event.attributes.retraction_issued_at) + 86400000 > now.getTime();
 }
+function isPublicEvent(result, event) {
+  const isNcdr = result.id === 'ncdr' || result.feedId === 'ncdr' || result.sourceId === 'ncdr-hazard-events';
+  return !isNcdr || event.attributes?.operational_relevance !== 'BACKGROUND';
+}
 export function feedInput(feed) {
   const { signature, ...input } = feed;
   return input;
 }
-export function verifyFeed(feed, publicKey) {
-  if (feed?.schema_version !== 'government-feed-v1' || feed.signing_key_id !== FEED_KEY_ID ||
+export function verifyFeed(feed, publicKey, { signingKeyId = FEED_KEY_ID } = {}) {
+  if (feed?.schema_version !== 'government-feed-v1' || feed.signing_key_id !== signingKeyId ||
       !Number.isSafeInteger(feed.revision) || feed.revision < 1 ||
       !verifyCanonical(feedInput(feed), feed.signature, publicKey)) throw new Error('Invalid signed government feed');
   return feed;
@@ -22,8 +26,9 @@ export function verifyFeed(feed, publicKey) {
 // Versions survive restarts in the signed public ledger. Missing records are not
 // interpreted as "reopened": retain the last signed event until its own TTL.
 // Never publish a raw response, request URL, credential or exception message.
-export function buildGovernmentFeed({ previous, previousEvents = {}, results, privateKey, publicKey, now = new Date() }) {
-  if (previous) verifyFeed(previous, publicKey);
+export function buildGovernmentFeed({ previous, previousEvents = {}, results, privateKey, publicKey,
+  signingKeyId = FEED_KEY_ID, now = new Date() }) {
+  if (previous) verifyFeed(previous, publicKey, { signingKeyId });
   const revision = (previous?.revision ?? 0) + 1;
   const createdAt = now.toISOString();
   const ledger = structuredClone(previous?.event_versions ?? {});
@@ -35,7 +40,7 @@ export function buildGovernmentFeed({ previous, previousEvents = {}, results, pr
     if (!/^[a-z][a-z0-9-]+$/.test(id)) throw new Error('Invalid source id');
     const oldSource = previous?.sources.find(source => source.id === id);
     const current = new Map((previousEvents[id] ?? [])
-      .filter(event => distributable(event, now))
+      .filter(event => isPublicEvent(result, event) && distributable(event, now))
       .map(event => [event.event_id, event]));
     const namespace = `official.live.${id}`;
     if (result.events) {
@@ -53,7 +58,7 @@ export function buildGovernmentFeed({ previous, previousEvents = {}, results, pr
         ledger[identity] = { version: retraction.event_version, fingerprint: sha256Canonical(payload) };
         current.set(eventId, signEvent(retraction, privateKey));
       }
-      for (const input of result.events) {
+      for (const input of result.events.filter((event) => isPublicEvent(result, event))) {
         if (result.cancelledEventIds?.includes(input.event_id)) continue;
         const event = structuredClone(input);
         if (Date.parse(event.expires_at) <= now.getTime()) {
@@ -63,7 +68,7 @@ export function buildGovernmentFeed({ previous, previousEvents = {}, results, pr
           event.attributes.retraction_issued_at = createdAt;
         }
         event.namespace = namespace;
-        event.signing_key_id = FEED_KEY_ID;
+        event.signing_key_id = signingKeyId;
         // URL provenance may contain an API key; only the public source name is
         // distributed. The source payload is included only after normalization.
         event.provenance = { original_source: id, received_at: createdAt,
@@ -100,7 +105,7 @@ export function buildGovernmentFeed({ previous, previousEvents = {}, results, pr
     const bundle = buildBundle(events, { datasetId: `government-${id}`, namespace,
       datasetVersion: revision, source: id, sourceVersion: createdAt, createdAt,
       expiresAt: new Date(Math.max(...events.map(event => Date.parse(event.expires_at)))).toISOString(),
-      signingKeyId: FEED_KEY_ID, privateKey });
+      signingKeyId, privateKey });
     const prefix = `releases/${revision}/${id}`;
     datasets.push({ source_id: id, manifest: bundle.manifest,
       chunk_paths: bundle.chunks.map((chunk, index) => `${prefix}/${index}.json`) });
@@ -108,12 +113,12 @@ export function buildGovernmentFeed({ previous, previousEvents = {}, results, pr
   }
   const unsigned = { schema_version: 'government-feed-v1', revision, created_at: createdAt,
     expires_at: new Date(now.getTime() + 24 * 3600_000).toISOString(),
-    signing_key_id: FEED_KEY_ID, signature_algorithm: 'Ed25519', sources, datasets, event_versions: ledger };
+    signing_key_id: signingKeyId, signature_algorithm: 'Ed25519', sources, datasets, event_versions: ledger };
   return { feed: { ...unsigned, signature: signCanonical(unsigned, privateKey) }, files };
 }
 
 export async function readPreviousEvents(feed, readChunk, publicKey) {
-  verifyFeed(feed, publicKey);
+  verifyFeed(feed, publicKey, { signingKeyId: feed?.signing_key_id });
   const output = {};
   Object.defineProperty(output, 'chunks', { value: new Map() });
   for (const dataset of feed.datasets) {
@@ -131,7 +136,9 @@ export async function readPreviousEvents(feed, readChunk, publicKey) {
         output.chunks.set(name, chunk);
       }
     }));
-    const verified = verifyBundle({ manifest: dataset.manifest, chunks }, publicKey, { trustedKeyIds: [FEED_KEY_ID] });
+    const verified = verifyBundle({ manifest: dataset.manifest, chunks }, publicKey, {
+      trustedKeyIds: [feed.signing_key_id],
+    });
     if (!verified.valid) throw new Error('Previous bundle failed verification');
     output[dataset.source_id] = chunks.flatMap(chunk => chunk.events);
   }

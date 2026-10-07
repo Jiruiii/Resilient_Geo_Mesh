@@ -29,25 +29,31 @@ data class RouteEvent(
     companion object {
         fun fromEventJson(eventJson: String, now: Instant): RouteEvent? = try {
             val event = JSONObject(eventJson)
-            val namespace = event.getString("namespace")
-            val geometry = event.optJSONObject("geometry")
-            val points = mutableListOf<LonLat>()
-            val lines = mutableListOf<List<LonLat>>()
-            val polygons = mutableListOf<PolygonRings>()
-            if (geometry != null) collectGeometry(geometry, points, lines, polygons)
-            RouteEvent(
-                namespace = namespace,
-                eventId = event.getString("event_id"),
-                eventVersion = event.optInt("event_version", 1),
-                eventType = event.optString("event_type"),
-                severity = event.optString("severity"),
-                applyState = ApplyState.at(namespace, event.optString("expires_at", null), now),
-                issuedAt = event.optString("issued_at", null),
-                attributes = event.optJSONObject("attributes") ?: JSONObject(),
-                points = points,
-                lines = lines,
-                polygons = polygons,
-            )
+            if (event.optString("event_type") == "SHELTER_STATUS" &&
+                event.optString("source") == "FIRE_AGENCY"
+            ) {
+                null
+            } else {
+                val namespace = event.getString("namespace")
+                val geometry = event.optJSONObject("geometry")
+                val points = mutableListOf<LonLat>()
+                val lines = mutableListOf<List<LonLat>>()
+                val polygons = mutableListOf<PolygonRings>()
+                if (geometry != null) collectGeometry(geometry, points, lines, polygons)
+                RouteEvent(
+                    namespace = namespace,
+                    eventId = event.getString("event_id"),
+                    eventVersion = event.optInt("event_version", 1),
+                    eventType = event.optString("event_type"),
+                    severity = event.optString("severity"),
+                    applyState = ApplyState.at(namespace, event.optString("expires_at", null), now),
+                    issuedAt = event.optString("issued_at", null),
+                    attributes = event.optJSONObject("attributes") ?: JSONObject(),
+                    points = points,
+                    lines = lines,
+                    polygons = polygons,
+                )
+            }
         } catch (_: Exception) {
             null
         }

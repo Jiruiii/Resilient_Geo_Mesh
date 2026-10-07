@@ -17,11 +17,11 @@ import com.resilientgeo.mesh.trust.VerificationResult
 import com.resilientgeo.mesh.trust.Canonical
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
-import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.time.Instant
@@ -46,6 +46,7 @@ class MeshRepository(
     private val appContext = context.applicationContext
     private val store = RoomEventStore(db.eventDao())
     private val chunkDao = db.chunkDao()
+    @Volatile private var unsupportedOfficialEventsPurged = false
 
     /**
      * Raw bytes of every verified chunk this node holds, keyed by
@@ -71,68 +72,184 @@ class MeshRepository(
     }
 
     fun observeEvents(): Flow<List<EventEntity>> = db.eventDao().observeAll()
+        .map { events -> events.filterNot(::isUnsupportedOfficialEventEntity) }
 
     /**
      * Loads optional nationwide static layers only after manifest, chunk and
-     * feature verification. Missing assets mean the build has not packaged a
-     * Taiwan layer yet and therefore return no static features; a present but
-     * invalid layer fails closed instead of falling back to unverified JSON.
+     * feature verification. First launch downloads the signed layer; later
+     * offline launches use its private cached copy. There is no APK-bundled
+     * shelter fallback, which could leave Android showing an older dataset
+     * while medical data is unavailable.
      */
-    suspend fun verifiedStaticFeatures(): List<Map<String, Any?>> = withContext(Dispatchers.IO) {
-        STATIC_LAYER_IDS.flatMap { layerId -> loadStaticLayer(layerId) }
+    suspend fun verifiedStaticFeatures(serverBaseUrl: String? = null): List<Map<String, Any?>> = withContext(Dispatchers.IO) {
+        val features = STATIC_LAYER_IDS.flatMap { layerId -> loadStaticLayer(layerId, serverBaseUrl) }
+        val medicalPoints = features.filter { it["kind"] == "medical" && it["id"] is String }
+            .associateBy { it["id"] as String }
+        features.forEach { feature ->
+            if (feature["kind"] != "medical-directory") return@forEach
+            val pointId = feature["point_feature_id"] as? String
+            @Suppress("UNCHECKED_CAST")
+            (feature as MutableMap<String, Any?>)["geometry"] = pointId?.let { medicalPoints[it]?.get("geometry") }
+        }
+        features
     }
 
-    suspend fun verifiedShelterDisasterCatalog(): com.resilientgeo.mesh.routing.ShelterDisasterCatalog =
+    suspend fun verifiedShelterDisasterCatalog(serverBaseUrl: String? = null): com.resilientgeo.mesh.routing.ShelterDisasterCatalog =
         withContext(Dispatchers.IO) {
-            com.resilientgeo.mesh.routing.ShelterDisasterCatalog.fromFeatures(loadStaticLayer("shelter"))
+            com.resilientgeo.mesh.routing.ShelterDisasterCatalog.fromFeatures(loadStaticLayer("taiwan-shelter", serverBaseUrl))
         }
 
-    private fun loadStaticLayer(layerId: String): List<Map<String, Any?>> {
-        val root = "$STATIC_LAYER_ROOT/$layerId"
-        val manifestText = try {
-            appContext.assets.open("$root/manifest.json").bufferedReader().use { it.readText() }
-        } catch (_: IOException) {
-            return emptyList()
-        }
-        val chunkNames = appContext.assets.list("$root/chunks")
-            ?.filter { it.endsWith(".json") }
-            ?.sorted()
-            ?: emptyList()
-        val chunkTexts = chunkNames.map { name ->
-            appContext.assets.open("$root/chunks/$name").bufferedReader().use { it.readText() }
-        }
-        val cacheKey = VerifiedLayerCache.key(trustStoreText, manifestText, chunkTexts)
-        memoizedLayers[layerId]?.takeIf { it.first == cacheKey }?.let { return it.second }
-
-        // Full verification only when these exact bytes have not passed before
-        // (see VerifiedLayerCache); the nationwide shelter layer takes seconds.
-        val features = verifiedLayerCache.read(layerId, cacheKey) ?: run {
-            val verified = LayerBundleVerifier.verify(JSONObject(manifestText), chunkTexts.map(::JSONObject), trustStore)
-            if (!verified.valid) {
-                throw IllegalStateException("static layer $layerId verification failed: ${verified.errors.joinToString("; ")}")
+    private fun loadStaticLayer(layerId: String, serverBaseUrl: String? = null): List<Map<String, Any?>> {
+        val bundleCache = StaticLayerBundleCache(File(appContext.filesDir, "static-layer-bundles"))
+        val downloaded = serverBaseUrl
+            ?.takeIf { it.isNotBlank() && layerId in SERVER_STATIC_LAYER_IDS }
+            ?.let { base ->
+                try {
+                    fetchStaticLayerBundle(base, layerId)
+                } catch (error: Exception) {
+                    if (error is java.util.concurrent.CancellationException) throw error
+                    android.util.Log.w("MeshRepository", "Static layer $layerId download failed; checking verified cache", error)
+                    null
+                }
             }
-            runCatching { verifiedLayerCache.write(layerId, cacheKey, verified.features) }
-            verified.features
+        val cached = bundleCache.read(layerId)
+        val candidates = buildList {
+            downloaded?.let { add(it to true) }
+            cached?.let { add(it to false) }
         }
-        val messages = features.map { it.toMapFeatureMessage() }
-        memoizedLayers[layerId] = cacheKey to messages
-        return messages
+        for ((bundle, isDownloaded) in candidates) {
+            try {
+                val manifest = JSONObject(bundle.manifest)
+                if (isDownloaded) {
+                    require(DateTimeFormatter.ISO_INSTANT.parse(
+                        manifest.getString("expires_at"), Instant::from,
+                    ).isAfter(Instant.now())) { "static layer $layerId is expired" }
+                }
+                val cacheKey = VerifiedLayerCache.key(trustStoreText, bundle.manifest, bundle.chunks)
+                memoizedLayers[layerId]?.takeIf { it.first == cacheKey }?.let { return it.second }
+
+                val messages = if (layerId == MEDICAL_DIRECTORY_LAYER_ID) {
+                    if (verifiedLayerCache.matchesVerified(layerId, cacheKey)) {
+                        staticMessagesFromChunks(bundle.chunks)
+                    } else {
+                        val streamedMessages = ArrayList<Map<String, Any?>>(manifest.optInt("total_feature_count", 0))
+                        val verification = LayerBundleVerifier.verifyJsonChunks(
+                            manifest,
+                            bundle.chunks,
+                            trustStore,
+                        ) { chunkFeatures ->
+                            chunkFeatures.forEach { streamedMessages += it.toMapFeatureMessage() }
+                        }
+                        require(verification.valid) {
+                            "static layer $layerId verification failed: ${verification.errors.joinToString("; ")}"
+                        }
+                        try {
+                            verifiedLayerCache.markVerified(layerId, cacheKey)
+                        } catch (error: Exception) {
+                            android.util.Log.w("MeshRepository", "Could not persist the verification marker for $layerId", error)
+                        }
+                        streamedMessages
+                    }
+                } else {
+                    val features = verifiedLayerCache.read(layerId, cacheKey) ?: run {
+                        val verified = LayerBundleVerifier.verifyJson(manifest, bundle.chunks, trustStore)
+                        require(verified.valid) {
+                            "static layer $layerId verification failed: ${verified.errors.joinToString("; ")}"
+                        }
+                        runCatching { verifiedLayerCache.write(layerId, cacheKey, verified.features) }
+                        verified.features
+                    }
+                    features.map { it.toMapFeatureMessage() }
+                }
+
+                if (isDownloaded) {
+                    try {
+                        bundleCache.write(layerId, bundle)
+                    } catch (error: Exception) {
+                        android.util.Log.w("MeshRepository", "Could not cache verified static layer $layerId", error)
+                    }
+                }
+                memoizedLayers[layerId] = cacheKey to messages
+                return messages
+            } catch (error: Exception) {
+                if (error is java.util.concurrent.CancellationException) throw error
+                android.util.Log.w("MeshRepository", "Static layer $layerId candidate rejected; trying verified cache", error)
+            }
+        }
+        return emptyList()
+    }
+
+    private fun staticMessagesFromChunks(chunkTexts: List<String>): List<Map<String, Any?>> {
+        val output = ArrayList<Map<String, Any?>>()
+        for (chunkText in chunkTexts) {
+            val features = JSONObject(chunkText).getJSONArray("features")
+            for (index in 0 until features.length()) {
+                output += features.getJSONObject(index).toMapFeatureMessage()
+            }
+        }
+        return output
+    }
+
+    private fun fetchStaticLayerBundle(baseUrl: String, layerId: String): StaticLayerBundleCache.Bundle {
+        val allowLocal = appContext.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0
+        val base = com.resilientgeo.mesh.online.GovernmentFeedSync.validateBase(baseUrl, allowLocal)
+        require(layerId in SERVER_STATIC_LAYER_IDS) { "static layer is not available from this server" }
+        val route = "v1/layers/$layerId/"
+        val manifestText = downloadStaticJson(base.resolve("${route}manifest.json").toString())
+        val manifest = JSONObject(manifestText)
+        require(manifest.optString("layer_id") == layerId) { "static layer manifest identity mismatch" }
+        val entries = manifest.getJSONArray("chunks")
+        require(entries.length() in 1..MAX_STATIC_LAYER_CHUNKS) { "static layer chunk count is invalid" }
+        val chunks = (0 until entries.length()).map { index ->
+            require(entries.getJSONObject(index).optInt("sequence", -1) == index) {
+                "static layer chunk sequence is invalid"
+            }
+            downloadStaticJson(base.resolve("${route}chunks/$index.json").toString())
+        }
+        return StaticLayerBundleCache.Bundle(manifestText, chunks)
+    }
+
+    private fun downloadStaticJson(url: String): String {
+        val connection = java.net.URI(url).toURL().openConnection() as java.net.HttpURLConnection
+        connection.connectTimeout = 15_000
+        connection.readTimeout = 30_000
+        connection.instanceFollowRedirects = false
+        connection.setRequestProperty("Accept", "application/json")
+        connection.setRequestProperty("Cache-Control", "no-cache")
+        try {
+            require(connection.responseCode == 200) {
+                "static layer server returned HTTP ${connection.responseCode}"
+            }
+            require(connection.contentLengthLong <= MAX_STATIC_JSON_BYTES) {
+                "static layer response is too large"
+            }
+            val output = java.io.ByteArrayOutputStream()
+            connection.inputStream.use { input ->
+                val buffer = ByteArray(8192)
+                while (true) {
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    require(output.size() + count <= MAX_STATIC_JSON_BYTES) {
+                        "static layer response is too large"
+                    }
+                    output.write(buffer, 0, count)
+                }
+            }
+            return output.toString("UTF-8")
+        } finally {
+            connection.disconnect()
+        }
     }
 
     private fun JSONObject.toMapFeatureMessage(): Map<String, Any?> {
         val properties = optJSONObject("properties")
         val output = linkedMapOf<String, Any?>(
             "id" to optString("feature_id"),
-            "kind" to when {
-                optString("layer_id") == "shelter" || optString("feature_type") == "SHELTER" -> "shelter"
-                optString("layer_id") == "medical" || optString("feature_type") in listOf("HOSPITAL", "CLINIC") -> "medical"
-                optString("layer_id") == "osm-road" -> "road"
-                else -> "poi"
-            },
+            "kind" to staticFeatureKind(optString("layer_id"), optString("feature_type")),
             "geometry" to get("geometry").toMessageValue(),
             "source" to optString("source"),
         )
-        for (field in listOf("name", "address", "phone", "departments", "capacity", "disaster_types", "administrative_area", "facility_type", "area_id", "county_code", "town_code", "village_code", "coverage", "coordinate_source", "osm_id")) {
+        for (field in listOf("name", "address", "phone", "departments", "capacity", "disaster_types", "administrative_area", "facility_type", "area_id", "county_code", "town_code", "village_code", "coverage", "coordinate_source", "osm_id", "geometry_status", "point_feature_id", "coordinate_failure_reason")) {
             if (properties?.has(field) == true) output[field] = properties.get(field).toMessageValue()
         }
         return output
@@ -173,9 +290,9 @@ class MeshRepository(
         val now = Instant.now()
         inventoryLock.withLock {
             db.runInTransaction(Callable {
-                (0 until events.length()).map { index ->
-                    EventIngestor.ingest(store, events.getJSONObject(index), trustStore, now)
-                }
+                (0 until events.length()).map { index -> events.getJSONObject(index) }
+                    .filterNot(::isUnsupportedOfficialEventJson)
+                    .map { event -> EventIngestor.ingest(store, event, trustStore, now) }
             })
         }
     }
@@ -199,6 +316,9 @@ class MeshRepository(
                     if (result is VerificationResult.Invalid) {
                         return@withContext ChunkIngestResult.Rejected("event verification failed: ${result.errors}")
                     }
+                }
+                if (verified.events.any(::isUnsupportedOfficialEventJson)) {
+                    return@withContext ChunkIngestResult.Rejected("unsupported_official_event_source")
                 }
                 inventoryLock.withLock {
                     if (chunk.optString("dataset_id") == CrowdChunkCodec.DATASET_ID) {
@@ -247,6 +367,7 @@ class MeshRepository(
         fallbackManifestId: String,
         fallbackDatasetVersion: Int,
     ): JSONObject = withContext(Dispatchers.IO) {
+        purgeUnsupportedOfficialEventData()
         inventoryLock.withLock {
             reconcileInventory()
             val dataset = buildDatasetJson(datasetId, namespace, fallbackManifestId, fallbackDatasetVersion)
@@ -270,6 +391,7 @@ class MeshRepository(
      * claim: only the latter tells a peer there is something to send).
      */
     suspend fun allLocalPeerSummaries(nodeId: String): JSONObject = withContext(Dispatchers.IO) {
+        purgeUnsupportedOfficialEventData()
         inventoryLock.withLock {
             reconcileInventory()
             // Expired crowd reports must not be advertised for relay.
@@ -349,6 +471,7 @@ class MeshRepository(
      */
     suspend fun cachedChunkJson(datasetId: String, namespace: String, chunkId: String): JSONObject? =
         withContext(Dispatchers.IO) {
+            purgeUnsupportedOfficialEventData()
             inventoryLock.withLock {
                 val file = chunkCacheFile(datasetId, namespace, chunkId)
                 val chunk = runCatching {
@@ -549,7 +672,79 @@ class MeshRepository(
     }
 
     /** Every stored event, for route planning (it re-derives apply state itself). */
-    suspend fun allEventsSnapshot(): List<EventEntity> = withContext(Dispatchers.IO) { db.eventDao().allSync() }
+    suspend fun allEventsSnapshot(): List<EventEntity> = withContext(Dispatchers.IO) {
+        purgeUnsupportedOfficialEventData()
+        purgeExpiredOfficialEvents(Instant.now())
+        db.eventDao().allSync().filterNot(::isUnsupportedOfficialEventEntity)
+    }
+
+    /** Remove old non-NCDR official events and relay chunks from existing installs. */
+    suspend fun purgeUnsupportedOfficialEventData(): Int = withContext(Dispatchers.IO) {
+        inventoryLock.withLock {
+            if (unsupportedOfficialEventsPurged) return@withLock 0
+
+            val unsupportedEvents = db.eventDao().allSync().filter(::isUnsupportedOfficialEventEntity)
+            val unsupportedChunks = chunkDao.allSync().filter { entity ->
+                isUnsupportedOfficialNamespace(entity.namespace) ||
+                    runCatching {
+                        val chunk = JSONObject(chunkCacheFile(entity.datasetId, entity.namespace, entity.chunkId).readText())
+                        val events = chunk.optJSONArray("events") ?: JSONArray()
+                        (0 until events.length()).any { index ->
+                            isUnsupportedOfficialEventJson(events.getJSONObject(index))
+                        }
+                    }.getOrDefault(false)
+            }
+            db.runInTransaction {
+                unsupportedEvents.forEach { db.eventDao().deleteSync(it.namespace, it.eventId) }
+                unsupportedChunks.forEach(::dropChunk)
+            }
+            unsupportedOfficialEventsPurged = true
+            unsupportedEvents.size
+        }
+    }
+
+    private fun isUnsupportedOfficialEventEntity(event: EventEntity): Boolean =
+        event.namespace.startsWith("official.") &&
+            runCatching {
+                val payload = JSONObject(event.eventJson)
+                event.namespace != payload.optString("namespace") || isUnsupportedOfficialEventJson(payload)
+            }.getOrDefault(true)
+
+    private fun isUnsupportedOfficialEventJson(event: JSONObject): Boolean {
+        val namespace = event.optString("namespace")
+        if (!namespace.startsWith("official.")) return false
+        val isNcdrNamespace = namespace == "official.ncdr" ||
+            namespace.startsWith("official.ncdr.") ||
+            namespace == "official.live.ncdr" ||
+            namespace.startsWith("official.live.ncdr.")
+        return !isNcdrNamespace || !event.optString("source").equals("NCDR", ignoreCase = true)
+    }
+
+    private fun isUnsupportedOfficialNamespace(namespace: String): Boolean =
+        namespace.startsWith("official.") &&
+            namespace != "official.ncdr" && !namespace.startsWith("official.ncdr.") &&
+            namespace != "official.live.ncdr" && !namespace.startsWith("official.live.ncdr.")
+
+    /** Drop expired official payloads while preserving the signed version floor against peer replay. */
+    fun purgeExpiredOfficialEvents(now: Instant = Instant.now()): Int {
+        val expired = db.eventDao().allSync().filter { event ->
+            event.namespace.startsWith("official.") &&
+                ApplyState.at(event.namespace, event.expiresAt, now) == ApplyState.EXPIRED
+        }
+        if (expired.isEmpty()) return 0
+        inventoryLock.withLock {
+            db.runInTransaction {
+                expired.forEach { event ->
+                    store.rememberVersion(event.namespace, event.eventId, event.eventVersion)
+                    db.eventDao().deleteSync(event.namespace, event.eventId)
+                }
+                // Chunks can contain expired signed payload bytes. Remove the
+                // official relay inventory too; peers will fetch a current release.
+                chunkDao.officialSync().forEach(::dropChunk)
+            }
+        }
+        return expired.size
+    }
 
     private fun activeReportCount(signingKeyId: String, now: Instant): Int =
         db.eventDao().forNamespaceSync(CrowdReportFactory.NAMESPACE).count { entity ->
@@ -671,8 +866,11 @@ class MeshRepository(
 
         private const val FIXTURE_ASSET = "fixtures/signed-events.json"
         private const val TRUSTED_KEYS_ASSET = "trust/trusted-keys.json"
-        private const val STATIC_LAYER_ROOT = "static/taiwan"
-        private val STATIC_LAYER_IDS = listOf("shelter", "medical", "osm-poi", "osm-road")
+        private val STATIC_LAYER_IDS = listOf("taiwan-shelter", "taiwan-medical", "taiwan-medical-directory", "osm-poi", "osm-road")
+        private val SERVER_STATIC_LAYER_IDS = setOf("taiwan-shelter", "taiwan-medical", "taiwan-medical-directory")
+        private const val MEDICAL_DIRECTORY_LAYER_ID = "taiwan-medical-directory"
+        private const val MAX_STATIC_JSON_BYTES = 16 * 1024 * 1024
+        private const val MAX_STATIC_LAYER_CHUNKS = 512
     }
 }
 

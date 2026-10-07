@@ -3,6 +3,7 @@ package com.resilientgeo.mesh.bridge
 import android.content.Context
 import com.resilientgeo.mesh.data.CrowdReportResult
 import com.resilientgeo.mesh.data.MeshRepository
+import com.resilientgeo.mesh.online.GovernmentSyncManager
 import com.resilientgeo.mesh.routing.EvacuationRouteService
 import com.resilientgeo.mesh.routing.RouteResult
 import com.resilientgeo.mesh.routing.RouteStatus
@@ -18,12 +19,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.catch
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.Instant
@@ -50,10 +49,13 @@ class FlutterMapBridge(
         SharedPreferencesEmergencyModeState(context),
     ),
     private val onEmergencyModeChanged: (Boolean) -> Unit = {},
+    private val governmentSync: GovernmentSyncManager = GovernmentSyncManager.get(context),
     private val routeService: EvacuationRouteService = EvacuationRouteService(
         graphLoader = EvacuationRouteService.assetGraphLoader(context),
         eventJsonProvider = { repository.allEventsSnapshot().map { it.eventJson } },
-        shelterCatalogProvider = { repository.verifiedShelterDisasterCatalog() },
+        shelterCatalogProvider = {
+            repository.verifiedShelterDisasterCatalog(governmentSync.message()["url"] as? String)
+        },
     ),
 ) : MethodChannel.MethodCallHandler, EventChannel.StreamHandler {
 
@@ -62,7 +64,6 @@ class FlutterMapBridge(
     private val eventChannel = EventChannel(messenger, EVENT_CHANNEL_NAME)
     private var eventObservation: Job? = null
     private val syncStatus = com.resilientgeo.mesh.emergency.SyncStatusStore(context)
-    private val governmentSync = com.resilientgeo.mesh.online.GovernmentSyncManager.get(context)
 
     /**
      * Verified static layers, started as soon as the bridge exists. First
@@ -73,7 +74,9 @@ class FlutterMapBridge(
      * unverified is ever returned.
      */
     private val staticFeatures: Deferred<List<Map<String, Any?>>> =
-        scope.async(Dispatchers.Default, start = CoroutineStart.LAZY) { repository.verifiedStaticFeatures() }
+        scope.async(Dispatchers.Default, start = CoroutineStart.LAZY) {
+            repository.verifiedStaticFeatures(governmentSync.message()["url"] as? String)
+        }
 
     init {
         methodChannel.setMethodCallHandler(this)
@@ -92,7 +95,7 @@ class FlutterMapBridge(
                 val enabled = args?.get("enabled") as? Boolean
                 if (url == null || enabled == null) result.error(INVALID_ARGUMENTS, "Requires url and enabled", null)
                 else try {
-                    governmentSync.configure(url, enabled, args?.get("area") as? String ?: "taipei")
+                    governmentSync.configure(url, enabled, args?.get("area") as? String ?: "all")
                     result.success(governmentSync.message())
                 } catch (error: Exception) { result.error(INVALID_ARGUMENTS, "請輸入有效的 HTTPS 更新網址", null) }
             }
@@ -111,13 +114,16 @@ class FlutterMapBridge(
         if (events == null) return
 
         eventObservation = scope.launch {
-            repository.observeEvents()
-                .combine(flow {
-                    while (true) {
-                        emit(Instant.now())
-                        delay(30_000)
-                    }
-                }) { rows, now -> rows.map { EventPayloadMapper.toMessage(it, now) } }
+            rowsWithOfficialExpiryPurge(
+                source = repository.observeEvents(),
+                purgeExpired = { now ->
+                    withContext(Dispatchers.IO) { repository.purgeExpiredOfficialEvents(now) }
+                },
+            )
+                .map { rows ->
+                    val now = Instant.now()
+                    rows.map { EventPayloadMapper.toMessage(it, now) }
+                }
                 .distinctUntilChanged()
                 .catch { error ->
                     events.error(EVENT_OBSERVATION_ERROR, error.message, null)
@@ -145,6 +151,10 @@ class FlutterMapBridge(
     private fun getInitialState(result: MethodChannel.Result) {
         scope.launch {
             try {
+                withContext(Dispatchers.IO) {
+                    repository.purgeUnsupportedOfficialEventData()
+                    repository.purgeExpiredOfficialEvents(Instant.now())
+                }
                 result.success(
                     MapBridgeProtocol.initialState(
                         events = repository.observeEvents().first(),

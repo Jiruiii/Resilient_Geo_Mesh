@@ -176,47 +176,6 @@ test('CLI exports normalized nationwide features for the Flutter map', () => {
   }
 });
 
-test('CLI converts nationwide shelter status output into a signable event batch', () => {
-  const tempDir = mkdtempSync(path.join(os.tmpdir(), 'resilientgeo-cli-'));
-  try {
-    const input = path.join(tempDir, 'shelter-status.raw.json');
-    const output = path.join(tempDir, 'shelter-status.events.json');
-    writeFileSync(input, `${JSON.stringify({
-      schema_version: 'raw-snapshot-v0',
-      source_id: 'taiwan-shelter-status',
-      request: { method: 'GET', url: 'https://portal2.emic.gov.tw/Pub/EEA2/OpenData/Shelter.xml', query: {} },
-      response: { status: 200, headers: {} },
-      retrieved_at: '2026-09-25T00:00:00Z',
-      payload: { records: [{
-        shelterCode: 'HL-001', county: '花蓮縣', town: '花蓮市',
-        lat: '24.02', lon: '121.61', openstatus: '開設',
-      }] },
-    })}\n`, 'utf8');
-    const boundary = path.join(tempDir, 'taiwan-area-catalog.json');
-    writeFileSync(boundary, `${JSON.stringify({
-      schema_version: 'area-catalog-v0',
-      coverage: 'TW',
-      areas: [{
-        area_id: 'tw.10015010', level: 'town', county_code: '10015', county_name: '花蓮縣',
-        town_code: '10015010', town_name: '花蓮市',
-        geometry: { type: 'Polygon', coordinates: [[[121.55, 23.90], [121.70, 23.90], [121.70, 24.10], [121.55, 24.10], [121.55, 23.90]]] },
-      }],
-    })}\n`, 'utf8');
-    const result = spawnSync(process.execPath, [
-      CLI, 'normalize', '--scope', 'taiwan', '--boundary', boundary,
-      '--source', 'taiwan-shelter-status', '--input', input, '--out', output,
-    ], { cwd: ROOT, encoding: 'utf8' });
-
-    assert.equal(result.status, 0, result.stderr);
-    const eventBatch = JSON.parse(readFileSync(output, 'utf8'));
-    assert.equal(eventBatch.schema_version, 'event-batch-v0');
-    assert.equal(eventBatch.event_count, 1);
-    assert.equal(eventBatch.events[0].attributes.shelter_id, 'hl-001');
-  } finally {
-    rmSync(tempDir, { recursive: true, force: true });
-  }
-});
-
 test('CLI records a blocked source status when CWA credentials are missing', () => {
   const tempDir = mkdtempSync(path.join(os.tmpdir(), 'resilientgeo-cli-'));
   try {
@@ -318,7 +277,7 @@ test('CLI normalizes and builds a signed static shelter layer', () => {
     const normalizedBatch = JSON.parse(readFileSync(normalized, 'utf8'));
     assert.equal(normalizedBatch.schema_version, 'static-normalized-v0');
     assert.equal(normalizedBatch.feature_count, 1);
-    assert.equal(normalizedBatch.status_event_count, 1);
+    assert.equal(normalizedBatch.status_event_count, 0);
 
     const keygen = spawnSync(process.execPath, [
       CLI, 'keygen', '--out-dir', keysDir, '--key-id', 'cli-static-2026',

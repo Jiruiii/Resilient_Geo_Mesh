@@ -52,8 +52,8 @@ flutter:
     - assets/fonts/
     - assets/Geo_light_phone_logo.png
     - assets/Geo_dark_phone_logo.png
-    - assets/data/taiwan/static-features.json
     - assets/data/taiwan/ncdr-hazard-events.json
+    - assets/data/trusted-keys.json
     - assets/map/styles/taiwan-light.json
     - assets/map/styles/taiwan-dark.json
     - assets/map/labels/taiwan-reference-labels.geojson

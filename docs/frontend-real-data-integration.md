@@ -1,21 +1,35 @@
 # 全台真實資料提供與 Flutter Demo 整合指南
 
-本文件說明如何把官方全台資料收集、整理成 Flutter Demo 可讀取的資料，並讓其他開發者可以透過 HTTP 取得 Demo 使用的 JSON。
+> **更新 2026-10-05：**本文件下方「Flutter Demo JSON asset 匯出」是舊的預覽／一次性流程，不是目前 Web／Android 的靜態資料下載路徑。底圖目前使用隨 App 提供的 OSM／Protomaps PMTiles；相機範圍與歷史 NLSC 試用見 [Map_description.md](../Map_description.md)。簽章 layer、告警 TTL、門牌涵蓋及資料狀態見[資料說明](../data_description.md)與[點位涵蓋報告](data-coverage-2026-10-04.md)。Web／Android client 程式已加入，但新 Server 網域尚未部署驗證。
+
+本文件後半保留舊版 Flutter Demo JSON 匯出流程，作為歷史操作參考；現行 Web／Android 的資料契約與運作狀態以本頁更新說明及[資料說明](../data_description.md)為準。
 
 ## 先看結論
 
-目前專案有兩種資料流：
+現行流程由 `pipeline/` 收集官方來源，Server 發布簽章告警 feed 與靜態圖層，Web／Android client 驗證並保存本機副本。程式與部署範本已在 repository；正式 Server 網域尚未部署驗證，因此目前不能說兩端已取得最新發布資料。
 
-1. `pipeline/` 由伺服器或本機呼叫 NCDR、CWA、TDX、避難所、醫療與 OSM 官方來源。
-2. Flutter Web Demo 不直接呼叫這些官方 API，而是讀取已經產生的 JSON asset。
+舊版 Demo JSON asset 已不再作為 Web 驗證失敗時的醫療／避難所點位替代來源。NCDR、CWA、TDX 的 API key 與 client secret 只能放在 pipeline 伺服器，不能放進 Flutter Web、Android asset、Raw snapshot 或瀏覽器 JavaScript。
 
-目前 repository **沒有已部署的公開 REST API server**。因此：
+中央 Server 的資料流是：官方來源 → 單一排程 collector → private raw/normalized cache → signed government feed 或 static layer → read-only Fastify API。API request 只讀已發布內容，不會觸發官方 API。Web／Android client 程式已加入，但仍須部署正式 HTTPS 網域並做兩端下載驗收。
 
-- 要測試或分享 Demo：把 Flutter build 產物放到 HTTP server，其他人可以讀取其中的 JSON asset。
-- 要提供正式的即時資料 API：需要另外部署一個後端或靜態資料服務，讓它發布 pipeline 產生的「已審查資料」，再把 Flutter loader 改成讀取該 URL。
-- NCDR、CWA、TDX 的 API key 與 client secret 只能放在 pipeline 伺服器，不能放進 Flutter Web、Android asset、Raw snapshot 或瀏覽器 JavaScript。
+目前 Server 的預設範圍是：NCDR 全台災害事件（公開 feed 排除 `BACKGROUND`）、CWA 地震／天氣特報／颱風，以及獨立的靜態避難所位置與醫療資源。App 的官方動態告警只保留 NCDR；CWA、TDX 與舊避難所狀態 feed 不會進入 Web／Android 的事件快取、地圖或通知。OSM／Protomaps 底圖隨 App 內附，不由資料 Server 提供；避難所位置與醫療資源走簽章 layer。避難所開設狀態 XML 不在目前收集範圍。TDX 與 OSM POI adapter 保留但不在預設排程。Web 與 Android 都已接入簽章 layer、告警 feed 與門牌包資料路徑；正式網域及兩端外部下載驗收仍待完成。
 
-## 目前資料流
+## Web 與 Android 同步開發規則
+
+會影響地圖、搜尋、離線資料、簽章資料或告警行為的功能，Web 與 Android 必須在同一批變更中完成。共用資料契約或來源改動時，要同時更新兩端的讀取、驗證、錯誤處理與測試；不可只因其中一端已可用就標記功能完成。若平台能力確實不同，須在文件列明差異、使用者可見行為及尚未支援的平台，不能宣稱兩端功能一致。
+
+每批跨平台變更至少要核對以下項目，再更新本文件及相關模組文件。`.github/workflows/platform-parity.yml` 會在每個 Pull Request 執行 Node／Server、Flutter Web 與 Android 工作，並彙整成 `platform-parity` 狀態檢查；Android 工作會在 API 36 模擬器跑 instrumentation。GitHub `main` 目前已有 `Protect Main Branch` ruleset，要求透過 Pull Request，但尚未要求 CI 狀態。先將 workflow 合併到預設分支並讓它成功執行；若既有 PR 尚未產生此狀態檢查，先更新或重開該 PR 觸發檢查，再把 `platform-parity` 加進 ruleset 的 required status checks。在那之前，workflow 會執行檢查，但 GitHub 尚不會用它阻擋合併。Azure 部署仍由獨立的手動 workflow 觸發。
+
+- `npm test` 與 `npm run test:server`（資料契約或 Server 有變更時）。
+- `flutter analyze --no-pub`、`flutter test --no-pub` 及 `flutter build web --release --no-web-resources-cdn --no-pub`。
+- `cd android && ./gradlew :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest`，再於 API 36 模擬器執行 `:app:connectedDebugAndroidTest`。
+- Web 與 Android 對相同資料版本的驗簽、離線保存、更新失敗處理及過期／撤銷行為；裝置或瀏覽器實測狀態要與單元測試分開記錄。
+
+上述條件未全部通過時，該批功能維持「部分完成」或「待驗收」。
+
+## 舊版 Flutter Demo asset 流程（2026-09-27 歷史記錄）
+
+以下資料流圖、asset 清單與匯出步驟記錄舊版 Demo，不能當作現行 Web／Android 更新路徑；現行路徑見上方摘要與[資料說明](../data_description.md)。
 
 ```text
 官方資料來源
@@ -38,18 +52,18 @@ pipeline/cli.mjs collect
                          Flutter Web Demo / Chrome
 ```
 
-Flutter 目前使用的兩個 Demo 資料檔如下：
+當時 Flutter Demo 使用的兩個資料檔如下：
 
-| 檔案 | schema | 內容 | 目前用途 |
+| 檔案 | schema | 內容 | 現況 |
 |---|---|---|---|
-| `flutter/assets/data/taiwan/static-features.json` | `offline-map-display-v1` | 全台避難所、醫療機構及其他已匯出的地圖地物 | 顯示地圖 marker、搜尋與設施資訊 |
-| `flutter/assets/data/taiwan/ncdr-hazard-events.json` | `event-batch-v0` | NCDR 正規化事件 | Chrome Demo 顯示目前且具行動價值的示警 |
+| `flutter/assets/data/taiwan/static-features.json` | `offline-map-display-v1` | 舊版全台避難所、醫療機構及其他地圖地物投影 | Legacy preview 資產；不作為現行點位、搜尋或驗證失敗時的 fallback |
+| `flutter/assets/data/taiwan/ncdr-hazard-events.json` | `event-batch-v0` | 舊版 NCDR 正規化事件 | Legacy Chrome Demo 資產；現行告警使用簽章 feed |
 
-Android host 若有可用的 native bridge，會以通過簽章驗證並寫入 Room 的資料為準；Chrome 沒有 Android bridge 時，才使用上面的 Flutter asset fallback。
+Android host 以 native bridge 驗證並快取的資料為準；Web 使用同源 API 與 OPFS 驗證／快取。API 或簽章資料不可用且沒有有效快取時，保留底圖並顯示點位資料不可用，不讀取舊預覽快照作為已核實點位。
 
-### Android 路線與搜尋進度（2026-09-27）
+### Android 路線與搜尋進度（2026-09-27 歷史記錄）
 
-Android 使用已驗證的本機狀態，首次載入不再先解析之後會被 native 資料取代的 preview；native bridge 不可用時仍保留 Flutter preview fallback。全台設施、全台道路搜尋和可規劃路線的範圍不同：目前路線引擎使用獨立打包的雙北 OSM 預建圖，沒有線上路線 API，也不因分享 Web Demo 而變成全台路線服務。
+截至 2026-09-27，Android native bridge 不可用時曾保留 Flutter preview fallback；2026-10-04 已改為沒有有效簽章點位資料時不顯示舊 preview。全台設施、全台道路搜尋和可規劃路線的範圍不同：目前路線引擎使用獨立打包的雙北 OSM 預建圖，沒有線上路線 API，也不因分享 Web Demo 而變成全台路線服務。
 
 Pixel 8a 已完成路線、背景搜尋、街道標記與底圖重用實測；一般搜尋運算 p95 約 31.7 ms，另有 180 ms 輸入 debounce，冷啟動道路索引約 6.8 秒。簽章驗證、事件有效期限與 snapshot 資料的界線不變。詳見 [目前進度](mvp-remaining-tasks.md) 與 [雙北效能紀錄](taipei-offline-routing.md)。
 
@@ -78,6 +92,8 @@ CWA_API_KEY=
 TDX_CLIENT_ID=
 TDX_CLIENT_SECRET=
 TDX_API_ENDPOINTS=
+TDX_EVENT_FRESHNESS_SECONDS=900
+TDX_ENDPOINT_DELAY_MS=1000
 
 # 全台行政區索引
 DATA_SCOPE=taiwan
@@ -87,6 +103,8 @@ TAIWAN_BOUNDARY_PATH=/Users/ray/Desktop/OSS/data/area-catalog.json
 需要注意：
 
 - `TDX_API_ENDPOINTS=` 留白代表使用 pipeline 內建的全台縣市端點清單；不是代表停用全台收集。
+- 目前 TDX 道路事件 City API 回應接受的內建代碼為 `Taipei`、`NewTaipei`、`Taoyuan`、`Taichung`、`Tainan`、`Kaohsiung`、`Keelung`、`MiaoliCounty`、`ChiayiCounty`、`PingtungCounty`、`YilanCounty`、`KinmenCounty`；這是來源端目前提供的涵蓋範圍，不應自行補上 API 回傳 400 的縣市代碼。
+- `TDX_ENDPOINT_DELAY_MS=1000` 會在 sequential endpoint request 之間加入 1 秒間隔；若 TDX 回傳 `Retry-After`，collector 會依該值退避後再重試。
 - `NCDR_DETAIL_CONCURRENCY=1` 可以降低一次取得大量 CAP 詳細內容時觸發限制的機率。
 - 正式服務應使用 secret manager 或伺服器環境變數，不要把 `.env` 上傳給前端或放入 Docker image 的公開層。
 
@@ -165,11 +183,11 @@ if (x.source_status !== "ok") process.exit(2);
 ' "$RUN_ROOT/ncdr-hazard-events"
 ```
 
-`blocked_by_auth`、`partial` 或 `stale` 不應該被當成完整成功資料發布。`partial` 可以留作內部診斷，但對外應明確標示資料不完整。
+`blocked_by_auth`、`partial` 或 `stale` 不應該被當成完整動態災害資料發布。`partial` 可以留作內部診斷，但對外應明確標示資料不完整；醫療 static layer 例外地允許以非零 matched features 發布，並且必須同時保留 matched／unresolved 報告。
 
-### 3.2 避難所、OSM 與醫療機構
+### 3.2 避難所與醫療機構
 
-先收集避難所與 OSM，再用 OSM 座標比對醫療機構：
+目前只收集靜態避難所位置與預計容量，不收集更新不定期的開設狀態。醫療院所的主檔由 MOHW 提供，座標由中央 Server 透過官方國土測繪中心查詢與已審核的官方衛生局補充來源取得；不使用 OSM 座標補醫療資料：
 
 ```bash
 node --env-file=pipeline/.env pipeline/cli.mjs collect \
@@ -181,24 +199,11 @@ node --env-file=pipeline/.env pipeline/cli.mjs collect \
 node --env-file=pipeline/.env pipeline/cli.mjs collect \
   --scope taiwan \
   --boundary "$BOUNDARY" \
-  --source taiwan-shelter-status \
-  --out-dir "$RUN_ROOT/taiwan-shelter-status"
-
-node --env-file=pipeline/.env pipeline/cli.mjs collect \
-  --scope taiwan \
-  --boundary "$BOUNDARY" \
-  --source osm-taiwan \
-  --out-dir "$RUN_ROOT/osm-taiwan"
-
-node --env-file=pipeline/.env pipeline/cli.mjs collect \
-  --scope taiwan \
-  --boundary "$BOUNDARY" \
   --source taiwan-medical \
-  --coordinate-input "$RUN_ROOT/osm-taiwan/osm-taiwan.features.json" \
   --out-dir "$RUN_ROOT/taiwan-medical"
 ```
 
-如果全台 Overpass 查詢回傳 `504`，不要把錯誤結果當成空資料。可以將 hospital、clinic、shelter 查詢拆開收集，再合併三個 `features.json` 後，才執行 `taiwan-medical` 的座標比對。完整 source 與錯誤狀態仍保留在各自的 `collection-metadata.json`。
+Server 會依台灣範圍建立可重現的 NLSC 半徑查詢網格，依機構代碼優先、名稱＋地址其次進行唯一匹配。官方座標服務失敗、回傳空結果或無法唯一匹配時，保留上一版 medical layer 或 `unresolved_medical`，不可把缺口猜成座標。一次性 `normalize` 若要使用 `--coordinate-input`，輸入也必須是經審核的官方座標 snapshot；目前不應使用停用的 OSM layer 取代官方座標來源。
 
 ### 3.3 CWA 與 TDX（目前 pipeline 可收集，尚未直接接入 Chrome Demo）
 
@@ -448,4 +453,4 @@ Web 可以使用 remote loader；Android 仍應以已驗證的 Room／bridge 為
 
 ### TDX 收集結果是 `partial`
 
-這通常表示某些縣市端點回傳 `429` 限流或其他 HTTP 錯誤。查看 Raw snapshot 的 `payload.sources`，等配額恢復後重試；在未確認所有端點成功前，不要宣稱取得完整全台道路事件。
+這通常表示某些縣市端點回傳 `429` 限流或 `400` 不接受的 City 代碼。查看 Raw snapshot 的 `payload.sources`：`429` 會依 `Retry-After` 重試並保留成功端點資料；`400` 則應修正 endpoint 清單，不應靠新增 API key 解決。在未確認所有來源端點成功前，不要宣稱取得完整全台道路事件。

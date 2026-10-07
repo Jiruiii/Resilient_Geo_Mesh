@@ -19,5 +19,13 @@ interface EventStore {
 
     fun save(event: StoredEvent)
 
+    /** Highest signed version retained after an expired payload is purged. */
+    fun versionFloor(namespace: String, eventId: String): Int? = null
+
+    /** Preserve replay protection while deleting the expired event document. */
+    fun rememberVersion(namespace: String, eventId: String, eventVersion: Int) = Unit
+
+    fun clearVersionFloor(namespace: String, eventId: String) = Unit
+
     fun all(): List<StoredEvent>
 }

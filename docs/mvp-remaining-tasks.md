@@ -2,6 +2,7 @@
 
 > 建立日期：2026-09-05
 > 最新進度更新：2026-09-27，雙北離線路線與 Pixel 8a 延遲驗證完成；詳見 G、H 段及 [實測紀錄](taipei-offline-routing.md)。原有 MVP 阻塞項目不因此視為完成。
+> 地圖／資料同步更新（2026-10-05）：Web 與 Android 已恢復使用 App 內建 OSM／Protomaps PMTiles，移除 NLSC 底圖下載與選擇流程，以及 Server `/maps/*` 發布路徑。歷史 NLSC 範圍與試用設定見 [Map_description.md](../Map_description.md)。政府簽章 layer/feed、門牌包、驗簽快取及 Web／Android 資料串接保留；本機點位數據與正式服務界線見[點位涵蓋報告](data-coverage-2026-10-04.md)及[資料說明](../data_description.md)。OSM 底圖與 Android 實機安裝驗收待本次修改後重新確認。
 > 同日可靠性更新：快取／庫存一致性、Flutter TTL、更新重試及擴大推薦已修正，Pixel 8a／Sharp 兩機真實 BLE 互補缺片與再次相遇通過；詳見 [可靠性與實機驗證](reliability-device-validation.md)。三機自動中繼、長時間 Doze 及正式連線成功率仍待驗收。
 > 同步與避難情境更新：新增同步狀態頁、服務啟停與六種災害類別篩選；詳見 [功能與驗證紀錄](sync-status-disaster-filter.md)。事件到達後自動重算仍待實作。
 > 取代分工方式：不再按「甲／乙」或「需不需要實機」切分，只按「離 MVP 通過條件有多近」排序。
@@ -219,7 +220,7 @@
 - 災害類型：自動推斷，還是讓使用者手動選擇。
 - 危險區加權倍率（實作採 PARTIAL ×3、HIGH ×5、UNVERIFIED ×2、起點在危險區內離開時 ×10）。
 - 起點本身在危險區內時的提示文字（實作：「你位於危險區域內，請盡快離開」）。
-- 靜態避難所圖層：2026-09-27 已打包全台 5,907 處（`assets/static/taiwan/shelter`，金鑰 `taiwan-static-2026`，私鑰只在產生者本機）；驗證結果依內容雜湊快取（`VerifiedLayerCache`）。[既有實機紀錄](../experiments/limitations.md) 的首次驗證約 14–18 秒、在背景執行；本輪保留既有資料與快取，未獨立重測首次完整簽章驗證。
+- 靜態避難所／醫療圖層：Android 不再打包舊避難所快照；首次連線從 Server 下載簽章資料並保存驗證後的私有快取，供離線使用。Web 與 API 36 Android 模擬器已對本機暫存 bundle 完成下載、驗簽與醫療搜尋／離線快取檢查；正式 Server layer 部署與實機驗收仍待完成。
 
 ---
 

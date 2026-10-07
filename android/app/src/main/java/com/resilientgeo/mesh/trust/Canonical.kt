@@ -144,10 +144,45 @@ object Canonical {
 
     fun sha256Bytes(bytes: ByteArray): String {
         val digest = java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
-        return "sha256:" + digest.joinToString("") { "%02x".format(it) }
+        return formatSha256(digest)
     }
 
     fun sha256Canonical(value: Any?): String {
         return sha256Bytes(canonicalize(value).toByteArray(StandardCharsets.UTF_8))
+    }
+
+    /** Hashes a canonical JSON array without materializing the complete array string. */
+    fun sha256CanonicalArray(values: Sequence<Any?>): String {
+        val hasher = CanonicalArrayHasher()
+        values.forEach(hasher::update)
+        return hasher.finish()
+    }
+
+    internal fun formatSha256(digest: ByteArray): String =
+        "sha256:" + digest.joinToString("") { "%02x".format(it) }
+}
+
+/** Incremental canonical JSON array hashing for signed packages with many records. */
+class CanonicalArrayHasher {
+    private val digest = java.security.MessageDigest.getInstance("SHA-256")
+    private var first = true
+    private var finished = false
+
+    init {
+        digest.update('['.code.toByte())
+    }
+
+    fun update(value: Any?) {
+        check(!finished) { "canonical array hash is already finished" }
+        if (!first) digest.update(','.code.toByte())
+        digest.update(Canonical.canonicalize(value).toByteArray(StandardCharsets.UTF_8))
+        first = false
+    }
+
+    fun finish(): String {
+        check(!finished) { "canonical array hash is already finished" }
+        finished = true
+        digest.update(']'.code.toByte())
+        return Canonical.formatSha256(digest.digest())
     }
 }

@@ -14,6 +14,14 @@ class RoomEventStore(private val dao: EventDao) : EventStore {
 
     override fun save(event: StoredEvent) {
         dao.upsertSync(event.toEntity())
+        dao.clearVersionFloorSync(event.namespace, event.eventId)
+    }
+
+    override fun versionFloor(namespace: String, eventId: String): Int? =
+        dao.versionFloorSync(namespace, eventId)
+
+    override fun rememberVersion(namespace: String, eventId: String, eventVersion: Int) {
+        dao.rememberVersionSync(namespace, eventId, eventVersion, System.currentTimeMillis())
     }
 
     override fun all(): List<StoredEvent> = dao.allSync().map { it.toStoredEvent() }

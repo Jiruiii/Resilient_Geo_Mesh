@@ -35,6 +35,9 @@ class GovernmentFeedSync(
         val datasets = feed.getJSONArray("datasets")
         for (i in 0 until datasets.length()) {
             val dataset = datasets.getJSONObject(i)
+            // Official alerts in the App come from NCDR only. Do not fetch
+            // or ingest other signed government datasets.
+            if (dataset.optString("source_id") != "ncdr") continue
             val manifest = dataset.getJSONObject("manifest")
             val entries = manifest.getJSONArray("chunks")
             val paths = dataset.getJSONArray("chunk_paths")

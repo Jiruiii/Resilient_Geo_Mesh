@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -10,17 +8,11 @@ import 'package:resilientgeo_flutter/widgets/map_layers.dart'
     show MapIconCatalog;
 
 void main() {
-  test('bundles nationwide static map data for rootBundle loading', () async {
-    final raw = await rootBundle.loadString(
-      'assets/data/taiwan/static-features.json',
+  test('does not bundle the old static point snapshot', () async {
+    await expectLater(
+      rootBundle.loadString('assets/data/taiwan/static-features.json'),
+      throwsA(isA<FlutterError>()),
     );
-
-    final decoded = Map<String, dynamic>.from(jsonDecode(raw) as Map);
-    final features = (decoded['features'] as List).cast<Map>();
-    expect(decoded['dataset_id'], 'resilientgeo-taiwan');
-    expect(decoded['coverage'], 'TW');
-    expect(features.any((feature) => feature['kind'] == 'shelter'), isTrue);
-    expect(features.any((feature) => feature['kind'] == 'medical'), isTrue);
   });
 
   test('bundles the all-Taiwan offline road search asset', () async {
@@ -66,6 +58,17 @@ void main() {
       expect(find.bySemanticsLabel('圖層設定'), findsOneWidget);
     },
   );
+
+  testWidgets('opens the map directly without a basemap selection screen', (
+    tester,
+  ) async {
+    await tester.pumpWidget(_testApp());
+    await tester.pump();
+
+    expect(find.text('選擇離線底圖'), findsNothing);
+    expect(find.text('NLSC 臺灣通用電子地圖'), findsNothing);
+    expect(find.bySemanticsLabel('搜尋地點'), findsOneWidget);
+  });
 
   testWidgets('offline map controls remain available at 390dp width', (
     tester,

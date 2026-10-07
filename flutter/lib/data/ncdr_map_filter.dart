@@ -6,15 +6,16 @@ const Set<String> _actionableNcdrRelevance = <String>{
   'HIGH_IMPACT',
 };
 
-/// Keeps NCDR background notices out of the operational map.
-///
-/// Non-NCDR events remain visible because CWA and TDX use their own event
-/// semantics. NCDR events fail closed when the pipeline has not classified
-/// them, so an administrative notice cannot appear as an emergency marker by
-/// accident.
+/// Official alerts in the App come from NCDR. Local crowd reports remain a
+/// separate, explicitly unverified event stream.
+bool isAppSupportedEvent(MeshEvent event) =>
+    event.namespace?.startsWith('crowd.') == true || _isNcdrEvent(event);
+
+/// Keeps NCDR background notices out of the operational map. Other official
+/// feeds are not part of this App's alert source.
 bool isMapVisibleEvent(MeshEvent event) {
-  final isNcdr = event.source == 'NCDR' || event.namespace == 'official.ncdr';
-  if (!isNcdr) return true;
+  if (event.namespace?.startsWith('crowd.') == true) return true;
+  if (!_isNcdrEvent(event)) return false;
 
   final mapVisible = event.attributes?['map_visible'];
   if (mapVisible is bool) return mapVisible;
@@ -25,3 +26,12 @@ bool isMapVisibleEvent(MeshEvent event) {
 
 List<MeshEvent> filterMapEvents(Iterable<MeshEvent> events) =>
     List<MeshEvent>.unmodifiable(events.where(isMapVisibleEvent));
+
+bool _isNcdrEvent(MeshEvent event) {
+  final namespace = event.namespace ?? '';
+  return event.source?.toUpperCase() == 'NCDR' ||
+      namespace == 'official.ncdr' ||
+      namespace.startsWith('official.ncdr.') ||
+      namespace == 'official.live.ncdr' ||
+      namespace.startsWith('official.live.ncdr.');
+}

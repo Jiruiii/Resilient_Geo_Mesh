@@ -26,6 +26,10 @@ import { signFeature } from './lib/feature-contract.mjs';
 import { exportMapData } from './lib/map-export.mjs';
 import { normalizeSource } from './lib/normalize.mjs';
 import {
+  collectSource as collectServerSource,
+  createMemoryCacheStore,
+} from './lib/source-collector.mjs';
+import {
   DEFAULT_CWA_EARTHQUAKE_ENDPOINT,
   DEFAULT_CWA_WARNING_ENDPOINT,
   DEFAULT_CWA_TYPHOON_ENDPOINT,
@@ -62,11 +66,8 @@ import {
 } from './sources/osm.mjs';
 import {
   DEFAULT_SHELTER_ENDPOINT,
-  DEFAULT_SHELTER_STATUS_ENDPOINT,
   fetchShelters,
-  fetchShelterStatuses,
   fetchTaiwanShelters,
-  normalizeShelterStatuses,
   normalizeShelters,
 } from './sources/shelter.mjs';
 import {
@@ -74,6 +75,8 @@ import {
   createAreaResolvers,
   normalizeAreaCatalog,
 } from './sources/areas.mjs';
+import { TAIWAN_COUNTIES } from './sources/taiwan-counties.mjs';
+import { getSourceDefinition } from '../server/src/source-registry.mjs';
 
 const NEIHU_BOUNDARY_PATH = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -148,6 +151,7 @@ async function readScope(options = {}) {
       areaResolver: resolvers.areaResolver,
       areaIdResolver: resolvers.areaIdResolver,
       boundaryResolver: resolvers.boundaryResolver,
+      counties: TAIWAN_COUNTIES,
       areaCatalogPath: boundaryPath,
     };
   }
@@ -155,6 +159,7 @@ async function readScope(options = {}) {
     scope: 'taiwan',
     coverage: 'TW',
     boundary: input,
+    counties: TAIWAN_COUNTIES,
     areaCatalogPath: boundaryPath,
   };
 }
@@ -168,7 +173,6 @@ const STATIC_SOURCES = new Set([
   'osm-taiwan',
   'taipei-shelter',
   'taiwan-shelter',
-  'taiwan-shelter-status',
   'taipei-medical',
   'taiwan-medical',
 ]);
@@ -431,57 +435,52 @@ async function collectStaticSource(source, options) {
   const outDir = requireOption(options, 'out_dir');
   await mkdir(outDir, { recursive: true });
   try {
-    const rawSnapshot = await fetchStaticSource(source, options);
     const scopeOptions = await readScope(options);
-    const coordinateFeatures = source === 'taiwan-medical' ? await readCoordinateFeatures(options) : undefined;
-    const normalized = normalizeStaticSource(source, rawSnapshot, {
-      ...scopeOptions,
-      coordinateFeatures,
-      namespace: options.namespace,
-      signingKeyId: options.key_id,
-      datasetId: options.dataset_id,
-      issuedAt: options.issued_at,
-      expiresAt: options.expires_at,
-      receivedAt: rawSnapshot.retrieved_at,
+    const result = await collectServerSource({
+      definition: getSourceDefinition(source),
+      scope: scopeOptions,
+      config: {
+        env: process.env,
+        signingKeyId: options.key_id,
+        coordinateFeatures: source === 'taiwan-medical' ? await readCoordinateFeatures(options) : undefined,
+      },
+      cacheStore: createMemoryCacheStore(),
+      now: new Date(options.retrieved_at ?? Date.now()),
     });
+    if (!result.rawSnapshot || ['unavailable', 'blocked_by_auth'].includes(result.status)) {
+      const error = new Error(`source collection failed: ${result.status}`);
+      error.code = result.errorCode ?? 'SOURCE_ERROR';
+      if (result.coordinateReport) error.coordinateReport = result.coordinateReport;
+      throw error;
+    }
+    const rawSnapshot = result.rawSnapshot;
+    const normalized = result.normalized;
     const rawFile = path.join(outDir, `${source}.raw.json`);
     const featuresFile = path.join(outDir, `${source}.features.json`);
-    const statusEventsFile = source === 'taiwan-shelter-status'
-      ? path.join(outDir, `${source}.events.json`)
-      : undefined;
     await writeJson(rawFile, rawSnapshot);
     await writeJson(featuresFile, normalized);
-    if (statusEventsFile) {
-      await writeJson(statusEventsFile, {
-        schema_version: 'event-batch-v0',
-        source_id: source,
-        retrieved_at: rawSnapshot.retrieved_at,
-        event_count: normalized.status_events.length,
-        events: normalized.status_events,
-      });
-    }
     await writeJson(path.join(outDir, 'collection-metadata.json'), {
       schema_version: 'collection-metadata-v0',
       source_id: source,
       mode: 'live',
-      source_status: sourceStatusForSnapshot(rawSnapshot),
+      source_status: result.status ?? sourceStatusForSnapshot(rawSnapshot),
       retrieved_at: rawSnapshot.retrieved_at,
       raw_file: path.basename(rawFile),
       features_file: path.basename(featuresFile),
-      ...(statusEventsFile ? { events_file: path.basename(statusEventsFile) } : {}),
       raw_record_count: rawRecordCount(rawSnapshot.payload),
       curated_feature_count: normalized.feature_count,
       curated_status_event_count: normalized.status_event_count,
       unresolved_status_count: normalized.unresolved_status_count ?? 0,
       unresolved_medical_count: normalized.unresolved_medical_count ?? 0,
+      ...(normalized.coordinate_report ? { coordinate_report: normalized.coordinate_report } : {}),
     });
     console.log(JSON.stringify({
       out_dir: outDir,
       raw: rawFile,
       features: featuresFile,
-      ...(statusEventsFile ? { events: statusEventsFile } : {}),
       feature_count: normalized.feature_count,
       status_event_count: normalized.status_event_count,
+      ...(normalized.coordinate_report ? { coordinate_report: normalized.coordinate_report } : {}),
     }, null, 2));
   } catch (error) {
     await writeJson(path.join(outDir, 'collection-metadata.json'), {
@@ -492,6 +491,7 @@ async function collectStaticSource(source, options) {
       retrieved_at: options.retrieved_at ?? new Date().toISOString(),
       error_code: error.code ?? 'SOURCE_ERROR',
       error_message: error.message,
+      ...(error.coordinateReport ? { coordinate_report: error.coordinateReport } : {}),
     });
     throw error;
   }
@@ -516,21 +516,11 @@ async function normalizeCommand(options) {
       receivedAt: options.received_at ?? raw.retrieved_at,
     });
     await mkdir(path.dirname(outPath), { recursive: true });
-    const output = source === 'taiwan-shelter-status'
-      ? {
-        schema_version: 'event-batch-v0',
-        source_id: source,
-        retrieved_at: raw.retrieved_at,
-        event_count: normalized.status_events.length,
-        events: normalized.status_events,
-      }
-      : normalized;
-    await writeJson(outPath, output);
+    await writeJson(outPath, normalized);
     console.log(JSON.stringify({
       out: outPath,
       feature_count: normalized.feature_count,
       status_event_count: normalized.status_event_count,
-      ...(source === 'taiwan-shelter-status' ? { event_count: output.event_count } : {}),
     }, null, 2));
     return;
   }
@@ -586,12 +576,6 @@ async function fetchStaticSource(source, options) {
       retrievedAt,
     });
   }
-  if (source === 'taiwan-shelter-status') {
-    return fetchShelterStatuses({
-      endpoint: process.env.SHELTER_STATUS_ENDPOINT ?? DEFAULT_SHELTER_STATUS_ENDPOINT,
-      retrievedAt,
-    });
-  }
   if (source === 'taipei-medical' || source === 'taiwan-medical') {
     return fetchMedicalFacilities({
       sourceId: source,
@@ -626,22 +610,16 @@ function normalizeStaticSource(source, raw, options) {
       source_id: source,
       retrieved_at: raw.retrieved_at,
       feature_count: normalized.features.length,
-      status_event_count: normalized.statusEvents.length,
+      status_event_count: 0,
+      source_count: normalized.source_count,
+      located_count: normalized.located_count,
+      unlocated_count: normalized.unlocated_count,
+      excluded_count: normalized.excluded_count,
+      excluded_reason_counts: normalized.excluded_reason_counts,
+      location_issue_counts: normalized.location_issue_counts,
+      county_coverage: normalized.county_coverage,
       features: normalized.features,
-      status_events: normalized.statusEvents,
-    };
-  }
-  if (source === 'taiwan-shelter-status') {
-    const statusEvents = normalizeShelterStatuses(raw, { ...options, sourceId: source });
-    return {
-      schema_version: 'static-normalized-v0',
-      source_id: source,
-      retrieved_at: raw.retrieved_at,
-      feature_count: 0,
-      status_event_count: statusEvents.length,
-      unresolved_status_count: statusEvents.unresolved_count ?? 0,
-      features: [],
-      status_events: statusEvents,
+      status_events: [],
     };
   }
   if (source === 'taiwan-medical') {
@@ -678,22 +656,19 @@ function normalizeStaticSource(source, raw, options) {
 
 async function collectTdx(options) {
   const outDir = requireOption(options, 'out_dir');
-  const scopeOptions = await readScope(options);
-  const result = await collectTdxRoadEvents({
-    clientId: process.env.TDX_CLIENT_ID,
-    clientSecret: process.env.TDX_CLIENT_SECRET,
-    endpoint: process.env.TDX_API_ENDPOINT ?? DEFAULT_TDX_ENDPOINT,
-    endpoints: scopeOptions.scope === 'taiwan'
-      ? (process.env.TDX_API_ENDPOINTS?.split(',').map((value) => value.trim()).filter(Boolean)
-        ?? DEFAULT_TDX_NATIONWIDE_ENDPOINTS)
-      : undefined,
-    tokenEndpoint: process.env.TDX_TOKEN_ENDPOINT,
-    freshnessSeconds: process.env.TDX_EVENT_FRESHNESS_SECONDS,
-    retrievedAt: options.retrieved_at,
-    ...scopeOptions,
-    namespace: options.namespace,
-    signingKeyId: options.key_id,
+  const result = await collectServerSource({
+    definition: getSourceDefinition('tdx-road-events'),
+    scope: await readScope(options),
+    config: { env: process.env, signingKeyId: options.key_id },
+    cacheStore: createMemoryCacheStore(),
+    now: new Date(options.retrieved_at ?? Date.now()),
   });
+  if (!result.rawSnapshot || ['unavailable', 'blocked_by_auth'].includes(result.status)) {
+    const error = new Error(`source collection failed: ${result.status}`);
+    error.code = result.errorCode ?? 'SOURCE_ERROR';
+    throw error;
+  }
+  const rawSnapshot = result.rawSnapshot;
   const rawFile = path.join(outDir, 'tdx-road-events.raw.json');
   const eventsFile = path.join(outDir, 'tdx-road-events.events.json');
   await mkdir(outDir, { recursive: true });
@@ -708,14 +683,13 @@ async function collectTdx(options) {
     schema_version: 'collection-metadata-v0',
     source_id: 'tdx-road-events',
     mode: 'live',
-    source_status: result.unresolved?.length > 0 ? 'partial' : sourceStatusForSnapshot(result.rawSnapshot),
+    source_status: result.status,
     retrieved_at: result.rawSnapshot.retrieved_at,
     raw_file: path.basename(rawFile),
     events_file: path.basename(eventsFile),
     raw_record_count: rawRecordCount(result.rawSnapshot.payload),
     curated_event_count: result.events.length,
-    unresolved_event_count: result.unresolved?.length ?? 0,
-    ...(result.unresolved?.length > 0 ? { unresolved_events: result.unresolved } : {}),
+    unresolved_event_count: result.unresolved_count ?? 0,
   });
   console.log(JSON.stringify({ out_dir: outDir, raw: rawFile, events: eventsFile, event_count: result.events.length }, null, 2));
 }
@@ -734,60 +708,19 @@ function sourceStatusForSnapshot(rawSnapshot) {
 }
 
 async function collectDynamicSource(source, options) {
-  const scopeOptions = await readScope(options);
-  const common = {
-    retrievedAt: options.retrieved_at,
-  };
-  if (source === 'cwa-earthquake') {
-    const rawSnapshot = await fetchCwaEarthquakes({
-      ...common,
-      apiKey: process.env.CWA_API_KEY,
-      endpoint: process.env.CWA_EARTHQUAKE_ENDPOINT ?? DEFAULT_CWA_EARTHQUAKE_ENDPOINT,
-    });
-    return {
-      rawSnapshot,
-      events: normalizeCwaEarthquakes(rawSnapshot, {
-        ...scopeOptions,
-        namespace: options.namespace,
-        signingKeyId: options.key_id,
-        receivedAt: rawSnapshot.retrieved_at,
-      }),
-    };
-  }
-  if (source === 'cwa-weather-warning' || source === 'cwa-typhoon-warning') {
-    const fetcher = source === 'cwa-typhoon-warning' ? fetchCwaTyphoonWarnings : fetchCwaWarnings;
-    const normalizer = source === 'cwa-typhoon-warning' ? normalizeCwaTyphoonWarnings : normalizeCwaWarnings;
-    const rawSnapshot = await fetcher({
-      ...common,
-      apiKey: process.env.CWA_API_KEY,
-      endpoint: source === 'cwa-typhoon-warning'
-        ? process.env.CWA_TYPHOON_ENDPOINT ?? DEFAULT_CWA_TYPHOON_ENDPOINT
-        : process.env.CWA_WARNING_ENDPOINT ?? DEFAULT_CWA_WARNING_ENDPOINT,
-    });
-    return {
-      rawSnapshot,
-      events: normalizer(rawSnapshot, {
-        ...scopeOptions,
-        namespace: options.namespace,
-        signingKeyId: options.key_id,
-        receivedAt: rawSnapshot.retrieved_at,
-      }),
-    };
-  }
-  const rawSnapshot = await fetchNcdrHazards({
-    ...common,
-    credentials: { apiKey: process.env.NCDR_ALERT_API_KEY ?? process.env.NCDR_API_KEY },
-    endpoint: process.env.NCDR_ALERT_ENDPOINT ?? process.env.NCDR_API_ENDPOINT ?? DEFAULT_NCDR_ENDPOINT,
+  const result = await collectServerSource({
+    definition: getSourceDefinition(source),
+    scope: await readScope(options),
+    config: { env: process.env, signingKeyId: options.key_id },
+    cacheStore: createMemoryCacheStore(),
+    now: new Date(options.retrieved_at ?? Date.now()),
   });
-  return {
-    rawSnapshot,
-    events: normalizeNcdrHazards(rawSnapshot, {
-      ...scopeOptions,
-      namespace: options.namespace,
-      signingKeyId: options.key_id,
-      receivedAt: rawSnapshot.retrieved_at,
-    }),
-  };
+  if (!result.rawSnapshot || ['unavailable', 'blocked_by_auth'].includes(result.status)) {
+    const error = new Error(`source collection failed: ${result.status}`);
+    error.code = result.errorCode ?? 'SOURCE_ERROR';
+    throw error;
+  }
+  return result;
 }
 
 function normalizeSourceSpecific(source, raw, options) {
@@ -932,7 +865,7 @@ function printHelp() {
   node pipeline/cli.mjs export-map --input <features.json[,more.json]> --out <static-features.json>
   node pipeline/cli.mjs collect --source tdx-road-events --out-dir <dir>
   node pipeline/cli.mjs collect --source cwa-earthquake|cwa-weather-warning|cwa-typhoon-warning|ncdr-hazard-events --out-dir <dir>
-  node pipeline/cli.mjs collect --source osm-neihu|osm-taiwan|taipei-shelter|taiwan-shelter|taiwan-shelter-status|taipei-medical|taiwan-medical --out-dir <dir>
+  node pipeline/cli.mjs collect --source osm-neihu|osm-taiwan|taipei-shelter|taiwan-shelter|taipei-medical|taiwan-medical --out-dir <dir>
   node pipeline/cli.mjs normalize --source <source> --input <raw.json> --out <events-or-features.json>
   node pipeline/cli.mjs build --input <tdx.json> --out-dir <dir> --private-key <pem> [options]
   node pipeline/cli.mjs verify --manifest <manifest.json> --chunks-dir <dir> --public-key <pem> [--now <time>]
@@ -963,7 +896,7 @@ Missing or unauthorized access writes collection metadata with
 source_status=blocked_by_auth and exits non-zero.
 
 Static source collection reads optional OSM_API_ENDPOINT, SHELTER_DATA_ENDPOINT,
-SHELTER_STATUS_ENDPOINT, and MEDICAL_DATA_ENDPOINT. Static features are signed only by build-layer; the
+and MEDICAL_DATA_ENDPOINT. Static features are signed only by build-layer; the
 phone receives the resulting manifest and chunks, never the private key.
 
 Build options:

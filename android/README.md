@@ -4,7 +4,9 @@
 > 使用 `./gradlew :app:assembleProfile -Ptarget-platform=android-arm64` 建立 AOT 效能測試版本；
 > 路網來源、Pixel 8a 實測與可重跑命令見 [雙北離線路線與效能驗證](../docs/taipei-offline-routing.md)。
 
-> 2026-09-21 更新：Android 現在是原生資料與服務的 host，`MainActivity` 直接嵌入 Flutter 台灣 MapLibre 地圖。五個 Protomaps PMTiles 會隨 App 打包，啟動時串流複製到 app-private `files/maps/`；下方較早的 native-only baseline 驗證紀錄仍保留作為歷史證據。
+> 2026-10-05 地圖更新：Web 與 Android 恢復使用隨 App 提供的五個 OSM／Protomaps PMTiles。Android 將內建 assets 複製到 App 私有 `files/maps/` 供 MapLibre 隨機讀取；不再從 Server 下載底圖。NLSC 底圖下載器、選擇流程及 `/maps/*` 服務已移除；相機 zoom 和地理範圍見根目錄 [Map_description.md](../Map_description.md)。
+>
+> 政府簽章 feed、避難所／醫療靜態 layer 與縣市門牌包仍透過既有 Android verifier、Room／私有快取和政府服務網址串接。2026-10-04 本機模擬器的簽章 layer 與告警驗收數字仍可參考[資料涵蓋報告](../docs/data-coverage-2026-10-04.md)；當時顯示的 NLSC 底圖屬歷史測試，不是目前 App 路徑。正式 Server 與 Android 實機狀態仍須分開驗收。
 
 Single Android project, jointly owned:
 
@@ -23,14 +25,15 @@ under `flutter/` and is included as the `:flutter` source-code subproject by
 `flutter/.android/include_flutter.groovy`; generated `.android/` files are not
 hand-edited. The user-facing surface is `flutter/lib/screens/map_screen.dart`.
 
-The map uses only committed local assets. `OfflineMapAssetBridge` receives the
-five PMTiles paths from Flutter and copies them with a bounded buffer to
-`files/maps/`; MapLibre then reads the `file://` URLs with byte-range access.
-The overview archive covers Taiwan at z0–12, while the north, central, south
-and east archives cover z13–15 street detail. The UI fits the Taiwan bbox at
-0% and exposes MapLibre z6.5–17; z17 is overzoom beyond the z15 package. The
-app-owned event, shelter and medical markers remain
-Flutter overlays and use the Lucide icon catalog.
+The map uses the five bundled OSM／Protomaps vector PMTiles packages. On
+Android, `OfflineMapAssetBridge` copies these Flutter assets to app-private
+`files/maps/` so MapLibre can read byte ranges locally; there is no map tile
+server download. Camera zoom and geographic limits are listed in the root
+[Map_description.md](../Map_description.md). Road search and the double-north
+walking graph remain separate assets. Shelter and medical markers come from
+signed static layers. County doorplate packages are downloaded from the
+configured government data service, verified and indexed in SQLite; their
+source coverage is listed in the [data report](../data_description.md).
 
 During Flutter startup, the full-screen phone logo is selected from
 `Geo_light_phone_logo.png` or `Geo_dark_phone_logo.png`. The native Android
@@ -41,8 +44,10 @@ cd android
 ./gradlew assembleDebug
 ```
 
-The map does not require a network, a map-service key, or a server-side style.
-The OSM / Protomaps attribution is kept in both bundled styles.
+The OSM basemap is included in the app and works offline without a tile-server
+request. The configured government service URL is still used for signed feeds,
+static layers and address packs. Keep `© OpenStreetMap contributors`
+attribution with the bundled map and OSM-derived search/routing data.
 
 Flutter reads native state through `FlutterMapBridge` and requests map assets
 through `OfflineMapAssetBridge`:
@@ -57,8 +62,8 @@ through `OfflineMapAssetBridge`:
 Room ingestion, signature verification, TTL/version rules, BLE and the
 foreground Emergency Mode service remain Android-owned. Flutter is read-only
 with respect to Room. Shelter `capacity` means expected capacity; current
-occupancy is intentionally unavailable (`available_count: null`) and the UI
-shows `無資料`, never zero. Bundled demo events are labeled
+occupancy remains unavailable (`available_count: null`) and must never be
+treated as zero. Bundled demo events are labeled
 `模擬事件，非即時官方災情`.
 
 ### Current build result

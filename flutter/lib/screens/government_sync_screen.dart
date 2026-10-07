@@ -14,7 +14,7 @@ class _GovernmentSyncScreenState extends State<GovernmentSyncScreen> {
   Map<String, dynamic>? _status;
   String? _error;
   bool _busy = false;
-  String _area = 'taipei';
+  String _area = 'all';
   Timer? _timer;
   @override
   void initState() {
@@ -31,7 +31,7 @@ class _GovernmentSyncScreenState extends State<GovernmentSyncScreen> {
         _status = status;
         if (initial) {
           _url.text = status['url'] as String? ?? '';
-          _area = status['area'] as String? ?? 'taipei';
+          _area = status['area'] as String? ?? 'all';
         }
       });
     } catch (_) {
@@ -68,11 +68,6 @@ class _GovernmentSyncScreenState extends State<GovernmentSyncScreen> {
 
   static const names = <String, String>{
     'ncdr': 'NCDR 災害警報',
-    'cwa-earthquake': '氣象署地震',
-    'cwa-warning': '氣象署天氣警特報',
-    'cwa-typhoon': '氣象署颱風警報',
-    'tdx-road': 'TDX 道路事件',
-    'shelter-status': '避難收容所狀態',
   };
   String _time(Object? value) {
     final time = DateTime.tryParse(value?.toString() ?? '')?.toLocal();
@@ -115,13 +110,13 @@ class _GovernmentSyncScreenState extends State<GovernmentSyncScreen> {
             value: _area,
             decoration: const InputDecoration(labelText: '手機下載範圍'),
             items: const [
-              DropdownMenuItem(value: 'taipei', child: Text('臺北、新北與全臺警報')),
+              DropdownMenuItem(value: 'taipei', child: Text('雙北及全臺警報')),
               DropdownMenuItem(value: 'all', child: Text('全臺（下載與轉傳較久）')),
             ],
             onChanged:
                 working
                     ? null
-                    : (value) => setState(() => _area = value ?? 'taipei'),
+                    : (value) => setState(() => _area = value ?? 'all'),
           ),
           const SizedBox(height: 12),
           FilledButton.icon(

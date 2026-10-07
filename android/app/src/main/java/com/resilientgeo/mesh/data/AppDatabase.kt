@@ -7,7 +7,7 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [EventEntity::class, ChunkEntity::class], version = 2, exportSchema = false)
+@Database(entities = [EventEntity::class, ChunkEntity::class, EventTombstoneEntity::class], version = 4, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun eventDao(): EventDao
     abstract fun chunkDao(): ChunkDao
@@ -45,6 +45,32 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** v2 -> v3 keeps only event identity/version after alert payload expiry. */
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `event_tombstones` (
+                        `namespace` TEXT NOT NULL,
+                        `eventId` TEXT NOT NULL,
+                        `eventVersion` INTEGER NOT NULL,
+                        `expiredAtEpochMillis` INTEGER NOT NULL,
+                        PRIMARY KEY(`namespace`, `eventId`)
+                    )
+                    """.trimIndent(),
+                )
+            }
+        }
+
+        /** v3 -> v4 removes retired FIRE_AGENCY shelter-status events. */
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "DELETE FROM events WHERE eventType = 'SHELTER_STATUS' AND eventJson LIKE '%FIRE_AGENCY%'",
+                )
+            }
+        }
+
         @Volatile
         private var instance: AppDatabase? = null
 
@@ -53,7 +79,7 @@ abstract class AppDatabase : RoomDatabase() {
                 context.applicationContext,
                 AppDatabase::class.java,
                 "resilientgeo-mesh.db",
-            ).addMigrations(MIGRATION_1_2).build().also { instance = it }
+            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).build().also { instance = it }
         }
     }
 }

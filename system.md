@@ -1,8 +1,12 @@
 # ResilientGeo Mesh — 系統實作計畫
 
-> 進度更新（2026-09-22）：v0 資料契約、本機可信資料管線與 Flutter 台灣離線地圖主畫面已完成。Android 保留 Room、事件驗證／TTL、版本控管、BLE 與 Emergency Mode；Flutter 固定使用 MapLibre + Protomaps PMTiles、本機台灣道路搜尋、地圖互動與三頁 app shell。資料源仍是版本化快照，不是即時災情 API 資料。
+> 歷史進度快照（截至 2026-09-22）：當時 Flutter 地圖使用 MapLibre + Protomaps PMTiles、本機台灣道路搜尋與三頁 app shell。2026-10-05 已恢復隨 App 提供的 OSM／Protomaps 底圖；zoom 與相機範圍見根目錄 [Map_description.md](Map_description.md)。Android 保留 Room、事件驗證／TTL、版本控管、BLE 與 Emergency Mode。
 
 > 2026-09-27 更新：離線步行路網已擴大到雙北；Pixel 8a 的路線、搜尋、街道拖動與底圖重用實測通過。完整條件與數據見 [雙北路線及效能紀錄](docs/taipei-offline-routing.md)，完成／待辦見 [進度表 G、H 段](docs/mvp-remaining-tasks.md)。
+
+> 2026-10-04 更新：Web 與 Android 共用 NLSC JPG raster PMTiles（相機及來源縮放皆限制 z6–15）、簽章避難所／醫療 layer client 與告警 feed；道路名稱索引、縣市門牌包及雙北步行路網仍是各自獨立資料。17 個縣市門牌包已在本機產生並逐筆驗證，另 5 縣市 unavailable；新 Server 與點位 layer 尚未部署到正式網域。本機暫存點位 bundle 已簽章，但未發布到正式服務或下載到 App。10-04 本機重收集醫療院所 479／24,138 筆已定位，避難處所 5,727／5,973 筆通過座標與行政區核對。逐縣市表見 [點位涵蓋報告](docs/data-coverage-2026-10-04.md)。
+
+> 2026-10-04 同步開發 gate：工作樹新增 `.github/workflows/platform-parity.yml`，對 Pull Request 執行 Node／Server、Flutter Web 與 Android 檢查，彙整為 `platform-parity`。GitHub `main` 的現有 ruleset 尚未要求 CI 狀態；需先讓 workflow 合併並在既有 PR 產生檢查，再將該狀態設為 required。Azure 部署仍為手動流程。
 
 ## 目前進度總覽
 
@@ -13,20 +17,21 @@
 | 階段 2：資料正規化 | 已完成 | `pipeline/lib/normalize.mjs` 可將 TDX-shaped input 轉為 unsigned Event v0 |
 | 階段 2：hash、Ed25519、Manifest、Chunk | 已完成 | `pipeline/` 可簽署與驗證完整 bundle，私鑰只由 server-side CLI 使用 |
 | 階段 2：安全測試 | 已完成 | Node 測試涵蓋竄改、版本 replay、TTL、incomplete chunk |
-| 真實資料源 | Collector 已實作 | `pipeline/sources/` 已有 TDX／CWA／NCDR 與全台靜態來源 adapter；App 使用打包快照或已驗證 bundle，尚無已部署的公開即時資料 API。操作方式見 `docs/frontend-real-data-integration.md` |
-| Android 驗證器與 App | 進行中 | Android 驗證器、Room、BLE 與 Flutter map module 已整合；host profile APK、135 項 JVM 測試及 Pixel 8a 地圖互動／重啟底圖重用驗證通過。完整飛航模式與多機演練仍待補測 |
+| 真實資料源 | Collector 與雙端 layer client 已實作 | `pipeline/sources/` 已有 TDX／CWA／NCDR 與全台靜態來源 adapter；Web／Android 可下載已驗證 layer，但目前沒有正式發布的新點位 layer 或正式服務部署。操作方式見 `docs/frontend-real-data-integration.md` |
+| Android 驗證器與 App | 進行中 | Android 驗證器、Room、BLE 與 Flutter map module 已整合；2026-10-05 `:app:assembleDebug` 成功，APK 內含五個 OSM PMTiles。`testDebugUnitTest` 161 項中 157 項通過，3 項 GovernmentFeedSyncTest 與 1 項 EvacuationScenarioTest 失敗；Android 裝置離線安裝驗收尚未完成，完整飛航模式與多機演練也待補測 |
 | 雙北離線步行路線 | 已完成本輪驗證 | 預建路網約 28.9 MB，保留內湖資料；41 個行政區連通測試、Pixel 8a 六組短程／兩組較長跨市路線通過。災害類型過濾、高程、兩機災情改道演練仍待完成 |
 | 地圖／搜尋延遲 | Pixel 8a profile 驗證通過 | 暖機路線 p95 約 68.6 ms、搜尋運算 p95 約 31.7 ms、街道 Flutter frame total span p95 約 9.1 ms；冷啟動道路索引約 6.8 秒、app PSS 約 1.1 GiB，其他機型與長時間負載待驗證 |
 | Android 實機傳輸 Spike | 已完成 | Pixel 7／Pixel 8a 比較後採用 BLE GATT，Nearby Connections／Wi-Fi Direct 已否決；Sharp SH-M32 已補跨品牌驗證。ADR-001 已定案；Emergency Mode 自動同步與鎖屏驗證仍待完成，見 `docs/mvp-remaining-tasks.md` |
 | Simulator／實驗報告 | 進行中 | `simulator/` 決定性模擬 10／20／50／100 節點 × 三策略 × 地理過濾；`experiments/` 有可重現的四指標報告（Coverage／Freshness／Cellular Savings／Transfer Efficiency）。部分傳輸參數仍待實機校準；Energy Cost 已完成 Pixel 7 持續發現量測，但尚未涵蓋同步傳輸 |
 
-狀態證據：Node、Python 與 Flutter 的資料契約測試持續保留；五個台灣 PMTiles 已以 `pmtiles show`／`pmtiles verify` 驗證 bbox、zoom、來源日期與 hash，既有 Chrome web build 紀錄保留。2026-09-27 的 Flutter analyze、234 項 Flutter／135 項 Android JVM／4 項路網產生器測試、profile APK 內容檢查及 Pixel 8a 路線 instrumentation 通過。已實測街道拖動與停止後 marker、實際定位推薦、覆蓋安裝與重啟底圖重用；本輪未重跑完整飛航模式路線驗收或兩機災情改道演練。
+歷史驗收證據：2026-10-04 的測試涵蓋當時的 NLSC 底圖 PMTiles 產物，以及 Web／Android 本機簽章資料測試。NLSC 下載與顯示數字只代表歷史試用，不是目前 OSM App 的驗收結果。2026-10-04 本機點位收集的逐縣市數字見[點位涵蓋報告](docs/data-coverage-2026-10-04.md)；目前底圖配置見 [Map_description.md](Map_description.md)。本次修改後的測試狀態以本輪 runner 輸出為準。
 
 ### Chrome 與 Android 的離線地圖 runtime 邊界
 
-Chrome 開發入口與 release preview 都使用本機 MapLibre GL JS 6.4.1、同一組
-Taiwan PMTiles、style、glyph、sprite、道路搜尋索引與 Flutter UI。Chrome debug
-請執行：
+Chrome 開發入口與 release preview 都使用本機 MapLibre GL JS、隨 App 提供的 OSM／Protomaps
+PMTiles、style、glyph、sprite、道路搜尋索引與 Flutter UI。Android 從 Flutter bundle
+安裝相同的 PMTiles 到 app-private storage。相機縮放、地理邊界及歷史 NLSC 試用範圍見
+[Map_description.md](Map_description.md)。Chrome debug 請執行：
 
 ```bash
 cd flutter
@@ -34,9 +39,11 @@ flutter run -d chrome --no-web-resources-cdn --web-port 8787
 ```
 
 離線 preview 請執行 `flutter build web --release --no-web-resources-cdn`，再以本機
-static server 提供 `build/web`。Android 則維持 MapLibre Native，啟動時把 PMTiles
-串流複製到 app-private 目錄；兩個 renderer 允許 label collision、字距與抗鋸齒有
-細微差異，但不依賴 Google Maps、線上 raster tile、線上 geocoder 或外部字型 CDN。
+static server 提供 `build/web`。Web 連線後將版本化 PMTiles 分段寫入 OPFS，Android
+則由原生 bridge 下載並串流複製到 app-private 目錄；兩者都驗證檔案大小與 SHA-256
+後才啟用。窄手機在最低 z6 不一定能同時顯示所有最外側離島，搜尋和平移仍可查看
+全台資料範圍。兩個 renderer 允許 label collision、字距與抗鋸齒有細微差異，不依賴
+Google Maps、線上 raster tile、線上 geocoder 或外部字型 CDN。
 
 > 2026-09-05 修正：先前記錄的「16 項通過」是 pipeline 測試的舊數字，且當時 Windows checkout 出來的 `fixtures/neihu/*.json` 因 `core.autocrlf=true` 又沒有 `.gitattributes` 而帶 CRLF，跟決定性生成器輸出的 LF 逐位元組比對必然 MISMATCH——這是假失敗，不是生成器不決定性。根目錄 `.gitattributes`（`* text=auto eol=lf`）已修掉這個問題。
 
@@ -153,7 +160,7 @@ flowchart LR
 
 ### 階段 1：單機離線系統（第 1 週）
 
-- [x] 顯示台灣離線向量地圖。（`maplibre_gl` + Protomaps PMTiles；全台 z0–12，北／中／南／東分區 z13–15；Android 舊的 Google／raster／native-only renderer 已移除）
+- [x] 顯示台灣離線地圖。（目前 Web 與 Android 使用 App 內附 OSM／Protomaps PMTiles；2026-10-04 的 NLSC JPG raster PMTiles 與下載流程只作歷史試用記錄。道路搜尋索引與雙北路網維持獨立資料。OSM 安裝與離線重開需依本輪 Android build／裝置驗收確認）
 - [x] 用本機資料庫保存事件、版本與到期時間。（Room：`data/EventEntity.kt`、`data/EventDao.kt`）
 - [x] 將測試事件套到地圖，清楚標示有效、過期與未驗證。（CURRENT/EXPIRED/UNVERIFIED 依 apply rules 上色）
 - [x] 完成 delta 套用及新版本覆蓋規則的單元測試。（Node pipeline 測試 + Android `EventIngestorTest`/`RoomEventStoreInstrumentedTest`，已對接 Android DB）
@@ -252,14 +259,9 @@ fixtures/             可重播的測試資料，不放正式私鑰
 
 ### Flutter 台灣離線地圖顯示契約
 
-- MapCanvas 固定使用 `MapLibreMap`。Android 啟動時由 `OfflineMapAssetBridge` 以串流方式把五個 PMTiles 複製到 app-private `files/maps/`，style、glyph、sprite 與 attribution 全部使用本機資產；Chrome 透過 `pmtiles.js` protocol 讀取 web assets。Flutter marker 在相機移動時使用同步 Web Mercator 投影，停止移動後才以 MapLibre 原生座標校正，避免地標飄離原座標。
-- `taiwan.pmtiles` 提供台灣 z0–12 概覽；`taiwan-north.pmtiles`、`taiwan-central.pmtiles`、`taiwan-south.pmtiles`、`taiwan-east.pmtiles` 提供分區 z13–15 街道密度。bbox、來源日期、檔案版本與 SHA-256 集中在 `flutter/lib/data/offline_map_manifest.dart`。
-- 使用者看到的縮放是 `0%` 到 `100%`，一般縮放映射 MapLibre z6.5–17；0% 會依實際 viewport 與底部控制列 padding fit 完整台灣 bbox，z17 是 z15 資料的 overzoom，不代表新增 z17 街道資料。鏡頭受台灣 bbox `[119.9, 21.8, 122.2, 25.5]` 限制；沒有定位時回到台灣預設視角，有定位權限與座標時才移到使用者所在地。
+- Web 與 Android 使用隨 App 提供的 OSM／Protomaps 向量 PMTiles；底圖不透過 Server 下載，NLSC 原始 `TaiwanEMap6.mbtiles` 僅保留歷史試用。相機縮放與經緯度限制見 [Map_description.md](Map_description.md)。道路搜尋和步行路網維持獨立資產。
+- `flutter/assets/map/search/taiwan-roads.json` 是 Geofabrik Taiwan OSM PBF 衍生的全台道路名稱索引，含來源 URL、SHA-256、snapshot 與 OSM attribution；它不是 OSM／Protomaps 底圖的一部分。道路名稱、別名及經緯度查詢使用本機索引，不呼叫線上 geocoder。門牌搜尋使用另外下載的縣市包，目前 17 個縣市有 `partial` 包，5 個縣市標為 unavailable。
+- 地圖上的避難所／醫療點位只來自通過簽章驗證的靜態圖層。若尚無可信下載版本，不回退顯示舊 OSM 醫療快照；未定位院所仍可搜尋名稱、地址與機構資料，但不會用猜測座標當地圖點。2026-10-04 本機直接收集的醫療主檔為 24,138 筆（479 已定位、23,659 未定位），避難處所為 5,973 筆（5,727 已定位、180 未定位、66 排除）；未定位數字是本次本機收集，不表示 Server/App 已更新。已部署 Server 的當前版本仍需查 `/v1/source-status`。`coverage: TW` 本身不代表全部院所都已定位。
 - Flutter 載入離線資料期間顯示 `Geo_light_phone_logo.png` 或 `Geo_dark_phone_logo.png`；Android 原生 splash 使用對應的 square logo，透過 `drawable-night` 依系統深色模式切換。
-- `flutter/assets/map/search/taiwan-roads.json` 是由指定日期的 Geofabrik Taiwan OSM PBF 產生的版本化本機索引，保存 source URL、SHA-256、snapshot 與 `© OpenStreetMap contributors` attribution。首頁可用道路名稱或 latitude-first `lat, lon` 搜尋；執行期間不呼叫 Nominatim、Google Geocoding、Places API 或其他網路服務。
-- 首頁提供本機搜尋（醫療院所、避難所、道路與經緯度），搜尋結果會建立 typed camera request；道路／座標結果只移動鏡頭，不開設施詳情。通知與個人頁籤由共用 app controller 提供。
-
-- 地圖底圖範圍為台灣 bbox `[119.9, 21.8, 122.2, 25.5]`；內湖的避難所、醫療與 demo event 仍是目前 UI 的 fixture／資料契約，並不限制底圖只能顯示內湖。
-- 靜態快照為 `2026-09-04T17:58:15.942Z`，包含 26 個避難所與 4 個醫療院所。避難所的 `capacity` 是預計容量；目前收容人數沒有可靠資料，`available_count` 保持 JSON `null`，畫面顯示「無資料」，不補 0。
-- `flutter/assets/data/neihu/demo-events.json` 只提供展示用事件，畫面固定標示「模擬事件，非即時官方災情」；Android Room 事件則經由 `com.resilientgeo.mesh/events` 推送。
-- Flutter 與 Android 的橋接方法為 `getInitialState`、`loadBundledFixture`、`setEmergencyMode`，使用 `com.resilientgeo.mesh/map`；Flutter 不直接寫 Room，也不搬移信任驗證、TTL、版本控管或 BLE。
+- 路線規劃使用另外的 OSM 衍生雙北步行路網；OSM／Protomaps 向量底圖與道路名稱索引都不構成全台可路由網路。應變告警由簽章 feed 更新；到期或撤銷時移出目前畫面、通知及活躍本機資料。來源檢查成功且沒有有效告警時可發布簽章空 feed；來源失敗則保留可信舊版本。
+- 避難所 `capacity` 表示規劃容量；沒有可靠來源的即時收容人數維持 `null`，不補成 0。Android Room 事件仍經 `com.resilientgeo.mesh/events` 提供；Flutter 不直接寫 Room，也不接管信任驗證、TTL、版本控管或 BLE。

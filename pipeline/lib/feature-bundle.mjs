@@ -14,7 +14,14 @@ import {
 const PRIORITIES = new Set(['CRITICAL', 'HIGH', 'NORMAL', 'LOW']);
 
 function featureBBox(features) {
-  const boxes = features.map((feature) => bboxOfGeometry(feature.geometry));
+  const geometries = features.filter((feature) => feature.geometry !== null).map((feature) => feature.geometry);
+  if (geometries.length === 0 && features.every((feature) => feature.layer_id === 'taiwan-medical-directory')) {
+    // Search-only medical records have no point geometry by design. This is
+    // the coverage extent of the directory, not a coordinate for any record.
+    return [118, 21.8, 122.2, 26.5];
+  }
+  if (geometries.length !== features.length) throw new TypeError('feature bundle cannot mix geolocated and search-only records');
+  const boxes = geometries.map((geometry) => bboxOfGeometry(geometry));
   return [
     Math.min(...boxes.map((box) => box[0])),
     Math.min(...boxes.map((box) => box[1])),

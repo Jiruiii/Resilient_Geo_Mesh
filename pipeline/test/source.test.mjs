@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import {
   SourceRequestError,
   makeRawSnapshot,
+  requestJsonConditional,
   requestJson,
   requestText,
   validateRawSnapshot,
@@ -153,6 +154,23 @@ test('requestJson raises a typed error for an HTTP failure', async () => {
   );
 });
 
+test('requestJson honors Retry-After before retrying a rate-limited response', async () => {
+  const delays = [];
+  let attempts = 0;
+  const result = await requestJson('https://example.gov.tw/data', {
+    maxAttempts: 2,
+    sleepImpl: async (milliseconds) => delays.push(milliseconds),
+    fetchImpl: async () => {
+      attempts += 1;
+      if (attempts === 1) return response({ status: 429, headers: { 'Retry-After': '3' } });
+      return response({ payload: { records: [{ id: 'recovered' }] } });
+    },
+  });
+
+  assert.equal(result.payload.records[0].id, 'recovered');
+  assert.deepEqual(delays, [3000]);
+});
+
 test('requestJson returns payload and safe response metadata', async () => {
   const result = await requestJson('https://example.gov.tw/data', {
     fetchImpl: async () => response({
@@ -174,6 +192,32 @@ test('requestJson returns payload and safe response metadata', async () => {
     },
     payload: { records: [{ id: '2' }] },
   });
+});
+
+test('requestJsonConditional sends validators and accepts a 304 response', async () => {
+  const requests = [];
+  const notModified = await requestJsonConditional('https://example.gov.tw/data', {
+    validators: {
+      etag: '"snapshot-2"',
+      lastModified: 'Thu, 05 Sep 2026 00:00:00 GMT',
+    },
+    fetchImpl: async (url, init) => {
+      requests.push({ url, headers: init.headers });
+      return response({
+        status: 304,
+        headers: {
+          ETag: '"snapshot-2"',
+          'Last-Modified': 'Thu, 05 Sep 2026 00:00:00 GMT',
+        },
+      });
+    },
+    maxAttempts: 1,
+  });
+
+  assert.equal(notModified.notModified, true);
+  assert.equal(notModified.status, 304);
+  assert.equal(requests[0].headers['If-None-Match'], '"snapshot-2"');
+  assert.equal(requests[0].headers['If-Modified-Since'], 'Thu, 05 Sep 2026 00:00:00 GMT');
 });
 
 test('requestText returns body and safe response metadata', async () => {

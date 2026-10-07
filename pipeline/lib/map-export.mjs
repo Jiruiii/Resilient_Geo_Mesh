@@ -21,7 +21,8 @@ const DISPLAY_FIELDS = [
 function displayKind(feature) {
   if (feature.layer_id === 'osm-road') return 'road';
   if (feature.layer_id === 'shelter' || feature.feature_type === 'SHELTER') return 'shelter';
-  if (feature.layer_id === 'medical' || ['HOSPITAL', 'CLINIC'].includes(feature.feature_type)) return 'medical';
+  if (['medical', 'taiwan-medical'].includes(feature.layer_id)
+    || ['HOSPITAL', 'CLINIC', 'MEDICAL_FACILITY'].includes(feature.feature_type)) return 'medical';
   return 'poi';
 }
 

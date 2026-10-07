@@ -54,6 +54,18 @@ function readHeader(headers, expectedName) {
   return undefined;
 }
 
+function retryAfterMilliseconds(headers, now = Date.now(), maxRetryAfterMs = 60_000) {
+  const value = readHeader(headers, 'retry-after');
+  if (value === undefined) return undefined;
+  const trimmed = value.trim();
+  const seconds = Number(trimmed);
+  const milliseconds = /^\d+(?:\.\d+)?$/u.test(trimmed)
+    ? seconds * 1000
+    : Math.max(0, Date.parse(trimmed) - now);
+  if (!Number.isFinite(milliseconds) || milliseconds < 0) return undefined;
+  return Math.min(milliseconds, maxRetryAfterMs);
+}
+
 function safeResponseHeaders(headers) {
   const safe = {};
   for (const [outputName, inputName] of Object.entries(SAFE_RESPONSE_HEADERS)) {
@@ -61,6 +73,13 @@ function safeResponseHeaders(headers) {
     if (value !== undefined) safe[outputName] = value;
   }
   return safe;
+}
+
+function conditionalRequestHeaders(validators = {}) {
+  const output = {};
+  if (validators.etag) output['If-None-Match'] = String(validators.etag);
+  if (validators.lastModified) output['If-Modified-Since'] = String(validators.lastModified);
+  return output;
 }
 
 function queryEntries(query) {
@@ -176,6 +195,10 @@ export async function requestJson(url, {
   headers = {},
   query,
   allowedSensitiveQueryNames = [],
+  validators,
+  allowNotModified = false,
+  sleepImpl = wait,
+  maxRetryAfterMs = 60_000,
   timeoutMs = 30000,
   maxAttempts = 3,
 } = {}) {
@@ -183,25 +206,33 @@ export async function requestJson(url, {
   const requestUrl = urlWithQuery(url, query, allowedSensitiveNames);
   const safeRequestUrl = urlWithQuery(url, query);
   if (typeof fetchImpl !== 'function') throw new TypeError('fetchImpl must be a function');
+  if (typeof sleepImpl !== 'function') throw new TypeError('sleepImpl must be a function');
   if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) throw new TypeError('timeoutMs must be positive');
   if (!Number.isInteger(maxAttempts) || maxAttempts <= 0) throw new TypeError('maxAttempts must be positive');
+  if (!Number.isInteger(maxRetryAfterMs) || maxRetryAfterMs < 0) {
+    throw new TypeError('maxRetryAfterMs must be a non-negative integer');
+  }
 
   let lastError;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
+    let retryDelayMs;
     try {
       const response = await fetchImpl(requestUrl, {
         method: 'GET',
-        headers,
+        headers: { ...conditionalRequestHeaders(validators), ...headers },
         signal: controller.signal,
       });
-      const responseHeaders = safeResponseHeaders(response.headers);
       if (!response || typeof response.status !== 'number') {
         throw new SourceRequestError('source response has no HTTP status', {
           code: 'INVALID_RESPONSE',
           url: safeRequestUrl,
         });
+      }
+      const responseHeaders = safeResponseHeaders(response.headers);
+      if (allowNotModified && response.status === 304) {
+        return { notModified: true, status: 304, headers: responseHeaders };
       }
       if (response.status < 200 || response.status >= 300) {
         const error = new SourceRequestError(`source returned HTTP ${response.status}`, {
@@ -211,7 +242,8 @@ export async function requestJson(url, {
         });
         if (attempt === maxAttempts || !shouldRetryStatus(response.status)) throw error;
         lastError = error;
-        await wait(Math.min(250 * 2 ** (attempt - 1), 2000));
+        retryDelayMs = retryAfterMilliseconds(response.headers, Date.now(), maxRetryAfterMs);
+        await sleepImpl(retryDelayMs ?? Math.min(250 * 2 ** (attempt - 1), 2000));
         continue;
       }
       let payload;
@@ -245,12 +277,16 @@ export async function requestJson(url, {
         });
         if (attempt === maxAttempts) throw lastError;
       }
-      if (attempt < maxAttempts) await wait(Math.min(250 * 2 ** (attempt - 1), 2000));
+      if (attempt < maxAttempts) await sleepImpl(retryDelayMs ?? Math.min(250 * 2 ** (attempt - 1), 2000));
     } finally {
       clearTimeout(timer);
     }
   }
   throw lastError ?? new SourceRequestError('source request failed', { code: 'NETWORK_ERROR', url: safeRequestUrl });
+}
+
+export async function requestJsonConditional(url, options = {}) {
+  return requestJson(url, { ...options, allowNotModified: true });
 }
 
 export async function requestText(url, {

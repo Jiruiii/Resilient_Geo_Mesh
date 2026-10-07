@@ -12,24 +12,23 @@ import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.io.File
 import java.util.UUID
 
 @RunWith(AndroidJUnit4::class)
 class SyncDisasterInstrumentedTest {
-    @Test fun verifiedShelterDataRejectsWrongDisasterAndWarnsForUnknownEligibility() = runBlocking {
+    @Test fun cleanInstallDoesNotGuessShelterEligibilityBeforeSignedLayerDownload() = runBlocking {
         val context: Context = ApplicationProvider.getApplicationContext()
+        File(context.noBackupFilesDir, "verified-layers").deleteRecursively()
+        File(context.filesDir, "static-layer-bundles").deleteRecursively()
         val catalog = MeshRepository(context).verifiedShelterDisasterCatalog()
         val service = EvacuationRouteService(EvacuationRouteService.assetGraphLoader(context), { emptyList() }, shelterCatalogProvider = { catalog })
         val request = RouteRequest(LonLat(121.5910, 25.0610), "shelter:5427", LonLat(121.5908, 25.0609), "walk", "tsunami")
-        val mismatch = service.calculate(request)
-        assertEquals(RouteStatus.NO_ROUTE, mismatch.status)
-        assertEquals("SHELTER_DISASTER_MISMATCH", mismatch.warnings.single().code)
-        val compatible = service.calculate(request.copy(disasterType = "flood"))
-        assertEquals(RouteStatus.OK, compatible.status)
-        assertFalse(compatible.warnings.any { it.code.startsWith("SHELTER_DISASTER_") })
-        val unknown = service.calculate(request.copy(destinationId = "test:unknown-shelter", disasterType = "flood"))
-        assertEquals(RouteStatus.OK, unknown.status)
-        assertTrue(unknown.warnings.any { it.code == "SHELTER_DISASTER_UNKNOWN" })
+        val result = service.calculate(request)
+
+        assertEquals(RouteStatus.OK, result.status)
+        assertTrue(result.warnings.any { it.code == "SHELTER_DISASTER_UNKNOWN" })
+        assertFalse(result.warnings.any { it.code == "SHELTER_DISASTER_MISMATCH" })
     }
 
     @Test fun syncHistorySurvivesStoreRecreationButStoppedServiceIsNotLive() {

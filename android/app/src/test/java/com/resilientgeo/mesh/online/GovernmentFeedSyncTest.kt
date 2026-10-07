@@ -7,6 +7,10 @@ import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Test
 import java.time.Instant
+import java.nio.charset.StandardCharsets
+import java.security.KeyPairGenerator
+import java.security.Signature
+import java.util.Base64
 
 class GovernmentFeedSyncTest {
     private fun resource(name: String) = javaClass.classLoader!!.getResource(name)!!.readText()
@@ -81,6 +85,30 @@ class GovernmentFeedSyncTest {
         GovernmentFeedVerifier.verify(feed, trust, fixtureTime)
         val manifest = feed.getJSONArray("datasets").getJSONObject(0).getJSONObject("manifest")
         GovernmentFeedVerifier.verifyChunk(chunk(), manifest, 0, trust)
+    }
+
+    @Test fun centralServerKeyCanPublishAnEmptySignedFeed() {
+        val keyPair = KeyPairGenerator.getInstance("Ed25519").generateKeyPair()
+        val keyId = "central-server-2026"
+        val expandedTrust = JSONObject(resource("trust/trusted-keys.json"))
+            .put(keyId, Base64.getEncoder().encodeToString(keyPair.public.encoded))
+        val trustWithServerKey = TrustedKeyStore.fromJson(expandedTrust.toString())
+        val unsigned = JSONObject()
+            .put("schema_version", "government-feed-v1")
+            .put("revision", 1)
+            .put("created_at", "2026-09-27T12:00:00Z")
+            .put("expires_at", "2026-09-28T12:00:00Z")
+            .put("signing_key_id", keyId)
+            .put("signature_algorithm", "Ed25519")
+            .put("sources", org.json.JSONArray())
+            .put("datasets", org.json.JSONArray())
+            .put("event_versions", JSONObject())
+        val signer = Signature.getInstance("Ed25519")
+        signer.initSign(keyPair.private)
+        signer.update(Canonical.canonicalize(unsigned).toByteArray(StandardCharsets.UTF_8))
+        val feed = unsigned.put("signature", Base64.getEncoder().encodeToString(signer.sign()))
+
+        GovernmentFeedVerifier.verify(feed, trustWithServerKey, fixtureTime)
     }
     @Test fun modifiedLedgerAndChunkFailClosed() {
         val feed = feed().put("revision", 2)

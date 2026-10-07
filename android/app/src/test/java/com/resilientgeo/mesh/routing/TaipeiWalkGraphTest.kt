@@ -27,7 +27,8 @@ class TaipeiWalkGraphTest {
     }
 
     @Test fun `every Taipei and New Taipei district has a connected shelter and route`() {
-        val features = JSONObject(File("../../flutter/assets/data/taiwan/static-features.json").readText()).getJSONArray("features")
+        // This historical snapshot is test input only; production layers are downloaded and verified.
+        val features = JSONObject(File("../../flutter/test/fixtures/static-features-legacy.json").readText()).getJSONArray("features")
         val districts = linkedMapOf<String, MutableList<LonLat>>()
         for (i in 0 until features.length()) {
             val f = features.getJSONObject(i)

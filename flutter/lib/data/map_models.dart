@@ -210,6 +210,11 @@ class MeshEvent {
 
   bool get isExpired => effectiveApplyState == 'EXPIRED';
 
+  /// Dynamic shelter status from FIRE_AGENCY is retired and must not enter
+  /// the active map or alert stream.
+  bool get isRetiredShelterStatus =>
+      eventType == 'SHELTER_STATUS' && source == 'FIRE_AGENCY';
+
   /// Returns whether this event may be rendered as a current event.
   ///
   /// Android supplies [applyState] after Room ingestion. The Flutter-only

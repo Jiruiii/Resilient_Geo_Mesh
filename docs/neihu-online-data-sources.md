@@ -36,7 +36,7 @@ OSM relation 可用於 Overpass 擷取，但最終是否屬於內湖，仍以官
 | CWA 地震 | [E-A0015-001 顯著有感地震](https://opendata.cwa.gov.tw/dataset/earthquake/E-A0015-001) | 保留臺北市震度區或內湖測站；只有市級時標 `coverage_level=city` | 需 CWA 授權碼；事件型、不定期 | P1 |
 | CWA 天氣 | [W-C0033-001 警特報](https://opendata.cwa.gov.tw/dataset/warning/W-C0033-001) | 篩選臺北市；不可宣稱是內湖區專屬警報 | 需 CWA 授權碼；以縣市為主要粒度 | P1 |
 | NCDR | [API 介接文件](https://datahub.ncdr.nat.gov.tw/paradigm)、[示警 API 入口](https://alerts.ncdr.nat.gov.tw/alertMessageAPI.aspx) | 優先用 CAP polygon／行政區碼交集；只有臺北市時保留市級標記 | 正式 live 需 API key；具體 datastore 路徑與可用資料集依帳號開通；期限內 Demo 使用 Neihu simulation/replay fallback | P1 |
-| 避難所 | [消防署避難收容處所點位檔](https://data.gov.tw/dataset/73242)、[開設情形](https://data.gov.tw/dataset/12849) | 靜態點位依 `臺北市內湖區` 篩選；開設狀態另成動態資料 | 點位 CSV 無金鑰；開設 XML 為事件狀態，不可用年度名冊冒充 | P1 |
+| 避難所 | [消防署避難收容處所點位檔](https://data.gov.tw/dataset/73242) | 靜態點位依 `臺北市內湖區` 篩選，保留預計收容容量；目前不收集開設狀態 | 點位 CSV 無金鑰；開設狀態資料更新不定期，暫不納入 collector | P1 |
 | 醫療 | [臺北市公私立醫療院所](https://data.taipei/dataset/detail?id=ffdd5753-30db-4c38-b65f-b77892773d60) | 醫院地址含內湖區，再用座標與 polygon 驗證 | 無金鑰；年度更新；先收醫院，不先收全部診所 | P1 |
 | DEM / DSM | [2025 年 20m DTM](https://data.gov.tw/dataset/176927)、[100m DEM / DSM](https://data.gov.tw/dataset/7507) | 找出與內湖 polygon 相交的圖磚，轉座標後裁切 | 靜態檔案、不定期；20m 來源是 DTM，DSM 可用 100m 備援 | P2 |
 | 網路資料 | [NCC 鄉鎮區基地臺統計](https://data.gov.tw/dataset/41256) | 直接篩選 `臺北市內湖區` | 只有 4G/5G 執照數量，不是訊號覆蓋圖或災時中斷資料 | P2 |

@@ -13,6 +13,7 @@ import '../data/map_models.dart';
 import '../data/map_runtime_state.dart';
 import '../data/map_search.dart';
 import '../data/map_marker_projection.dart';
+import '../data/map_event_focus.dart';
 import '../data/map_zoom.dart';
 import '../data/maplibre_map_config.dart';
 import '../data/maplibre_overlay.dart';
@@ -93,6 +94,9 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
 
   final OfflineMapAssetStore _assetStore = OfflineMapAssetStore();
   final ValueNotifier<Offset?> _radarScreenPosition = ValueNotifier(null);
+  final ValueNotifier<bool> _tilesLoading = ValueNotifier(true);
+  final MapMarkerOverlayNotifier<MapMarkerData> _markerOverlay =
+      MapMarkerOverlayNotifier<MapMarkerData>();
   late final AnimationController _pulseController;
   MapLibreMapController? _mapController;
   String? _styleJson;
@@ -110,25 +114,25 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
   bool _markerProjectionInFlight = false;
   Size? _mapViewportSize;
   CameraPosition? _cameraPosition;
+  CameraPosition? _markerLayoutCamera;
   CameraPosition? _lastSettledMarkerCamera;
   final MapCameraProjectionFrameGate<CameraPosition>
   _cameraProjectionFrameGate = MapCameraProjectionFrameGate<CameraPosition>();
   bool _cameraIsMoving = false;
   bool _cameraBoundsCorrectionPending = false;
   double? _cameraBoundsZoomOverride;
-  bool _initialOverviewSchedulePending = false;
-  bool _initialOverviewApplying = false;
   final MapZoomRequestGate _zoomRequestGate = MapZoomRequestGate();
   final MapMarkerProjectionGate _markerProjectionGate =
       MapMarkerProjectionGate();
+  late final MapEventFocusGate _eventFocusGate;
   final MapMarkerLayoutCache<List<MapMarkerData>> _markerLayoutCache =
       MapMarkerLayoutCache<List<MapMarkerData>>();
-  final Map<int, List<MapMarkerData>> _overviewMarkerLayouts = {};
+  final MapMarkerZoomLayoutCache<List<MapMarkerData>> _overviewMarkerLayouts =
+      MapMarkerZoomLayoutCache<List<MapMarkerData>>();
   List<MapMarkerData>? _locationBaseMarkers;
   List<MapMarkerData>? _markersWithLocation;
   GeoPoint? _lastMarkerLocation;
   bool _markerLayoutReady = false;
-  bool _initialOverviewApplied = false;
   int _lastFocusRequestId = -1;
   int _focusOperationToken = 0;
   Timer? _pulseStartTimer;
@@ -143,6 +147,9 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
+    _eventFocusGate = MapEventFocusGate(
+      hasInitialSnapshot: widget.visibleEvents.isNotEmpty,
+    );
     _pulseController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1500),
@@ -222,6 +229,8 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
     _zoomRequestTimer?.cancel();
     _pulseController.dispose();
     _radarScreenPosition.dispose();
+    _tilesLoading.dispose();
+    _markerOverlay.dispose();
     _mapController?.dispose();
     super.dispose();
   }
@@ -274,7 +283,10 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
     final newEvents = widget.visibleEvents
         .where((event) => !oldKeys.contains(eventKey(event)))
         .toList(growable: false);
-    if (newEvents.isEmpty) return false;
+    if (newEvents.isEmpty ||
+        !_eventFocusGate.shouldFocusSnapshot(newEvents.map(eventKey))) {
+      return false;
+    }
     final focus = meshEventFocusPoint(newEvents.last);
     if (focus == null) return false;
     _pendingEventFocus = focus;
@@ -389,54 +401,34 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
     _stopRadar();
     _zoomRequestTimer?.cancel();
     _zoomRequestGate.request();
-    widget.onZoomPercentageChanged(MapLibreMapConfig.overviewPercentage);
     final controller = _mapController;
     if (controller == null) return;
-    await _moveToTaiwanOverview(animated: _animationsAllowed);
+    await _moveToTaiwanHome(animated: _animationsAllowed);
   }
 
-  Future<void> _moveToTaiwanOverview({
-    required bool animated,
-    int percentage = MapLibreMapConfig.overviewPercentage,
-  }) async {
+  Future<void> _moveToTaiwanOverview({required bool animated}) async {
     final controller = _mapController;
     if (controller == null) return;
-    final fittedCamera =
-        _mapViewportSize == null
-            ? null
-            : MapLibreMapConfig.taiwanOverviewCameraForViewport(
-              _mapViewportSize!,
-              padding: _overviewPadding,
-            );
-    final fittedZoom = fittedCamera?.zoom ?? MapLibreMapConfig.overviewZoom;
-    final targetZoom = ZoomPercentage.toZoom(
-      percentage: percentage,
-      minZoom: MapCanvas.minZoom,
-      maxZoom: MapCanvas.maxZoom,
-      overviewZoom: fittedZoom,
+    final overview = MapLibreMapConfig.taiwanOverviewCameraForViewport(
+      _mapViewportSize ?? Size.zero,
+      padding: _overviewPadding,
     );
-    final target =
-        fittedCamera?.target ?? MapLibreMapConfig.taiwanOverviewCenter;
-    final update =
-        fittedCamera == null &&
-                percentage == MapLibreMapConfig.overviewPercentage
-            ? CameraUpdate.newLatLngBounds(
-              MapLibreMapConfig.taiwanOverviewBounds,
-              left: _overviewPadding.left,
-              top: _overviewPadding.top,
-              right: _overviewPadding.right,
-              bottom: _overviewPadding.bottom,
-            )
-            : CameraUpdate.newLatLngZoom(_latLng(target), targetZoom);
-    await _prepareNativeCameraBoundsForZoom(targetZoom);
-    if (percentage != widget.runtimeState.zoomPercentage) {
-      widget.onZoomPercentageChanged(percentage);
-    }
+    await _prepareNativeCameraBoundsForZoom(overview.zoom);
+    widget.onZoomPercentageChanged(MapLibreMapConfig.overviewPercentage);
     if (animated) {
-      await controller.animateCamera(update, duration: _focusAnimationDuration);
+      await controller.animateCamera(
+        CameraUpdate.newLatLngZoom(_latLng(overview.target), overview.zoom),
+        duration: _focusAnimationDuration,
+      );
     } else {
-      await controller.moveCamera(update);
+      await controller.moveCamera(
+        CameraUpdate.newLatLngZoom(_latLng(overview.target), overview.zoom),
+      );
     }
+  }
+
+  Future<void> _moveToTaiwanHome({required bool animated}) async {
+    await _moveToTaiwanOverview(animated: animated);
   }
 
   void _onMapSettled() {
@@ -460,11 +452,24 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
     final position = _cameraPosition;
     if (position == null) return;
     final previous = _lastSettledMarkerCamera;
-    if (previous?.target != position.target ||
-        previous?.zoom != position.zoom) {
+    final cameraChanged =
+        previous?.target != position.target || previous?.zoom != position.zoom;
+    final zoomChanged = previous?.zoom != position.zoom;
+    if (cameraChanged) {
       _lastSettledMarkerCamera = position;
-      _markerLayoutCache.invalidate();
-      _queueMarkerRefresh();
+      final rawMarkerZoom = ZoomPercentage.toZoom(
+        percentage: MapLibreMapConfig.revealAllPercentage,
+        minZoom: MapCanvas.minZoom,
+        maxZoom: MapCanvas.maxZoom,
+        overviewZoom: _overviewReferenceZoom,
+      );
+      if (zoomChanged || position.zoom >= rawMarkerZoom) {
+        // Aggregated layouts are independent of the camera centre. Reuse
+        // them throughout a pan; only zoom transitions or raw-point viewport
+        // filtering need a new layout.
+        _markerLayoutCache.invalidate();
+        _queueMarkerRefresh();
+      }
     } else if (!_markerLayoutReady) {
       _queueMarkerRefresh();
     }
@@ -474,16 +479,6 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
         latitude: position.target.latitude,
       ),
     );
-    // MapLibre initially settles at its provider minimum zoom before the
-    // fitted 10% overview is applied. Do not expose that transient 0% value
-    // in the controls while the initial camera handoff is still pending.
-    if ((!_initialOverviewApplied || _initialOverviewApplying) &&
-        widget.runtimeState.currentLocation == null &&
-        widget.focusPoint == null &&
-        widget.searchSelection == null) {
-      _scheduleInitialOverviewIfReady();
-      return;
-    }
     final boundsZoom = _cameraBoundsZoomOverride;
     if (boundsZoom == null || (position.zoom - boundsZoom).abs() >= 0.05) {
       _cameraBoundsZoomOverride = position.zoom;
@@ -499,6 +494,10 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
     if (percentage != widget.runtimeState.zoomPercentage) {
       widget.onZoomPercentageChanged(percentage);
     }
+  }
+
+  void _onMapIdle() {
+    if (_tilesLoading.value) _tilesLoading.value = false;
   }
 
   Future<bool> _focus(GeoPoint point, {required bool animated}) async {
@@ -536,7 +535,10 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
       },
       (latest) {
         if (!mounted) return;
-        if (!_projectMarkersSynchronously(latest)) _queueMarkerRefresh();
+        if (!_translateMarkerOverlayForCamera(latest) &&
+            !_projectMarkersSynchronously(latest)) {
+          _queueMarkerRefresh();
+        }
       },
     );
   }
@@ -597,12 +599,12 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
   }
 
   double get _overviewReferenceZoom {
-    final viewport = _mapViewportSize;
-    if (viewport == null || viewport.isEmpty) {
+    final viewportSize = _mapViewportSize;
+    if (viewportSize == null || viewportSize.isEmpty) {
       return MapLibreMapConfig.overviewZoom;
     }
     return MapLibreMapConfig.taiwanOverviewCameraForViewport(
-      viewport,
+      viewportSize,
       padding: _overviewPadding,
     ).zoom;
   }
@@ -646,15 +648,13 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
           zoomPercentage != null &&
           zoomPercentage >= MapLibreMapConfig.revealAllPercentage &&
           zoomPercentage < MapLibreMapConfig.fullMarkerPercentage;
-      final overviewKey =
+      final cacheOverviewLayout =
+          currentZoom != null &&
           zoomPercentage != null &&
-                  widget.administrativeIndex != null &&
-                  zoomPercentage < MapLibreMapConfig.revealAllPercentage
-              ? (zoomPercentage <= 25 ? 0 : 2) +
-                  (zoomPercentage >= (zoomPercentage <= 25 ? 25 : 45) ? 1 : 0)
-              : null;
-      if (overviewKey != null) {
-        final cached = _overviewMarkerLayouts[overviewKey];
+          widget.administrativeIndex != null &&
+          zoomPercentage < MapLibreMapConfig.revealAllPercentage;
+      if (cacheOverviewLayout) {
+        final cached = _overviewMarkerLayouts.get(currentZoom);
         if (cached != null) return cached;
       }
       void selectStaticFeature(List<StaticFeature> features) {
@@ -688,8 +688,8 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
         zoom: currentZoom,
         zoomPercentage: zoomPercentage,
       );
-      if (overviewKey != null) {
-        _overviewMarkerLayouts[overviewKey] = layout;
+      if (cacheOverviewLayout) {
+        _overviewMarkerLayouts.put(currentZoom, layout);
       }
       return layout;
     });
@@ -742,7 +742,7 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
     _zoomRequestTimer?.cancel();
     _zoomRequestTimer = null;
     _zoomRequestGate.request();
-    final currentZoom = _cameraPosition?.zoom ?? MapLibreMapConfig.overviewZoom;
+    final currentZoom = _cameraPosition?.zoom ?? _overviewReferenceZoom;
     final targetZoom = ZoomPercentage.toZoom(
       percentage: MapLibreMapConfig.fullMarkerPercentage,
       minZoom: MapCanvas.minZoom,
@@ -759,7 +759,7 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
     _zoomRequestTimer?.cancel();
     _zoomRequestTimer = null;
     _zoomRequestGate.request();
-    final currentZoom = _cameraPosition?.zoom ?? MapLibreMapConfig.overviewZoom;
+    final currentZoom = _cameraPosition?.zoom ?? _overviewReferenceZoom;
     final nextZoom =
         (targetZoom ?? _fallbackClusterZoom(currentZoom))
             .clamp(MapCanvas.minZoom, MapCanvas.maxZoom)
@@ -787,10 +787,8 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
     return currentZoom + 2;
   }
 
-  final Map<Key, Offset> _markerPositions = <Key, Offset>{};
-
   bool _projectMarkersSynchronously(CameraPosition position) {
-    if (_usesPlatformMap && !_markerLayoutReady) return false;
+    if (_usesPlatformMap && !_markerLayoutReady && !kIsWeb) return false;
     final viewportSize = _mapViewportSize;
     if (viewportSize == null || viewportSize.isEmpty) return false;
 
@@ -802,11 +800,11 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
     );
     if (!mounted) return true;
 
-    setState(() {
-      _markerPositions
-        ..clear()
-        ..addAll(next);
-    });
+    _markerOverlay.replace(markers: markers, positions: next);
+    _markerLayoutCamera = position;
+    if (kIsWeb && !_markerLayoutReady) {
+      setState(() => _markerLayoutReady = true);
+    }
     final radarPoint = _radarEventPoint;
     if (radarPoint != null) {
       _radarScreenPosition.value = MapCameraProjection.projectPoint(
@@ -816,6 +814,21 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
         viewportSize: viewportSize,
       );
     }
+    return true;
+  }
+
+  bool _translateMarkerOverlayForCamera(CameraPosition position) {
+    final viewportSize = _mapViewportSize;
+    final layoutCamera = _markerLayoutCamera;
+    if (viewportSize == null || layoutCamera == null) return false;
+    if ((position.zoom - layoutCamera.zoom).abs() > 0.0001) return false;
+    _markerOverlay.translate(
+      MapCameraProjection.panTranslation(
+        fromCameraTarget: _geoPointFromCamera(layoutCamera),
+        toCameraTarget: _geoPointFromCamera(position),
+        zoom: position.zoom,
+      ),
+    );
     return true;
   }
 
@@ -843,57 +856,12 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
 
   void _updateMapViewportSize(Size size) {
     if (!mounted || size.isEmpty || _mapViewportSize == size) return;
+    final currentCamera = _cameraPosition;
     _mapViewportSize = size;
     _overviewMarkerLayouts.clear();
     _markerLayoutCache.invalidate();
-    final camera = _cameraPosition;
-    if (camera == null || !_projectMarkersSynchronously(camera)) {
+    if (currentCamera == null || !_projectMarkersSynchronously(currentCamera)) {
       _queueMarkerRefresh();
-    }
-    _scheduleInitialOverviewIfReady();
-  }
-
-  void _scheduleInitialOverviewIfReady() {
-    if (_initialOverviewApplied ||
-        _initialOverviewSchedulePending ||
-        !_styleLoaded ||
-        _mapController == null ||
-        _mapViewportSize == null ||
-        widget.runtimeState.currentLocation != null ||
-        widget.focusPoint != null ||
-        widget.searchSelection != null) {
-      return;
-    }
-    _initialOverviewSchedulePending = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _initialOverviewSchedulePending = false;
-      if (!mounted ||
-          _initialOverviewApplied ||
-          !_styleLoaded ||
-          _mapViewportSize == null ||
-          widget.runtimeState.currentLocation != null ||
-          widget.focusPoint != null ||
-          widget.searchSelection != null) {
-        return;
-      }
-      _initialOverviewApplied = true;
-      _initialOverviewApplying = true;
-      unawaited(_applyInitialOverview());
-    });
-    // MapLibre's web style callback can run without another Flutter frame.
-    // Explicitly request one so the post-frame camera update is not stranded
-    // at the provider's initial minimum zoom.
-    WidgetsBinding.instance.scheduleFrame();
-  }
-
-  Future<void> _applyInitialOverview() async {
-    try {
-      await _moveToTaiwanOverview(
-        animated: false,
-        percentage: MapLibreMapConfig.initialOverviewPercentage,
-      );
-    } finally {
-      _initialOverviewApplying = false;
     }
   }
 
@@ -912,10 +880,22 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
       final markers = _markers(zoom: _cameraPosition?.zoom);
       if (markers.isEmpty) {
         if (_markerProjectionGate.isCurrent(request) && mounted) {
-          setState(() {
-            _markerPositions.clear();
-            _markerLayoutReady = true;
-          });
+          _markerOverlay.replace(
+            markers: markers,
+            positions: const <Key, Offset>{},
+          );
+          _markerLayoutCamera = _cameraPosition;
+          setState(() => _markerLayoutReady = true);
+        }
+        return;
+      }
+      // Web can project WGS84 points locally using the same Web Mercator
+      // camera model. Avoid waiting on the platform adapter's batch query
+      // during first paint; the map and Flutter overlay share CSS pixels.
+      if (kIsWeb) {
+        if (_markerProjectionGate.isCurrent(request) &&
+            _cameraPosition != null) {
+          _projectMarkersSynchronously(_cameraPosition!);
         }
         return;
       }
@@ -934,12 +914,9 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
           Offset(point.x.toDouble(), point.y.toDouble()),
         );
       }
-      setState(() {
-        _markerPositions
-          ..clear()
-          ..addAll(next);
-        _markerLayoutReady = true;
-      });
+      _markerOverlay.replace(markers: markers, positions: next);
+      _markerLayoutCamera = _cameraPosition;
+      setState(() => _markerLayoutReady = true);
       final radarPoint = _radarEventPoint;
       if (radarPoint != null) {
         await _updateRadarScreenPosition(radarPoint, request: request);
@@ -958,11 +935,11 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
   Future<void> _onStyleLoaded() async {
     _styleLoaded = true;
     _markerLayoutReady = false;
+    _tilesLoading.value = true;
     _markerLayoutCache.invalidate();
     await _ensureEventLayers();
     await _ensureRouteLayer();
     _queueMarkerRefresh();
-    _scheduleInitialOverviewIfReady();
     if (_pendingEventFocus != null) {
       await _focusPendingEvent();
       return;
@@ -1084,14 +1061,16 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
       );
       return;
     }
+    final overlay = _markerOverlay.value;
     final markers =
-        !_usesPlatformMap || _markerLayoutReady
-            ? _markers(zoom: _cameraPosition?.zoom)
-            : const <MapMarkerData>[];
+        _usesPlatformMap
+            ? overlay.markers
+            : _markers(zoom: _cameraPosition?.zoom);
     final markerHits = hitTestMapMarkers(
       markers: markers,
-      positions: _markerPositions,
+      positions: overlay.positions,
       point: _nativeScreenPosition(Offset(point.x, point.y)),
+      translation: overlay.translation,
     );
     if (markerHits.isNotEmpty) {
       markerHits.last.onTap();
@@ -1136,7 +1115,7 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
           }
         }
       } on Object {
-        // A basemap tap remains a valid interaction on platforms without
+        // A map tap remains a valid interaction on platforms without
         // rendered-feature query support.
       }
     }
@@ -1166,15 +1145,6 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
 
   @override
   Widget build(BuildContext context) {
-    final baseMap =
-        !_usesPlatformMap
-            ? _buildPreviewSurface()
-            : _styleError != null
-            ? _buildErrorSurface()
-            : _styleJson == null
-            ? _buildLoadingSurface()
-            : _buildMapLibreMap();
-    final markers = _markers(zoom: _cameraPosition?.zoom);
     return LayoutBuilder(
       builder: (context, constraints) {
         final viewportSize = constraints.biggest;
@@ -1183,30 +1153,44 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
             _updateMapViewportSize(viewportSize);
           });
         }
+        final baseMap =
+            !_usesPlatformMap
+                ? _buildPreviewSurface()
+                : _styleError != null
+                ? _buildErrorSurface()
+                : _styleJson == null
+                ? _buildLoadingSurface()
+                : _buildMapLibreMap(viewportSize);
+        final markers = _markers(zoom: _cameraPosition?.zoom);
         return Stack(
           fit: StackFit.expand,
           children: <Widget>[
             baseMap,
-            if (_usesPlatformMap &&
-                _styleJson != null &&
-                _styleError == null &&
-                !_markerLayoutReady)
-              const Positioned.fill(
-                child: IgnorePointer(
-                  child: ColoredBox(
-                    color: Color.fromRGBO(248, 252, 255, 0.72),
-                    child: Center(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: <Widget>[
-                          CircularProgressIndicator(),
-                          SizedBox(height: 12),
-                          Text('正在準備全台地圖資料…'),
-                        ],
+            if (_usesPlatformMap && _styleJson != null && _styleError == null)
+              ValueListenableBuilder<bool>(
+                valueListenable: _tilesLoading,
+                builder: (context, tilesLoading, _) {
+                  if (!tilesLoading && _markerLayoutReady) {
+                    return const SizedBox.shrink();
+                  }
+                  return Positioned.fill(
+                    child: IgnorePointer(
+                      child: ColoredBox(
+                        color: const Color.fromRGBO(248, 252, 255, 0.72),
+                        child: Center(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: <Widget>[
+                              const CircularProgressIndicator(),
+                              const SizedBox(height: 12),
+                              Text(tilesLoading ? '正在載入地圖圖磚…' : '正在準備地圖標記…'),
+                            ],
+                          ),
+                        ),
                       ),
                     ),
-                  ),
-                ),
+                  );
+                },
               ),
             if (_usesPlatformMap && _animationsAllowed && _radarVisible)
               Positioned.fill(
@@ -1230,7 +1214,35 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
                   },
                 ),
               ),
-            if (_usesPlatformMap) ...markers.map(_buildPositionedMarker),
+            if (_usesPlatformMap)
+              ValueListenableBuilder<MapMarkerOverlayFrame<MapMarkerData>>(
+                valueListenable: _markerOverlay,
+                builder:
+                    (context, frame, child) => Transform.translate(
+                      offset: frame.translation,
+                      child: child,
+                    ),
+                child: RepaintBoundary(
+                  child: ValueListenableBuilder<
+                    MapMarkerOverlayFrame<MapMarkerData>
+                  >(
+                    valueListenable: _markerOverlay.layout,
+                    builder:
+                        (context, layout, _) => Stack(
+                          fit: StackFit.expand,
+                          clipBehavior: Clip.hardEdge,
+                          children: layout.markers
+                              .map(
+                                (marker) => _buildPositionedMarker(
+                                  marker,
+                                  layout.positions,
+                                ),
+                              )
+                              .toList(growable: false),
+                        ),
+                  ),
+                ),
+              ),
             if (!_usesPlatformMap) ..._buildPreviewMarkers(markers),
             if (widget.showReportLocationPicker)
               const Positioned.fill(
@@ -1277,31 +1289,22 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
         devicePixelRatio: MediaQuery.devicePixelRatioOf(context),
       );
 
-  Widget _buildPositionedMarker(MapMarkerData marker) {
-    final screen = _markerPositions[marker.key];
+  Widget _buildPositionedMarker(
+    MapMarkerData marker,
+    Map<Key, Offset> positions,
+  ) {
+    final screen = positions[marker.key];
     if (screen == null) return const SizedBox.shrink();
-    final viewport = _mapViewportSize;
-    if (viewport != null &&
-        !Rect.fromLTWH(
-          screen.dx - marker.width / 2,
-          screen.dy - marker.height / 2,
-          marker.width,
-          marker.height,
-        ).overlaps(Offset.zero & viewport)) {
-      return const SizedBox.shrink();
-    }
     return Positioned(
       key: marker.key,
       left: screen.dx - (marker.width / 2),
       top: screen.dy - (marker.height / 2),
       width: marker.width,
       height: marker.height,
-      // The platform map receives the click and _onMapClick performs the
-      // overlay hit-test. A dynamic PointerInterceptor here creates a web
-      // platform view for every marker; moving those views during a drag can
-      // leave Flutter's pointer sequence in a pressed state and trigger the
-      // trackpad PointerMoveEvent assertion.
-      child: kIsWeb ? IgnorePointer(child: marker.child) : marker.child,
+      // Let the platform map receive taps and multi-touch gestures. Its
+      // _onMapClick handler hit-tests this overlay to preserve marker taps;
+      // allowing each Flutter marker to claim pointers can block pinch zoom.
+      child: IgnorePointer(child: marker.child),
     );
   }
 
@@ -1324,7 +1327,7 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
     }
   }
 
-  Widget _buildMapLibreMap() {
+  Widget _buildMapLibreMap(Size viewportSize) {
     final initial = MapLibreMapConfig.initialCamera(
       currentLocation: widget.runtimeState.currentLocation,
     );
@@ -1334,7 +1337,7 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
     );
     final bounds = MapLibreMapConfig.cameraTargetBoundsForZoom(
       _cameraBoundsZoomOverride ?? _cameraPosition?.zoom ?? initial.zoom,
-      viewportSize: _mapViewportSize,
+      viewportSize: viewportSize,
     );
     // Marker movement only changes the Flutter overlay. Reusing this widget
     // avoids serializing the large style and diffing native options each frame.
@@ -1353,10 +1356,6 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
         target: _latLng(initial.target),
         zoom: initial.zoom,
       ),
-      // Use a broad native bound for the fitted overview and the Taiwan
-      // interaction bound after zooming in. The Dart-side guard supplies the
-      // tighter low-zoom centre envelope without allowing the map to drift
-      // into a blank ocean area during a drag.
       cameraTargetBounds: CameraTargetBounds(bounds),
       minMaxZoomPreference: const MinMaxZoomPreference(
         MapLibreMapConfig.minZoom,
@@ -1380,6 +1379,7 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
       onStyleLoadedCallback: () => unawaited(_onStyleLoaded()),
       onCameraMove: _onCameraMove,
       onCameraIdle: _onMapSettled,
+      onMapIdle: _onMapIdle,
       onMapClick: _onMapClick,
     );
   }
@@ -1418,9 +1418,20 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
     child: Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
-        child: Text(
-          '台灣離線地圖資產尚未安裝\n${_styleError ?? '無法載入地圖樣式'}',
-          textAlign: TextAlign.center,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Text(
+              '台灣 OSM 離線地圖樣式無法載入。\n${_styleError ?? '請重試。'}',
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 16),
+            FilledButton.icon(
+              onPressed: () => unawaited(_loadStyle()),
+              icon: const Icon(Icons.refresh),
+              label: const Text('重試'),
+            ),
+          ],
         ),
       ),
     ),

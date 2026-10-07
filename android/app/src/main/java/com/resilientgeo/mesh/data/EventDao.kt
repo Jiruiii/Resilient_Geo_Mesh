@@ -31,6 +31,15 @@ interface EventDao {
     @Query("DELETE FROM events WHERE namespace = :namespace AND eventId = :eventId")
     fun deleteSync(namespace: String, eventId: String)
 
+    @Query("SELECT eventVersion FROM event_tombstones WHERE namespace = :namespace AND eventId = :eventId LIMIT 1")
+    fun versionFloorSync(namespace: String, eventId: String): Int?
+
+    @Query("INSERT INTO event_tombstones(namespace, eventId, eventVersion, expiredAtEpochMillis) VALUES(:namespace, :eventId, :eventVersion, :expiredAtEpochMillis) ON CONFLICT(namespace, eventId) DO UPDATE SET eventVersion = MAX(event_tombstones.eventVersion, excluded.eventVersion), expiredAtEpochMillis = MAX(event_tombstones.expiredAtEpochMillis, excluded.expiredAtEpochMillis)")
+    fun rememberVersionSync(namespace: String, eventId: String, eventVersion: Int, expiredAtEpochMillis: Long)
+
+    @Query("DELETE FROM event_tombstones WHERE namespace = :namespace AND eventId = :eventId")
+    fun clearVersionFloorSync(namespace: String, eventId: String)
+
     /** Drives the event-list / map UI so it updates live as ingestion writes new rows. */
     @Query("SELECT * FROM events ORDER BY namespace, eventId")
     fun observeAll(): Flow<List<EventEntity>>
