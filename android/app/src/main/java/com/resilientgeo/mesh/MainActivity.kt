@@ -1,7 +1,6 @@
 package com.resilientgeo.mesh
 
 import android.Manifest
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -11,7 +10,6 @@ import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import com.resilientgeo.mesh.bridge.FlutterMapBridge
 import com.resilientgeo.mesh.bridge.OfflineMapAssetBridge
 import com.resilientgeo.mesh.bridge.SharedPreferencesEmergencyModeState
-import com.resilientgeo.mesh.emergency.EmergencyModeService
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import androidx.lifecycle.lifecycleScope
@@ -19,6 +17,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import com.resilientgeo.mesh.online.GovernmentSyncManager
+import com.resilientgeo.mesh.transport.MeshTransportSettings
 
 /**
  * Flutter map launcher.
@@ -55,17 +54,11 @@ class MainActivity : FlutterFragmentActivity() {
         ActivityResultContracts.RequestPermission(),
     ) { /* EmergencyModeService already started either way. */ }
 
-    /** Restart discovery after the user grants BLE permissions. */
+    /** Serialize permission dialogs; the service picks up newly granted BLE access. */
     private val blePermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
-    ) { granted ->
-        if (granted.values.any { it } && emergencyModeEnabled()) {
-            stopService(Intent(this, EmergencyModeService::class.java))
-            ContextCompat.startForegroundService(
-                this,
-                Intent(this, EmergencyModeService::class.java),
-            )
-        }
+    ) {
+        if (emergencyModeEnabled()) requestNotificationPermissionIfNeeded()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -108,7 +101,10 @@ class MainActivity : FlutterFragmentActivity() {
     private fun onEmergencyModeChanged(enabled: Boolean) {
         if (!enabled) return
 
-        requestBlePermissionsIfNeeded()
+        if (!requestBlePermissionsIfNeeded()) requestNotificationPermissionIfNeeded()
+    }
+
+    private fun requestNotificationPermissionIfNeeded() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(
                 this,
@@ -119,16 +115,22 @@ class MainActivity : FlutterFragmentActivity() {
         }
     }
 
-    private fun requestBlePermissionsIfNeeded() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
-        val needed = listOf(
+    private fun requestBlePermissionsIfNeeded(): Boolean {
+        val settings = MeshTransportSettings(applicationContext)
+        val permissions = if (settings.mode == MeshTransportSettings.WIFI_DIRECT) {
+            settings.wifiPermissions()
+        } else if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            listOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
+        } else listOf(
             Manifest.permission.BLUETOOTH_SCAN,
             Manifest.permission.BLUETOOTH_ADVERTISE,
             Manifest.permission.BLUETOOTH_CONNECT,
-        ).filter {
+        )
+        val needed = permissions.filter {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }
         if (needed.isNotEmpty()) blePermissionLauncher.launch(needed.toTypedArray())
+        return needed.isNotEmpty()
     }
 
     private fun emergencyModeEnabled(): Boolean =

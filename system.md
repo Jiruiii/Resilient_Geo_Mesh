@@ -21,7 +21,7 @@
 | Android 驗證器與 App | 進行中 | Android 驗證器、Room、BLE 與 Flutter map module 已整合；2026-10-05 `:app:assembleDebug` 成功，APK 內含五個 OSM PMTiles。`testDebugUnitTest` 161 項中 157 項通過，3 項 GovernmentFeedSyncTest 與 1 項 EvacuationScenarioTest 失敗；Android 裝置離線安裝驗收尚未完成，完整飛航模式與多機演練也待補測 |
 | 雙北離線步行路線 | 已完成本輪驗證 | 預建路網約 28.9 MB，保留內湖資料；41 個行政區連通測試、Pixel 8a 六組短程／兩組較長跨市路線通過。災害類型過濾、高程、兩機災情改道演練仍待完成 |
 | 地圖／搜尋延遲 | Pixel 8a profile 驗證通過 | 暖機路線 p95 約 68.6 ms、搜尋運算 p95 約 31.7 ms、街道 Flutter frame total span p95 約 9.1 ms；冷啟動道路索引約 6.8 秒、app PSS 約 1.1 GiB，其他機型與長時間負載待驗證 |
-| Android 實機傳輸 Spike | 已完成 | Pixel 7／Pixel 8a 比較後採用 BLE GATT，Nearby Connections／Wi-Fi Direct 已否決；Sharp SH-M32 已補跨品牌驗證。ADR-001 已定案；Emergency Mode 自動同步與鎖屏驗證仍待完成，見 `docs/mvp-remaining-tasks.md` |
+| Android 實機傳輸 Spike | 已完成，持續擴充 | 2026-09-05 採用 BLE GATT，Sharp SH-M32 已補跨品牌驗證；Nearby Connections 仍未採用。2026-10-04 新增可選 Wi-Fi Direct，Pixel 8a／Samsung 已通過雙機交換，搜尋延遲與背景限制見 `docs/wifi-direct.md`；ADR-001 的 Wi-Fi Direct 否決為舊實作紀錄。 |
 | Simulator／實驗報告 | 進行中 | `simulator/` 決定性模擬 10／20／50／100 節點 × 三策略 × 地理過濾；`experiments/` 有可重現的四指標報告（Coverage／Freshness／Cellular Savings／Transfer Efficiency）。部分傳輸參數仍待實機校準；Energy Cost 已完成 Pixel 7 持續發現量測，但尚未涵蓋同步傳輸 |
 
 歷史驗收證據：2026-10-04 的測試涵蓋當時的 NLSC 底圖 PMTiles 產物，以及 Web／Android 本機簽章資料測試。NLSC 下載與顯示數字只代表歷史試用，不是目前 OSM App 的驗收結果。2026-10-04 本機點位收集的逐縣市數字見[點位涵蓋報告](docs/data-coverage-2026-10-04.md)；目前底圖配置見 [Map_description.md](Map_description.md)。本次修改後的測試狀態以本輪 runner 輸出為準。

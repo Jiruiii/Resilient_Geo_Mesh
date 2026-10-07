@@ -88,6 +88,17 @@ class FlutterMapBridge(
         when (call.method) {
             METHOD_GET_INITIAL_STATE -> getInitialState(result)
             "getSyncStatus" -> result.success(syncStatus.message())
+            "setSyncTransport" -> {
+                val mode = (call.arguments as? Map<*, *>)?.get("transport") as? String
+                if (mode !in listOf("ble", "wifi_direct")) {
+                    result.error(INVALID_ARGUMENTS, "Unknown sync transport", null)
+                } else if (emergencyMode.isEnabled) {
+                    result.error(METHOD_ERROR, "請先關閉緊急模式再切換傳輸方式", null)
+                } else {
+                    transportSettings.mode = mode!!
+                    result.success(syncStatus.message())
+                }
+            }
             "getGovernmentSyncStatus" -> result.success(governmentSync.message())
             "configureGovernmentSync" -> {
                 val args = call.arguments as? Map<*, *>

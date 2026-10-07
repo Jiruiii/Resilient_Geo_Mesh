@@ -48,10 +48,9 @@ import java.security.SecureRandom
  * issue, not fixable quickly) hit real platform-level blockers on the
  * Stage 0 test devices, independent of application code.
  *
- * Both rejected implementations have since been deleted along with the
- * Wi-Fi/Play-Services permissions and dependencies they pulled in; the
- * full measurement record for all three candidates lives in
- * docs/adr/ADR-001-transport-layer.md, and the code itself in git history.
+ * Those original spikes were removed; the measurement history lives in
+ * docs/adr/ADR-001-transport-layer.md. A new optional WifiDirectTransport
+ * was added on 2026-10-04; BLE remains the default transport.
  *
  * Unlike those two, this reuses [BleDiscovery]'s already-proven-reliable
  * advertise/scan pair (see C_BLEbroadcast.md) and layers real data transfer
@@ -131,16 +130,18 @@ class BleGattTransport(
         val ackCharacteristic: BluetoothGattCharacteristic,
         val controlCharacteristic: BluetoothGattCharacteristic,
         val mtuPayloadSize: Int,
+        val pending: PendingOperations,
     )
 
     private val centralLinks = ConcurrentHashMap<String, CentralLink>()
 
-    // Single-flight assumption (one in-progress send at a time), matching
-    // this Stage 0 spike's usage — good enough here, not a general-purpose
-    // multiplexed transport.
-    @Volatile private var pendingWriteAck: CompletableDeferred<Boolean>? = null
-    @Volatile private var pendingAckNotify: CompletableDeferred<Unit>? = null
-    @Volatile private var pendingControlWriteAck: CompletableDeferred<Boolean>? = null
+    // Callbacks belong to a GATT instance, including late callbacks after a
+    // timeout. They must never acknowledge a different peer or retry's send.
+    private class PendingOperations {
+        @Volatile var writeAck: CompletableDeferred<Boolean>? = null
+        @Volatile var ackNotify: CompletableDeferred<Unit>? = null
+        @Volatile var controlWriteAck: CompletableDeferred<Boolean>? = null
+    }
 
     @Volatile
     var interruptRequested = false
@@ -360,13 +361,15 @@ class BleGattTransport(
             .setConnectable(true)
             .build()
         val data = AdvertiseData.Builder()
-            .addServiceUuid(ParcelUuid(SERVICE_UUID))
+            // 3-byte flags + 2-byte AD header + 16-byte UUID + 8-byte identity
+            // = 29 bytes. Identity is present in the primary packet, so sync
+            // does not depend on receiving/merging an active scan response.
+            .addServiceData(ParcelUuid(SERVICE_UUID), identityBytes)
             .setIncludeDeviceName(false)
             .build()
-        // Keep the service UUID in the advertisement (21 bytes including flags),
-        // and the instance identity in the separate scan response (26 bytes).
+        // Keep the UUID list in the scan response for older discovery harnesses.
         val response = AdvertiseData.Builder()
-            .addServiceData(ParcelUuid(SERVICE_UUID), identityBytes)
+            .addServiceUuid(ParcelUuid(SERVICE_UUID))
             .build()
         advertiser?.startAdvertising(settings, data, response, advertiseCallback)
             ?: Log.e(TAG, "no BLE advertiser available on this device")
@@ -390,7 +393,13 @@ class BleGattTransport(
 
         val callback = object : ScanCallback() {
             override fun onScanResult(callbackType: Int, result: ScanResult) {
-                val identity = result.scanRecord?.getServiceData(ParcelUuid(SERVICE_UUID))
+                val record = result.scanRecord ?: return
+                val serviceData = record.getServiceData(ParcelUuid(SERVICE_UUID))
+                // Do not trust hardware offload to filter every result. Real
+                // devices delivered unrelated advertisements with a null data
+                // pattern, inflating the nearby Mesh count to dozens of nodes.
+                if (serviceData == null && record.serviceUuids?.contains(ParcelUuid(SERVICE_UUID)) != true) return
+                val identity = serviceData
                     ?.takeIf { it.size == 8 }
                     ?.let { bytes -> "ble:" + bytes.joinToString("") { "%02x".format(it) } }
                 onPeerFound?.invoke(
@@ -410,15 +419,23 @@ class BleGattTransport(
         }
         scanCallback = callback
         val settings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()
-        val filter = ScanFilter.Builder().setServiceUuid(ParcelUuid(SERVICE_UUID)).build()
-        scanner?.startScan(listOf(filter), settings, callback)
+        // Filters are ORed: match self-contained new advertisements as well as
+        // the UUID-list advertisements sent by previous versions.
+        val filters = listOf(
+            ScanFilter.Builder().setServiceData(ParcelUuid(SERVICE_UUID), byteArrayOf()).build(),
+            ScanFilter.Builder().setServiceUuid(ParcelUuid(SERVICE_UUID)).build(),
+        )
+        scanner?.startScan(filters, settings, callback)
             ?: Log.e(TAG, "no BLE scanner available on this device")
 
         awaitClose {
             onAdvertisingFailure = null
             onPeerFound = null
-            scanCallback?.let { scanner?.stopScan(it) }
+            // Bluetooth may have been disabled or permission revoked while
+            // scanning. Cleanup must still release the remaining resources.
+            runCatching { scanner?.stopScan(callback) }
             scanCallback = null
+            runCatching { stopAdvertising() }
         }
     }
 
@@ -432,7 +449,7 @@ class BleGattTransport(
     // ever resolved on schedule — the real onConnectionStateChange(status=147)
     // only arrived ~30s later, well after both callers had already given up.
     // A single mutex (not per-peer) matches this class's existing
-    // single-flight assumption for sends (see pendingWriteAck/pendingAckNotify).
+    // single-flight assumption for sends (see sendMutex).
     private val connectMutex = Mutex()
 
     override suspend fun connect(peerId: String): Connection {
@@ -461,15 +478,21 @@ class BleGattTransport(
         // issue requestMtu() so any earlier, unsolicited event is dropped.
         val mtuDeferredRef = java.util.concurrent.atomic.AtomicReference<CompletableDeferred<Int>?>(null)
         val descriptorWriteDeferred = CompletableDeferred<Boolean>()
+        val pending = PendingOperations()
 
         val callback = object : BluetoothGattCallback() {
             override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
                 Log.i(TAG, "client: onConnectionStateChange peer=$peerId status=$status newState=$newState")
                 when (newState) {
-                    BluetoothProfile.STATE_CONNECTED -> connected.complete(true)
+                    BluetoothProfile.STATE_CONNECTED -> connected.complete(status == BluetoothGatt.GATT_SUCCESS)
                     BluetoothProfile.STATE_DISCONNECTED -> {
                         connected.complete(false)
-                        centralLinks.remove(peerId)
+                        servicesDiscovered.complete(false)
+                        descriptorWriteDeferred.complete(false)
+                        // A late callback from a failed attempt must not remove
+                        // the replacement connection established by a retry.
+                        centralLinks[peerId]?.takeIf { it.gatt === gatt }?.let { centralLinks.remove(peerId, it) }
+                        gatt.close()
                     }
                 }
             }
@@ -479,7 +502,7 @@ class BleGattTransport(
             }
 
             override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
-                mtuDeferredRef.get()?.complete(mtu)
+                mtuDeferredRef.get()?.complete(if (status == BluetoothGatt.GATT_SUCCESS) mtu else 23)
             }
 
             override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
@@ -489,44 +512,46 @@ class BleGattTransport(
             override fun onCharacteristicWrite(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
                 val ok = status == BluetoothGatt.GATT_SUCCESS
                 if (characteristic.uuid == CONTROL_CHARACTERISTIC_UUID) {
-                    pendingControlWriteAck?.complete(ok)
+                    pending.controlWriteAck?.complete(ok)
                 } else {
-                    pendingWriteAck?.complete(ok)
+                    pending.writeAck?.complete(ok)
                 }
             }
 
             override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, value: ByteArray) {
-                if (characteristic.uuid == ACK_CHARACTERISTIC_UUID) pendingAckNotify?.complete(Unit)
+                if (characteristic.uuid == ACK_CHARACTERISTIC_UUID) pending.ackNotify?.complete(Unit)
             }
 
             @Suppress("DEPRECATION")
             override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
-                if (characteristic.uuid == ACK_CHARACTERISTIC_UUID) pendingAckNotify?.complete(Unit)
+                if (characteristic.uuid == ACK_CHARACTERISTIC_UUID) pending.ackNotify?.complete(Unit)
             }
         }
 
         val gatt = device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE)
+        var retained = false
+        try {
+            val connectedOk = withTimeoutOrNull(15_000) { connected.await() } ?: false
+            if (!connectedOk) throw IllegalStateException("GATT connect failed/timed out for $peerId")
 
-        val connectedOk = withTimeoutOrNull(15_000) { connected.await() } ?: false
-        if (!connectedOk) throw IllegalStateException("GATT connect failed/timed out for $peerId")
+            check(gatt.discoverServices()) { "service discovery could not start for $peerId" }
+            val discoveredOk = withTimeoutOrNull(10_000) { servicesDiscovered.await() } ?: false
+            if (!discoveredOk) throw IllegalStateException("service discovery failed for $peerId")
 
-        gatt.discoverServices()
-        val discoveredOk = withTimeoutOrNull(10_000) { servicesDiscovered.await() } ?: false
-        if (!discoveredOk) throw IllegalStateException("service discovery failed for $peerId")
+            val service = gatt.getService(SERVICE_UUID)
+                ?: throw IllegalStateException("peer $peerId doesn't expose our GATT service")
+            val dataChar = service.getCharacteristic(DATA_CHARACTERISTIC_UUID)
+                ?: throw IllegalStateException("peer $peerId missing data characteristic")
+            val ackChar = service.getCharacteristic(ACK_CHARACTERISTIC_UUID)
+                ?: throw IllegalStateException("peer $peerId missing ack characteristic")
+            val controlChar = service.getCharacteristic(CONTROL_CHARACTERISTIC_UUID)
+                ?: throw IllegalStateException("peer $peerId missing control characteristic")
 
-        val service = gatt.getService(SERVICE_UUID)
-            ?: throw IllegalStateException("peer $peerId doesn't expose our GATT service")
-        val dataChar = service.getCharacteristic(DATA_CHARACTERISTIC_UUID)
-            ?: throw IllegalStateException("peer $peerId missing data characteristic")
-        val ackChar = service.getCharacteristic(ACK_CHARACTERISTIC_UUID)
-            ?: throw IllegalStateException("peer $peerId missing ack characteristic")
-        val controlChar = service.getCharacteristic(CONTROL_CHARACTERISTIC_UUID)
-            ?: throw IllegalStateException("peer $peerId missing control characteristic")
-
-        gatt.setCharacteristicNotification(ackChar, true)
-        ackChar.getDescriptor(CCCD_UUID)?.let { cccd ->
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                gatt.writeDescriptor(cccd, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
+            check(gatt.setCharacteristicNotification(ackChar, true)) { "ACK notifications unavailable for $peerId" }
+            val cccd = ackChar.getDescriptor(CCCD_UUID)
+                ?: throw IllegalStateException("peer $peerId missing ACK subscription descriptor")
+            val subscriptionQueued = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                gatt.writeDescriptor(cccd, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE) == BluetoothGatt.GATT_SUCCESS
             } else {
                 @Suppress("DEPRECATION")
                 run {
@@ -534,44 +559,48 @@ class BleGattTransport(
                     gatt.writeDescriptor(cccd)
                 }
             }
-            withTimeoutOrNull(5_000) { descriptorWriteDeferred.await() }
+            check(subscriptionQueued) { "ACK subscription could not start for $peerId" }
+            check(withTimeoutOrNull(5_000) { descriptorWriteDeferred.await() } == true) {
+                "ACK subscription failed/timed out for $peerId"
+            }
+
+            val mtuDeferred = CompletableDeferred<Int>()
+            mtuDeferredRef.set(mtuDeferred)
+            val negotiatedMtu = if (gatt.requestMtu(DESIRED_MTU)) {
+                withTimeoutOrNull(5_000) { mtuDeferred.await() }
+                    ?: throw IllegalStateException("MTU negotiation timed out for $peerId")
+            } else 23
+
+            centralLinks[peerId] = CentralLink(
+                gatt = gatt,
+                dataCharacteristic = dataChar,
+                ackCharacteristic = ackChar,
+                controlCharacteristic = controlChar,
+                // BLE's ATT spec caps a single attribute value at 512 bytes
+                // regardless of negotiated ATT_MTU (which can go up to 517) —
+                // a negotiated MTU of 517 gives (517-3)=514 bytes of "room" that
+                // writeCharacteristic() then rejects with "value should not be
+                // longer than max length of an attribute value". Confirmed by
+                // hitting that exact exception on a real device before adding
+                // this cap.
+                mtuPayloadSize = (negotiatedMtu - 3).coerceIn(20, 512),
+                pending = pending,
+            )
+            Log.i(TAG, "connected to $peerId, mtuPayloadSize=${negotiatedMtu - 3}")
+
+            retained = true
+            return Connection(peerId = peerId, connectionId = peerId)
+        } finally {
+            // connect() can be cancelled by the engine before CentralLink is
+            // published. close(Connection) cannot reach that GATT instance.
+            if (!retained) {
+                try { gatt.disconnect() } finally { gatt.close() }
+            }
         }
-
-        val mtuDeferred = CompletableDeferred<Int>()
-        mtuDeferredRef.set(mtuDeferred)
-        gatt.requestMtu(DESIRED_MTU)
-        val negotiatedMtu = withTimeoutOrNull(5_000) { mtuDeferred.await() } ?: 23
-
-        centralLinks[peerId] = CentralLink(
-            gatt = gatt,
-            dataCharacteristic = dataChar,
-            ackCharacteristic = ackChar,
-            controlCharacteristic = controlChar,
-            // BLE's ATT spec caps a single attribute value at 512 bytes
-            // regardless of negotiated ATT_MTU (which can go up to 517) —
-            // a negotiated MTU of 517 gives (517-3)=514 bytes of "room" that
-            // writeCharacteristic() then rejects with "value should not be
-            // longer than max length of an attribute value". Confirmed by
-            // hitting that exact exception on a real device before adding
-            // this cap.
-            mtuPayloadSize = (negotiatedMtu - 3).coerceIn(20, 512),
-        )
-        Log.i(TAG, "connected to $peerId, mtuPayloadSize=${negotiatedMtu - 3}")
-
-        return Connection(peerId = peerId, connectionId = peerId)
     }
 
-    // transfer() reads/writes class-level pendingWriteAck/pendingAckNotify
-    // (this class's own doc comment already calls out the "single-flight
-    // assumption" this relies on). Nothing enforced that until now — and a
-    // real bidirectional protocol breaks it immediately: reproduced on a
-    // real device where a HELLO send (still awaiting its ack) overlapped
-    // with a REQUEST send triggered by receiving the peer's own HELLO in
-    // response, on the same connection. The second call clobbered
-    // pendingAckNotify before the first's ack arrived, and the first send
-    // just silently hung until its own 30s ack timeout — no crash, no log,
-    // it just never returned. This mutex makes the existing single-flight
-    // assumption actually true instead of merely documented.
+    // Serialize complete messages so HELLO/REQUEST/TRANSFER never replace
+    // another send's ACK waiter or overlap Android GATT write operations.
     private val sendMutex = Mutex()
 
     // Outbound sequence numbering, per connection. `send()` (a brand-new
@@ -627,7 +656,7 @@ class BleGattTransport(
         }
 
         val writeDeferred = CompletableDeferred<Boolean>()
-        pendingControlWriteAck = writeDeferred
+        link.pending.controlWriteAck = writeDeferred
         val queued = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             link.gatt.writeCharacteristic(
                 link.controlCharacteristic,
@@ -643,11 +672,11 @@ class BleGattTransport(
             }
         }
         if (!queued) {
-            pendingControlWriteAck = null
+            link.pending.controlWriteAck = null
             return@withLock TransferResult.Failed("writeCharacteristic() failed to queue control payload")
         }
         val ok = withTimeoutOrNull(WRITE_TIMEOUT_MS) { writeDeferred.await() } ?: false
-        pendingControlWriteAck = null
+        link.pending.controlWriteAck = null
         if (!ok) {
             TransferResult.Failed("control write failed/timed out")
         } else {
@@ -709,12 +738,12 @@ class BleGattTransport(
         }
 
         val ackDeferred = CompletableDeferred<Unit>()
-        pendingAckNotify = ackDeferred
+        link.pending.ackNotify = ackDeferred
 
         while (offset < remaining.size) {
             if (interruptRequested) {
                 interruptRequested = false
-                pendingAckNotify = null
+                link.pending.ackNotify = null
                 interruptedSeqByConnection[connection.connectionId] = seq
                 return TransferResult.Interrupted(bytesTransferred = sent.toLong(), reason = "simulated interrupt")
             }
@@ -730,14 +759,14 @@ class BleGattTransport(
             needsHeader = false
 
             val writeDeferred = CompletableDeferred<Boolean>()
-            pendingWriteAck = writeDeferred
+            link.pending.writeAck = writeDeferred
             if (!writeCharacteristicChunk(link, chunk)) {
-                pendingAckNotify = null
+                link.pending.ackNotify = null
                 return TransferResult.Failed("writeCharacteristic() failed to queue at offset $offset")
             }
             val writeOk = withTimeoutOrNull(WRITE_TIMEOUT_MS) { writeDeferred.await() } ?: false
             if (!writeOk) {
-                pendingAckNotify = null
+                link.pending.ackNotify = null
                 return TransferResult.Failed("GATT write failed/timed out at offset $offset")
             }
 
@@ -746,7 +775,7 @@ class BleGattTransport(
         }
 
         val acked = withTimeoutOrNull(ACK_TIMEOUT_MS) { ackDeferred.await() }
-        pendingAckNotify = null
+        link.pending.ackNotify = null
         return if (acked == null) {
             TransferResult.Failed("ack timeout after sending $sent bytes")
         } else {
@@ -785,22 +814,27 @@ class BleGattTransport(
 
     override suspend fun close(connection: Connection) {
         centralLinks.remove(connection.connectionId)?.let {
-            it.gatt.disconnect()
-            it.gatt.close()
+            try { it.gatt.disconnect() } finally { it.gatt.close() }
         }
+        nextSeqByConnection.remove(connection.connectionId)
+        interruptedSeqByConnection.remove(connection.connectionId)
     }
 
     /** Stops advertising/scanning/server and releases GATT resources. Not part of PeerTransport — call from the owning Activity's onDestroy(). */
     fun teardown() {
-        stopAdvertising()
-        scanCallback?.let { scanner?.stopScan(it) }
+        runCatching { stopAdvertising() }
+        runCatching { scanCallback?.let { scanner?.stopScan(it) } }
         scanCallback = null
-        gattServer?.close()
+        runCatching { gattServer?.close() }
         gattServer = null
         centralLinks.values.forEach {
-            it.gatt.disconnect()
-            it.gatt.close()
+            runCatching { it.gatt.disconnect() }
+            runCatching { it.gatt.close() }
         }
         centralLinks.clear()
+        nextSeqByConnection.clear()
+        interruptedSeqByConnection.clear()
+        incomingMessages.clear()
+        subscribedDevices.clear()
     }
 }

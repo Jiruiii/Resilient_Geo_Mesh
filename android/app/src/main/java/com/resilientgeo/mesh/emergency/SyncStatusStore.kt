@@ -8,6 +8,7 @@ import android.os.Build
 import android.os.SystemClock
 import androidx.core.content.ContextCompat
 import com.resilientgeo.mesh.bridge.SharedPreferencesEmergencyModeState
+import com.resilientgeo.mesh.transport.MeshTransportSettings
 import java.time.Instant
 
 /** History survives process death; live counters do not. No radio addresses are exposed. */
@@ -32,8 +33,15 @@ class SyncStatusStore(context: Context) {
         val bluetoothEnabled = runCatching { adapter?.isEnabled == true }.getOrDefault(false)
         val enabled = SharedPreferencesEmergencyModeState(appContext).isEnabled
         val live = telemetry.snapshot(SystemClock.elapsedRealtime())
-        val discovery = enabled && live.serviceRunning && live.discoveryActive && granted && bluetoothEnabled
+        val transport = MeshTransportSettings(appContext)
+        val radioReady = if (transport.mode == MeshTransportSettings.WIFI_DIRECT) transport.wifiReady() else granted && bluetoothEnabled
+        val discovery = enabled && live.serviceRunning && live.discoveryActive && radioReady
         return mapOf(
+            "transport" to transport.mode,
+            "wifi_direct_available" to transport.wifiAvailable(),
+            "wifi_enabled" to transport.wifiEnabled(),
+            "wifi_permissions_granted" to transport.wifiGranted(),
+            "location_enabled" to transport.locationEnabled(),
             "emergency_mode_enabled" to enabled,
             "bluetooth_available" to (adapter != null),
             "bluetooth_enabled" to bluetoothEnabled,

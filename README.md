@@ -1,5 +1,7 @@
 # Resilient Geo Mesh
 
+> 2026-10-04：新增可選的 **Wi-Fi Direct** 同步。在「個人設定 → 同步狀態」關閉緊急模式後選擇傳輸方式，兩台選擇一致再啟動。藍牙仍為預設；Wi-Fi Direct 的權限、系統邀請、單群組限制與驗證方式見 [Wi-Fi Direct 文件](docs/wifi-direct.md)。
+
 > 極端通訊環境下的空間情報系統 — 當基地台總頻寬受限時，讓附近的手機彼此交換各自缺少的災情資料分片。
 
 > 2026-09-24 更新：Android App 的 launcher 現在是 Flutter module 的全台灣離線地圖；Android 原生保留 Room、事件驗證／TTL、BLE 與 transport harness，Flutter 透過 bridge 只讀取已驗證事件。
@@ -85,7 +87,7 @@ App 使用單一 `MapLibreMap` renderer。OSM／Protomaps 底圖、glyph、sprit
 | 測試               | Flutter test、JUnit 4、AndroidX Test、`node:test`、Python `unittest`                  | 覆蓋地圖介面、資料契約、驗證、同步與模擬；測試數量及結果以各 runner 的當次輸出為準                                               |
 | Sponsor 技術       | 未使用                                                                                | 本次未使用主辦方或贊助商提供的服務；pipeline 與 simulator 零第三方相依，Android 端僅用 AndroidX 與 Bouncy Castle                  |
 
-> 曾評估但**否決**的技術，實測記錄見 [`docs/adr/ADR-001-transport-layer.md`](docs/adr/ADR-001-transport-layer.md)：**Nearby Connections**（兩台實機皆回傳 Google 側 `INTERNAL_ERROR`，非 App 端可控）、**原生 Wi-Fi Direct**（discovery／連線可行，但 TCP 卡在疑似 Android per-app 網路路由限制）。
+> 2026-09-05 的候選評估與失敗紀錄保留在 [`docs/adr/ADR-001-transport-layer.md`](docs/adr/ADR-001-transport-layer.md)。Nearby Connections 仍未採用；Wi-Fi Direct 已於 2026-10-04 重新實作並通過雙機資料交換，當時的 TCP 逾時不代表技術不可用。新版本的搜尋延遲、實測條件與限制見 [Wi-Fi Direct 文件](docs/wifi-direct.md)。
 
 ## 安裝與執行
 
