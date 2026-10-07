@@ -178,6 +178,7 @@ export function loadApiConfig(env = process.env) {
   }
   return Object.freeze({
     publicReleaseRoot,
+    addressPacksRoot: optionalAbsolutePath(env, 'ADDRESS_PACKS_ROOT'),
     signingPublicKeyPath,
     signingKeyId,
     ...azureStorageSettings(env),

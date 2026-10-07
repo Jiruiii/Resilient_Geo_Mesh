@@ -23,7 +23,7 @@ class GovernmentSyncManager private constructor(context: Context) {
 
     init {
         if (!prefs.contains("url")) {
-            val defaultUrl = runCatching {
+            val defaultUrl = if (debug) DEBUG_EMULATOR_URL else runCatching {
                 JSONObject(this.context.assets.open("trust/government-service.json").bufferedReader().use { it.readText() })
                     .getString("base_url")
             }.getOrDefault("")
@@ -34,7 +34,15 @@ class GovernmentSyncManager private constructor(context: Context) {
     fun configure(url: String, enabled: Boolean, area: String = prefs.getString("area", "all").orEmpty()) {
         require(area in setOf("taipei", "all"))
         val normalized = if (url.isBlank()) "" else GovernmentFeedSync.validateBase(url, debug).toString()
-        prefs.edit().putString("url", normalized).putBoolean("enabled", enabled).putString("area", area).commit()
+        val previous = prefs.getString("url", "").orEmpty()
+        val editor = prefs.edit().putString("url", normalized).putBoolean("enabled", enabled).putString("area", area)
+        if (debug && previous.isNotBlank() && previous != normalized) {
+            // A development server has its own revision sequence. The Room
+            // cache remains available offline while this server is verified.
+            editor.remove("revision").remove("hash").remove("success")
+                .remove("downloaded").remove("sources").remove("error")
+        }
+        editor.commit()
         GovernmentSyncJob.schedule(context, enabled && normalized.isNotBlank())
     }
     fun message(): Map<String, Any?> {
@@ -84,6 +92,7 @@ class GovernmentSyncManager private constructor(context: Context) {
         }
     }
     companion object {
+        private const val DEBUG_EMULATOR_URL = "http://10.0.2.2:8787/"
         @Volatile private var instance: GovernmentSyncManager? = null
         fun get(context: Context): GovernmentSyncManager = instance ?: synchronized(this) {
             instance ?: GovernmentSyncManager(context).also { instance = it }

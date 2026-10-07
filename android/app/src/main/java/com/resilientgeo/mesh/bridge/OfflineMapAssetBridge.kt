@@ -2,10 +2,10 @@ package com.resilientgeo.mesh.bridge
 
 import android.content.Context
 import com.resilientgeo.mesh.data.OfflineAddressPackStore
+import com.resilientgeo.mesh.online.GovernmentSyncManager
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
-import org.json.JSONObject
 import java.io.File
 import java.net.URL
 import java.util.concurrent.Executors
@@ -127,17 +127,7 @@ class OfflineMapAssetBridge(
     }
 
     private fun serviceBaseUrl(): URL {
-        val assetConfig = runCatching {
-            applicationContext.assets.open("trust/government-service.json")
-                .bufferedReader().use { JSONObject(it.readText()) }
-        }.getOrElse { throw IllegalStateException("缺少政府資料服務網址設定") }
-        val configured = assetConfig.optString("base_url")
-            .ifBlank {
-                runCatching {
-                    com.resilientgeo.mesh.online.GovernmentSyncManager
-                        .get(applicationContext).message()["url"] as? String
-                }.getOrNull().orEmpty()
-            }
+        val configured = (GovernmentSyncManager.get(applicationContext).message()["url"] as? String).orEmpty()
         require(configured.isNotBlank()) { "缺少政府資料服務網址設定" }
         return URL(configured.trimEnd('/') + "/")
     }

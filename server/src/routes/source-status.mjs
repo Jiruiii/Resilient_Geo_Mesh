@@ -18,11 +18,18 @@ function publicState(state) {
   };
   for (const field of [
     'source_count', 'query_count', 'successful_query_count', 'failed_query_count', 'failed_fallback_source_count',
-    'candidate_count', 'matched_count', 'unresolved_count', 'rejected_coordinate_count',
+    'candidate_count', 'matched_count', 'unresolved_count', 'excluded_count', 'identity_conflict_count',
+    'duplicate_institution_code_group_count', 'duplicate_institution_code_affected_row_count',
+    'duplicate_institution_code_extra_row_count', 'duplicate_point_id_group_count',
+    'duplicate_point_id_affected_row_count', 'duplicate_point_id_extra_row_count', 'rejected_coordinate_count',
     'emergency_hospital_count', 'emergency_located_count', 'emergency_unresolved_count',
   ]) {
     if (Number.isSafeInteger(state[field]) && state[field] >= 0) output[field] = state[field];
   }
+  if (typeof state.layer_source_version === 'string' && state.layer_source_version.length > 0) {
+    output.layer_source_version = state.layer_source_version;
+  }
+  if (typeof state.roster_complete === 'boolean') output.roster_complete = state.roster_complete;
   const countyCoverage = state.county_coverage;
   if (countyCoverage && ['partial', 'complete'].includes(countyCoverage.status)
     && countyCoverage.county_count === 22 && Array.isArray(countyCoverage.counties)
@@ -71,11 +78,21 @@ function publicState(state) {
   }
   if (state.unresolved_reason_counts && typeof state.unresolved_reason_counts === 'object') {
     const reasons = {};
-    for (const name of ['no_coordinate_candidate', 'name_address_mismatch', 'multiple_candidates', 'source_missing']) {
+    for (const name of [
+      'no_coordinate_candidate', 'name_address_mismatch', 'multiple_candidates', 'source_missing',
+      'duplicate_institution_code', 'duplicate_point_id', 'missing_institution_code', 'unverified_coordinate_match',
+    ]) {
       const value = state.unresolved_reason_counts[name];
       if (Number.isSafeInteger(value) && value >= 0) reasons[name] = value;
     }
     output.unresolved_reason_counts = reasons;
+  }
+  if (state.excluded_reason_counts && typeof state.excluded_reason_counts === 'object') {
+    output.excluded_reason_counts = Object.fromEntries(
+      Object.entries(state.excluded_reason_counts)
+        .filter(([reason, value]) => /^[a-z][a-z0-9_]*$/u.test(reason)
+          && Number.isSafeInteger(value) && value >= 0),
+    );
   }
   if (Array.isArray(state.coordinate_source_ids)) {
     output.coordinate_source_ids = state.coordinate_source_ids

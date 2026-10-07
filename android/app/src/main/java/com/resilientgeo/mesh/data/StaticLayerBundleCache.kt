@@ -10,6 +10,17 @@ import java.nio.file.StandardCopyOption
 class StaticLayerBundleCache(private val directory: File) {
     data class Bundle(val manifest: String, val chunks: List<String>)
 
+    /** Reads only the small manifest so callers can compare versions without loading every chunk. */
+    fun readManifest(layerId: String): String? = runCatching {
+        requireValidLayerId(layerId)
+        for (root in listOf(bundleDirectory(layerId), backupDirectory(layerId))) {
+            val file = File(root, "manifest.json")
+            if (file.isFile) return@runCatching file.readText()
+        }
+        val legacy = File(directory, "$layerId.json")
+        if (legacy.isFile) JSONObject(legacy.readText()).getJSONObject("manifest").toString() else null
+    }.getOrNull()
+
     fun read(layerId: String): Bundle? = runCatching {
         requireValidLayerId(layerId)
         val primary = readDirectory(bundleDirectory(layerId))

@@ -310,7 +310,7 @@
       "auth_required": false,
       "license": "政府資料開放授權條款第1版",
       "coordinate_system": "EPSG:4326 coordinates supplied by the source; validate before use",
-      "ttl_policy": "versioned_snapshot",
+      "ttl_policy": "versioned_snapshot; signed static layer manifest is valid for 30 days after publication",
       "integration_stage": "P1",
       "taiwan_filter": "No Neihu text filter; retain records inside the AreaCatalog union and preserve unresolved source values as null.",
       "verification": {
@@ -331,7 +331,7 @@
       "auth_required": false,
       "license": "政府資料開放授權條款第1版",
       "coordinate_system": "No coordinates in the master; supplement only from validated NLSC/OSM point matches",
-      "ttl_policy": "versioned_snapshot; unresolved records remain in the report and are not drawn as points",
+      "ttl_policy": "versioned_snapshot; signed static layer manifest is valid for 30 days after publication; unresolved records remain in the report and are not drawn as points",
       "integration_stage": "P1",
       "taiwan_filter": "No Neihu filter; retain all nationwide records and add county_code/town_code/area_id when resolved.",
       "verification": {

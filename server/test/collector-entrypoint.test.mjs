@@ -8,6 +8,7 @@ import { test } from 'node:test';
 import { createMemoryCacheStore } from '../../pipeline/lib/source-collector.mjs';
 import { generateEd25519KeyPair } from '../../pipeline/lib/crypto.mjs';
 import { TAIWAN_COUNTIES } from '../../pipeline/sources/taiwan-counties.mjs';
+import { isPublishableResult } from '../src/collector/medical-release-policy.mjs';
 import {
   createCollectorService,
   resolveInitialSourceIds,
@@ -107,6 +108,13 @@ function completeMedicalResult() {
     emergencyMedicalFeatures: [layerFeature('taiwan-emergency-medical', 'emergency:atomic-pointer')],
   };
 }
+
+test('medical publication accepts manually reviewed address corrections', () => {
+  const result = completeMedicalResult();
+  result.features[0].properties.coordinate_match_method = 'reviewed_address_correction';
+
+  assert.equal(isPublishableResult(result), true);
+});
 
 function cachedResult(sourceId, event) {
   return {

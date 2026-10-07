@@ -751,6 +751,16 @@ test('publisher preserves partial medical coverage counters in source status wit
           emergency_unresolved_count: 2,
           emergency_medical_source_version: 'mohw-emergency-2026-10',
           emergency_medical_coverage: 'partial',
+          unresolved_reason_counts: {
+            no_coordinate_candidate: 0,
+            name_address_mismatch: 0,
+            multiple_candidates: 0,
+            source_missing: 0,
+            duplicate_institution_code: 0,
+            duplicate_point_id: 0,
+            missing_institution_code: 0,
+            unverified_coordinate_match: 2,
+          },
           emergency_unresolved_reason_counts: {
             no_coordinate_candidate: 1,
             name_address_mismatch: 0,
@@ -778,6 +788,7 @@ test('publisher preserves partial medical coverage counters in source status wit
       emergency_unresolved_count: medicalStatus.emergency_unresolved_count,
       emergency_medical_source_version: medicalStatus.emergency_medical_source_version,
       emergency_medical_coverage: medicalStatus.emergency_medical_coverage,
+      unresolved_reason_counts: medicalStatus.unresolved_reason_counts,
       emergency_unresolved_reason_counts: medicalStatus.emergency_unresolved_reason_counts,
     }, {
       query_count: 12,
@@ -791,6 +802,16 @@ test('publisher preserves partial medical coverage counters in source status wit
       emergency_unresolved_count: 2,
       emergency_medical_source_version: 'mohw-emergency-2026-10',
       emergency_medical_coverage: 'partial',
+      unresolved_reason_counts: {
+        no_coordinate_candidate: 0,
+        name_address_mismatch: 0,
+        multiple_candidates: 0,
+        source_missing: 0,
+        duplicate_institution_code: 0,
+        duplicate_point_id: 0,
+        missing_institution_code: 0,
+        unverified_coordinate_match: 2,
+      },
       emergency_unresolved_reason_counts: {
         no_coordinate_candidate: 1,
         name_address_mismatch: 0,

@@ -204,8 +204,31 @@ function coordinateFeatureText(feature) {
 }
 
 const MEDICAL_CODE_FIELDS = [
-  '機構代碼', '醫療機構代碼', '院所代碼', '醫事機構代碼', 'facility_code', 'institution_code', 'medical_id', 'id', 'ID',
+  '機構代碼', '醫療機構代碼', '院所代碼', '醫事機構代碼', '代碼',
+  'facility_code', 'institution_code', 'medical_id', 'id', 'ID',
 ];
+const INSTITUTION_CODE_FIELDS = [
+  '機構代碼', '醫療機構代碼', '院所代碼', '醫事機構代碼', '代碼',
+  'facility_code', 'institution_code', 'medical_id',
+];
+const VERIFIED_MEDICAL_MATCH_METHODS = new Set([
+  'exact_address_doorplate',
+  'institution_code',
+  'name_address',
+  'reviewed_address_correction',
+  'source_coordinates',
+]);
+
+export function normalizedMedicalInstitutionCode(value) {
+  const properties = value?.properties ?? {};
+  const sourceRecord = value?.source_record ?? properties.source_record ?? value ?? {};
+  return comparableText(firstValue(...INSTITUTION_CODE_FIELDS.map((field) =>
+    sourceRecord?.[field] ?? properties?.[field])));
+}
+
+export function isVerifiedMedicalCoordinateMatchMethod(value) {
+  return VERIFIED_MEDICAL_MATCH_METHODS.has(value);
+}
 
 function medicalRecordCode(record) {
   return comparableText(firstValue(...MEDICAL_CODE_FIELDS.map((field) => record?.[field])));
@@ -213,10 +236,7 @@ function medicalRecordCode(record) {
 
 function coordinateFeatureCode(feature) {
   const properties = feature?.properties ?? {};
-  return medicalRecordCode({
-    ...properties.source_record,
-    ...properties,
-  });
+  return medicalRecordCode({ ...properties.source_record, ...properties });
 }
 
 function unresolvedCode(unresolved) {
@@ -622,6 +642,134 @@ export function mergeMedicalCoordinates(report, coordinateFeatures, options = {}
     unresolved: remaining,
     unresolved_reason_counts: unresolvedReasonCounts,
     supplemented_count: supplemented.length,
+  };
+}
+
+function sourceRecordForMedicalRow(row) {
+  if (row.kind === 'point') return row.value?.properties?.source_record ?? {};
+  if (row.kind === 'unresolved') return row.value?.source_record ?? {};
+  return row.value ?? {};
+}
+
+function directoryOnlyMedicalRow(row, reason) {
+  if (row.kind === 'unresolved') {
+    return { ...row.value, coordinate_failure_reason: reason };
+  }
+  const sourceRecord = sourceRecordForMedicalRow(row);
+  const properties = row.kind === 'point' ? row.value?.properties ?? {} : {};
+  const code = normalizedMedicalInstitutionCode(sourceRecord);
+  return {
+    medical_id: code || row.value?.feature_id || null,
+    name: properties.name ?? fieldText(sourceRecord, '機構名稱', '醫療機構名稱', '院所名稱', '醫事機構名稱', '名稱', 'name') ?? null,
+    address: properties.address ?? fieldText(sourceRecord, '地址', '機構地址', '醫事機構地址', 'address') ?? null,
+    geometry_status: 'unresolved',
+    coordinate_failure_reason: reason,
+    source_record: sourceRecord,
+  };
+}
+
+/** Keep only points with an institution code and a unique code/feature identity. */
+export function partitionMedicalIdentityConflicts({ features = [], unresolved = [], excluded = [] } = {}) {
+  if (![features, unresolved, excluded].every(Array.isArray)) {
+    throw new MedicalSourceError('medical identity partition requires arrays', { code: 'MEDICAL_IDENTITY_INPUT_INVALID' });
+  }
+  const rows = [
+    ...features.map((value) => ({ kind: 'point', value })),
+    ...unresolved.map((value) => ({ kind: 'unresolved', value })),
+    ...excluded.map((value) => ({ kind: 'excluded', value })),
+  ];
+  const codeGroups = new Map();
+  for (const row of rows) {
+    const code = normalizedMedicalInstitutionCode(sourceRecordForMedicalRow(row));
+    if (!code) continue;
+    const group = codeGroups.get(code) ?? [];
+    group.push(row);
+    codeGroups.set(code, group);
+  }
+  const duplicateCodeRows = new Set();
+  let duplicateInstitutionCodeGroupCount = 0;
+  let duplicateInstitutionCodeAffectedRowCount = 0;
+  let duplicateInstitutionCodeExtraRowCount = 0;
+  for (const group of codeGroups.values()) {
+    if (group.length < 2) continue;
+    duplicateInstitutionCodeGroupCount += 1;
+    duplicateInstitutionCodeAffectedRowCount += group.length;
+    duplicateInstitutionCodeExtraRowCount += group.length - 1;
+    group.forEach((row) => duplicateCodeRows.add(row));
+  }
+
+  const featureIdGroups = new Map();
+  for (const row of rows.filter((entry) => entry.kind === 'point')) {
+    const featureId = row.value?.feature_id;
+    if (typeof featureId !== 'string' || featureId.length === 0) continue;
+    const group = featureIdGroups.get(featureId) ?? [];
+    group.push(row);
+    featureIdGroups.set(featureId, group);
+  }
+  const duplicatePointIdRows = new Set();
+  let duplicatePointIdGroupCount = 0;
+  let duplicatePointIdAffectedRowCount = 0;
+  let duplicatePointIdExtraRowCount = 0;
+  for (const group of featureIdGroups.values()) {
+    if (group.length < 2) continue;
+    duplicatePointIdGroupCount += 1;
+    duplicatePointIdAffectedRowCount += group.length;
+    duplicatePointIdExtraRowCount += group.length - 1;
+    group.forEach((row) => duplicatePointIdRows.add(row));
+  }
+
+  const safeFeatures = [];
+  const safeUnresolved = [];
+  const safeExcluded = [];
+  let identityConflictCount = 0;
+  for (const row of rows) {
+    const sourceRecord = sourceRecordForMedicalRow(row);
+    const code = normalizedMedicalInstitutionCode(sourceRecord);
+    let identityReason = null;
+    if (duplicateCodeRows.has(row)) identityReason = 'duplicate_institution_code';
+    else if (duplicatePointIdRows.has(row)) identityReason = 'duplicate_point_id';
+    else if (row.kind === 'point' && !code) identityReason = 'missing_institution_code';
+
+    if (identityReason) {
+      identityConflictCount += 1;
+      safeUnresolved.push(directoryOnlyMedicalRow(row, identityReason));
+    } else if (row.kind === 'point' && !isVerifiedMedicalCoordinateMatchMethod(
+      row.value?.properties?.coordinate_match_method,
+    )) {
+      safeUnresolved.push(directoryOnlyMedicalRow(row, 'unverified_coordinate_match'));
+    } else if (row.kind === 'point') safeFeatures.push(row.value);
+    else if (row.kind === 'unresolved') safeUnresolved.push(row.value);
+    else safeExcluded.push(row.value);
+  }
+
+  const unresolvedReasonCounts = {
+    no_coordinate_candidate: 0,
+    name_address_mismatch: 0,
+    multiple_candidates: 0,
+    source_missing: 0,
+    duplicate_institution_code: 0,
+    duplicate_point_id: 0,
+    missing_institution_code: 0,
+    unverified_coordinate_match: 0,
+  };
+  for (const row of safeUnresolved) {
+    const reason = row.coordinate_failure_reason;
+    if (Object.hasOwn(unresolvedReasonCounts, reason)) unresolvedReasonCounts[reason] += 1;
+    else unresolvedReasonCounts.no_coordinate_candidate += 1;
+  }
+
+  return {
+    features: safeFeatures.sort((left, right) => left.feature_id.localeCompare(right.feature_id)),
+    unresolved: safeUnresolved,
+    excluded: safeExcluded,
+    identity_conflict_count: identityConflictCount,
+    duplicate_institution_code_group_count: duplicateInstitutionCodeGroupCount,
+    duplicate_institution_code_affected_row_count: duplicateInstitutionCodeAffectedRowCount,
+    duplicate_institution_code_extra_row_count: duplicateInstitutionCodeExtraRowCount,
+    duplicate_point_id_group_count: duplicatePointIdGroupCount,
+    duplicate_point_id_affected_row_count: duplicatePointIdAffectedRowCount,
+    duplicate_point_id_extra_row_count: duplicatePointIdExtraRowCount,
+    unresolved_reason_counts: unresolvedReasonCounts,
   };
 }
 

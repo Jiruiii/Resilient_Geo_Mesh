@@ -1536,6 +1536,22 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     if (staticFeatures == null) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
+    final visibleEvents = _visibleEvents;
+    final visibleFacilityCount =
+        staticFeatures.features
+            .where(
+              (feature) =>
+                  feature.geometry is PointGeometry &&
+                  ((_showShelters && feature.kind == 'shelter') ||
+                      (_showMedical && feature.kind == 'medical')),
+            )
+            .length;
+    final visibleEventCount =
+        _showEvents
+            ? visibleEvents
+                .where((event) => meshEventFocusPoint(event) != null)
+                .length
+            : 0;
     final searchResults = _mapSearchResults;
     final reportAddressQuery =
         _reportSheetVisible && _reportStep == CrowdReportSheetStep.edit
@@ -1552,7 +1568,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
             runtimeState: _runtimeState,
             staticFeatures: staticFeatures.features,
             administrativeIndex: _administrativeIndex,
-            visibleEvents: _visibleEvents,
+            visibleEvents: visibleEvents,
             showShelters: _showShelters,
             showMedical: _showMedical,
             showEvents: _showEvents,
@@ -1594,6 +1610,8 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                           constraints: const BoxConstraints(maxWidth: 520),
                           child: _StatusOverlay(
                             snapshotAt: staticFeatures.snapshotAt,
+                            visibleFacilityCount: visibleFacilityCount,
+                            visibleEventCount: visibleEventCount,
                             hasCurrentLocation:
                                 _runtimeState.currentLocation != null,
                             reportDeliveryEventId: _reportDeliveryEventId,
@@ -1722,12 +1740,13 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
       ),
     );
   }
-
 }
 
 class _StatusOverlay extends StatelessWidget {
   const _StatusOverlay({
     required this.snapshotAt,
+    required this.visibleFacilityCount,
+    required this.visibleEventCount,
     required this.hasCurrentLocation,
     required this.reportDeliveryEventId,
     this.staticFeaturesPending = false,
@@ -1735,6 +1754,8 @@ class _StatusOverlay extends StatelessWidget {
   });
 
   final String? snapshotAt;
+  final int visibleFacilityCount;
+  final int visibleEventCount;
   final bool hasCurrentLocation;
   final String? reportDeliveryEventId;
   final bool staticFeaturesPending;
@@ -1760,16 +1781,21 @@ class _StatusOverlay extends StatelessWidget {
               alignment: Alignment.centerLeft,
               fit: BoxFit.scaleDown,
               child: Text(
-                '更新時間：${formatUpdateTime(snapshotAt)}',
+                staticFeaturesPending && visibleFacilityCount == 0
+                    ? '全臺院所／避難所：載入中'
+                    : '全臺院所／避難所：$visibleFacilityCount',
                 maxLines: 1,
                 softWrap: false,
               ),
             ),
           ),
+          Text('警報標記：$visibleEventCount'),
+          if (snapshotAt != null && snapshotAt!.isNotEmpty)
+            Text('靜態資料更新：${formatUpdateTime(snapshotAt)}'),
           Text('目前位置：${hasCurrentLocation ? '已取得' : '尚未取得'}'),
           if (staticFeaturesPending)
             const Text(
-              '避難所資料驗證中…',
+              '院所與避難所資料驗證中…',
               key: ValueKey<String>('static-features-pending'),
             ),
           if (staticFeaturesFailed)

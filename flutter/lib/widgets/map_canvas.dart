@@ -788,7 +788,9 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
   }
 
   bool _projectMarkersSynchronously(CameraPosition position) {
-    if (_usesPlatformMap && !_markerLayoutReady && !kIsWeb) return false;
+    if (_usesPlatformMap && (!_styleLoaded || _mapController == null)) {
+      return false;
+    }
     final viewportSize = _mapViewportSize;
     if (viewportSize == null || viewportSize.isEmpty) return false;
 
@@ -802,7 +804,7 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
 
     _markerOverlay.replace(markers: markers, positions: next);
     _markerLayoutCamera = position;
-    if (kIsWeb && !_markerLayoutReady) {
+    if (!_markerLayoutReady) {
       setState(() => _markerLayoutReady = true);
     }
     final radarPoint = _radarEventPoint;
@@ -889,16 +891,13 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
         }
         return;
       }
-      // Web can project WGS84 points locally using the same Web Mercator
-      // camera model. Avoid waiting on the platform adapter's batch query
-      // during first paint; the map and Flutter overlay share CSS pixels.
-      if (kIsWeb) {
-        if (_markerProjectionGate.isCurrent(request) &&
-            _cameraPosition != null) {
-          _projectMarkersSynchronously(_cameraPosition!);
-        }
-        return;
+      // Paint the current layout immediately using the shared camera model.
+      // Native projection below can correct platform rounding after the map
+      // settles, but a slow platform response must not leave bubbles blank.
+      if (_markerProjectionGate.isCurrent(request) && _cameraPosition != null) {
+        _projectMarkersSynchronously(_cameraPosition!);
       }
+      if (kIsWeb) return;
       final points = await controller.toScreenLocationBatch(
         markers.map((marker) => _latLng(marker.point)),
       );
@@ -1215,33 +1214,88 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
                 ),
               ),
             if (_usesPlatformMap)
-              ValueListenableBuilder<MapMarkerOverlayFrame<MapMarkerData>>(
-                valueListenable: _markerOverlay,
-                builder:
-                    (context, frame, child) => Transform.translate(
-                      offset: frame.translation,
-                      child: child,
+              ClipRect(
+                child: ValueListenableBuilder<
+                  MapMarkerOverlayFrame<MapMarkerData>
+                >(
+                  valueListenable: _markerOverlay,
+                  builder:
+                      (context, frame, child) => Transform.translate(
+                        offset: frame.translation,
+                        child: child,
+                      ),
+                  child: RepaintBoundary(
+                    child: ValueListenableBuilder<
+                      MapMarkerOverlayFrame<MapMarkerData>
+                    >(
+                      valueListenable: _markerOverlay.layout,
+                      builder:
+                          (context, layout, _) => Stack(
+                            fit: StackFit.expand,
+                            // Keep offscreen county bubbles available while
+                            // panning; the parent clips after translation.
+                            clipBehavior: Clip.none,
+                            children: layout.markers
+                                .map(
+                                  (marker) => _buildPositionedMarker(
+                                    marker,
+                                    layout.positions,
+                                  ),
+                                )
+                                .toList(growable: false),
+                          ),
                     ),
-                child: RepaintBoundary(
-                  child: ValueListenableBuilder<
-                    MapMarkerOverlayFrame<MapMarkerData>
-                  >(
-                    valueListenable: _markerOverlay.layout,
-                    builder:
-                        (context, layout, _) => Stack(
-                          fit: StackFit.expand,
-                          clipBehavior: Clip.hardEdge,
-                          children: layout.markers
-                              .map(
-                                (marker) => _buildPositionedMarker(
-                                  marker,
-                                  layout.positions,
-                                ),
-                              )
-                              .toList(growable: false),
-                        ),
                   ),
                 ),
+              ),
+            if (_usesPlatformMap &&
+                widget.staticFeatures.isNotEmpty &&
+                (widget.showShelters || widget.showMedical))
+              ValueListenableBuilder<MapMarkerOverlayFrame<MapMarkerData>>(
+                valueListenable: _markerOverlay,
+                builder: (context, frame, _) {
+                  final percentage = widget.runtimeState.zoomPercentage;
+                  if (!_markerLayoutReady ||
+                      percentage <= 25 ||
+                      percentage >= MapLibreMapConfig.revealAllPercentage ||
+                      _hasVisibleFacilityMarker(frame, viewportSize)) {
+                    return const SizedBox.shrink();
+                  }
+                  return Positioned(
+                    left: 12,
+                    bottom: 190,
+                    child: PointerInterceptor(
+                      child: Material(
+                        color: Theme.of(context).colorScheme.surface,
+                        elevation: 3,
+                        borderRadius: BorderRadius.circular(16),
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 200),
+                          child: Padding(
+                            padding: const EdgeInsets.all(12),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: <Widget>[
+                                const Text('目前畫面沒有院所／避難所標記'),
+                                const SizedBox(height: 4),
+                                Text(
+                                  '返回全臺後，點選數字圓點可快速探索縣市。',
+                                  style: Theme.of(context).textTheme.bodySmall,
+                                ),
+                                TextButton.icon(
+                                  onPressed: () => unawaited(_recenter()),
+                                  icon: const Icon(Icons.public, size: 18),
+                                  label: const Text('返回全臺'),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                },
               ),
             if (!_usesPlatformMap) ..._buildPreviewMarkers(markers),
             if (widget.showReportLocationPicker)
@@ -1288,6 +1342,29 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
             !kIsWeb && defaultTargetPlatform == TargetPlatform.android,
         devicePixelRatio: MediaQuery.devicePixelRatioOf(context),
       );
+
+  bool _hasVisibleFacilityMarker(
+    MapMarkerOverlayFrame<MapMarkerData> frame,
+    Size viewportSize,
+  ) {
+    // The search and status controls cover the top of the map. A bubble
+    // behind them cannot help someone exploring the current area.
+    final usableMap = Rect.fromLTRB(
+      12,
+      260,
+      viewportSize.width - 12,
+      viewportSize.height - 120,
+    );
+    for (final marker in frame.markers) {
+      if (marker.shelterCount == 0 && marker.medicalCount == 0) continue;
+      final position = frame.positions[marker.key];
+      if (position != null &&
+          usableMap.contains(position + frame.translation)) {
+        return true;
+      }
+    }
+    return false;
+  }
 
   Widget _buildPositionedMarker(
     MapMarkerData marker,
@@ -1370,7 +1447,10 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
       zoomGesturesEnabled: true,
       doubleClickZoomEnabled: true,
       tiltGesturesEnabled: false,
-      featureTapsTriggersMapClick: false,
+      // Flutter markers are hit-tested from the map click callback. Native
+      // basemap features may sit underneath them, so their taps must also
+      // reach that callback.
+      featureTapsTriggersMapClick: true,
       trackCameraPosition: true,
       onMapCreated: (controller) {
         _mapController = controller;

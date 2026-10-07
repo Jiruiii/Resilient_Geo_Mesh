@@ -1,5 +1,7 @@
 # 醫療院所定位補齊與 App 離線內建實作計畫
 
+> **狀態更新（2026-10-07）：** 線上 Server 發布規則已由「全數定位才發布」改為安全 partial 發布，依據 [醫療院所部分定位資料發布規格](../specs/2026-10-07-medical-partial-release-design.md) 與[線上發布實作計畫](2026-10-07-medical-partial-release-implementation.md)。舊計畫 Task 4 的 `unresolved_count=0` 全數定位 gate 不再適用於 Server 線上發布；本次不包含 Task 5–8 的 Android/Web 內建離線基線工作。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax.
 
 **Goal:** 將 2026-10-04 清單中 23,659 筆未定位院所用可核實座標補齊，並讓新安裝的 Android App 離線即可顯示完整醫療圖層；Server 後續提供已簽章更新，Web 與 Flutter Android 使用相同資料版本。

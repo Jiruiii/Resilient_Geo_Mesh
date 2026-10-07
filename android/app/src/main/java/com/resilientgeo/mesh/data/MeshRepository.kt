@@ -101,23 +101,7 @@ class MeshRepository(
 
     private fun loadStaticLayer(layerId: String, serverBaseUrl: String? = null): List<Map<String, Any?>> {
         val bundleCache = StaticLayerBundleCache(File(appContext.filesDir, "static-layer-bundles"))
-        val downloaded = serverBaseUrl
-            ?.takeIf { it.isNotBlank() && layerId in SERVER_STATIC_LAYER_IDS }
-            ?.let { base ->
-                try {
-                    fetchStaticLayerBundle(base, layerId)
-                } catch (error: Exception) {
-                    if (error is java.util.concurrent.CancellationException) throw error
-                    android.util.Log.w("MeshRepository", "Static layer $layerId download failed; checking verified cache", error)
-                    null
-                }
-            }
-        val cached = bundleCache.read(layerId)
-        val candidates = buildList {
-            downloaded?.let { add(it to true) }
-            cached?.let { add(it to false) }
-        }
-        for ((bundle, isDownloaded) in candidates) {
+        fun verifiedMessages(bundle: StaticLayerBundleCache.Bundle, isDownloaded: Boolean): List<Map<String, Any?>>? {
             try {
                 val manifest = JSONObject(bundle.manifest)
                 if (isDownloaded) {
@@ -128,7 +112,7 @@ class MeshRepository(
                 val cacheKey = VerifiedLayerCache.key(trustStoreText, bundle.manifest, bundle.chunks)
                 memoizedLayers[layerId]?.takeIf { it.first == cacheKey }?.let { return it.second }
 
-                val messages = if (layerId == MEDICAL_DIRECTORY_LAYER_ID) {
+                val messages = if (layerId == MEDICAL_DIRECTORY_LAYER_ID || layerId == "taiwan-medical") {
                     if (verifiedLayerCache.matchesVerified(layerId, cacheKey)) {
                         staticMessagesFromChunks(bundle.chunks)
                     } else {
@@ -173,9 +157,53 @@ class MeshRepository(
                 return messages
             } catch (error: Exception) {
                 if (error is java.util.concurrent.CancellationException) throw error
-                android.util.Log.w("MeshRepository", "Static layer $layerId candidate rejected; trying verified cache", error)
+                android.util.Log.w("MeshRepository", "Static layer $layerId candidate rejected", error)
+                return null
             }
         }
+
+        val cachedManifest = bundleCache.readManifest(layerId)
+        val remoteManifest = serverBaseUrl
+            ?.takeIf { it.isNotBlank() && layerId in SERVER_STATIC_LAYER_IDS }
+            ?.let { base ->
+                try {
+                    val uri = com.resilientgeo.mesh.online.GovernmentFeedSync.validateBase(
+                        base,
+                        appContext.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0,
+                    )
+                    downloadStaticJson(
+                        uri.resolve("v1/layers/$layerId/manifest.json").toString(),
+                        connectTimeoutMs = 3_000,
+                        readTimeoutMs = 3_000,
+                    ).also {
+                        require(JSONObject(it).optString("layer_id") == layerId) { "static layer manifest identity mismatch" }
+                    }
+                } catch (error: Exception) {
+                    if (error is java.util.concurrent.CancellationException) throw error
+                    android.util.Log.w("MeshRepository", "Static layer $layerId manifest unavailable; using cache", error)
+                    null
+                }
+            }
+        val sameRelease = remoteManifest == null || cachedManifest != null && runCatching {
+            JSONObject(remoteManifest).getString("manifest_hash") == JSONObject(cachedManifest).getString("manifest_hash")
+        }.getOrDefault(false)
+
+        fun cachedMessages(): List<Map<String, Any?>>? =
+            bundleCache.read(layerId)?.let { verifiedMessages(it, false) }
+
+        // An unchanged or unreachable release needs only the already verified
+        // private bundle. Never load a duplicate nationwide chunk set first.
+        if (sameRelease) cachedMessages()?.let { return it }
+        if (remoteManifest != null) {
+            try {
+                val downloaded = fetchStaticLayerBundle(serverBaseUrl!!, layerId, remoteManifest)
+                verifiedMessages(downloaded, true)?.let { return it }
+            } catch (error: Exception) {
+                if (error is java.util.concurrent.CancellationException) throw error
+                android.util.Log.w("MeshRepository", "Static layer $layerId download failed; using cache", error)
+            }
+        }
+        if (!sameRelease) cachedMessages()?.let { return it }
         return emptyList()
     }
 
@@ -190,12 +218,11 @@ class MeshRepository(
         return output
     }
 
-    private fun fetchStaticLayerBundle(baseUrl: String, layerId: String): StaticLayerBundleCache.Bundle {
+    private fun fetchStaticLayerBundle(baseUrl: String, layerId: String, manifestText: String): StaticLayerBundleCache.Bundle {
         val allowLocal = appContext.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0
         val base = com.resilientgeo.mesh.online.GovernmentFeedSync.validateBase(baseUrl, allowLocal)
         require(layerId in SERVER_STATIC_LAYER_IDS) { "static layer is not available from this server" }
         val route = "v1/layers/$layerId/"
-        val manifestText = downloadStaticJson(base.resolve("${route}manifest.json").toString())
         val manifest = JSONObject(manifestText)
         require(manifest.optString("layer_id") == layerId) { "static layer manifest identity mismatch" }
         val entries = manifest.getJSONArray("chunks")
@@ -209,10 +236,14 @@ class MeshRepository(
         return StaticLayerBundleCache.Bundle(manifestText, chunks)
     }
 
-    private fun downloadStaticJson(url: String): String {
+    private fun downloadStaticJson(
+        url: String,
+        connectTimeoutMs: Int = 15_000,
+        readTimeoutMs: Int = 30_000,
+    ): String {
         val connection = java.net.URI(url).toURL().openConnection() as java.net.HttpURLConnection
-        connection.connectTimeout = 15_000
-        connection.readTimeout = 30_000
+        connection.connectTimeout = connectTimeoutMs
+        connection.readTimeout = readTimeoutMs
         connection.instanceFollowRedirects = false
         connection.setRequestProperty("Accept", "application/json")
         connection.setRequestProperty("Cache-Control", "no-cache")

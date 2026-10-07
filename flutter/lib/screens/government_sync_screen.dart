@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../data/map_bridge.dart';
 
@@ -53,7 +54,7 @@ class _GovernmentSyncScreenState extends State<GovernmentSyncScreen> {
       if (sync) status = await widget.bridge.syncGovernmentNow();
       if (mounted) setState(() => _status = status);
     } catch (_) {
-      if (mounted) setState(() => _error = '請確認更新網址是有效的 HTTPS 網址');
+      if (mounted) setState(() => _error = '無法儲存或更新，請確認網址及更新服務狀態');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -66,9 +67,7 @@ class _GovernmentSyncScreenState extends State<GovernmentSyncScreen> {
     super.dispose();
   }
 
-  static const names = <String, String>{
-    'ncdr': 'NCDR 災害警報',
-  };
+  static const names = <String, String>{'ncdr': 'NCDR 災害警報'};
   String _time(Object? value) {
     final time = DateTime.tryParse(value?.toString() ?? '')?.toLocal();
     if (time == null) return '尚未更新';
@@ -84,7 +83,7 @@ class _GovernmentSyncScreenState extends State<GovernmentSyncScreen> {
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
-          const Text('有網路時下載已簽章的政府資料。下載後可離線使用，並透過附近手機繼續轉傳。'),
+          const Text('此網址提供告警、醫療院所、避難所及門牌包。已驗證資料會儲存在本機，離線時繼續使用。'),
           const SizedBox(height: 16),
           TextField(
             controller: _url,
@@ -92,10 +91,15 @@ class _GovernmentSyncScreenState extends State<GovernmentSyncScreen> {
             keyboardType: TextInputType.url,
             autocorrect: false,
             onChanged: (_) => setState(() {}),
-            decoration: const InputDecoration(
+            decoration: InputDecoration(
               labelText: '更新服務網址',
-              hintText: 'https://你的專案.pages.dev/',
-              border: OutlineInputBorder(),
+              hintText:
+                  !kIsWeb &&
+                          kDebugMode &&
+                          defaultTargetPlatform == TargetPlatform.android
+                      ? 'http://10.0.2.2:8787/（Android 模擬器）'
+                      : 'https://你的專案.pages.dev/',
+              border: const OutlineInputBorder(),
             ),
           ),
           SwitchListTile(
@@ -126,6 +130,12 @@ class _GovernmentSyncScreenState extends State<GovernmentSyncScreen> {
                     : () => _saveAndSync(sync: true),
             icon: const Icon(Icons.cloud_download_outlined),
             label: Text(working ? '更新中…' : '儲存並立即更新'),
+          ),
+          const Padding(
+            padding: EdgeInsets.only(top: 8),
+            child: Text(
+              '立即更新會同步告警；首次下載或更新院所、避難所資料，請完整關閉後重新開啟 App。切換網址後，原有離線告警仍保留至到期。',
+            ),
           ),
           if (working)
             const Padding(

@@ -97,7 +97,7 @@ class FlutterMapBridge(
                 else try {
                     governmentSync.configure(url, enabled, args?.get("area") as? String ?: "all")
                     result.success(governmentSync.message())
-                } catch (error: Exception) { result.error(INVALID_ARGUMENTS, "請輸入有效的 HTTPS 更新網址", null) }
+                } catch (error: Exception) { result.error(INVALID_ARGUMENTS, "請輸入有效的更新網址；模擬器 debug 版可用 http://10.0.2.2:8787/", null) }
             }
             "syncGovernmentNow" -> scope.launch { result.success(governmentSync.sync()) }
             METHOD_GET_STATIC_FEATURES -> getStaticFeatures(result)
@@ -172,6 +172,7 @@ class FlutterMapBridge(
             try {
                 result.success(MapBridgeProtocol.staticFeaturesResult(staticFeatures.await()))
             } catch (error: Throwable) {
+                android.util.Log.e("FlutterMapBridge", "Verified static layers unavailable", error)
                 result.error(STATIC_LAYER_INVALID, error.message, null)
             }
         }

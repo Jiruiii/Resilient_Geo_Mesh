@@ -16,6 +16,8 @@ Server 預設收集邊界如下：
 - 應變資源：全台靜態避難所位置與醫療院所，各自以獨立 layer 發布。避難所開設狀態不在目前收集範圍。
 - 暫停預設收集：TDX 道路事件與 OSM POI。兩者仍保留 adapter 與 registry，日後可明確指定 source 後單獨收集。
 
+靜態圖層 manifest 的有效期為發布後 30 天；collector 仍依來源排程每日檢查。`expires_at` 是簽章版本的新鮮度期限，不代表期限到達時刪除資料。可搭配 `/v1/metadata` 的 `expires_at` 與 `/v1/source-status` 的 `last_success_at` 判斷發布期限及來源最近成功時間；來源失敗時保留上一份可信 release。
+
 ## Initial release
 
 在部署中的同一個 checkout 執行以下命令。Web 靜態檔由 Caddy 從 `flutter/build/web` 掛載，不會包含在 Node Server image；每次 Web 程式更新都必須先重新產生該目錄，再重建／啟動 Compose。Caddy 另以唯讀方式提供簽章縣市門牌包；OSM 底圖隨 App 提供，不由 Server 發布。

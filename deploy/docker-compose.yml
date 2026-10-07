@@ -55,15 +55,19 @@ services:
     command: ["npm", "run", "server:start"]
     user: node
     restart: unless-stopped
+    ports:
+      - "127.0.0.1:8787:8787"
     environment:
       NODE_ENV: production
       PUBLIC_RELEASE_ROOT: /var/lib/resilientgeo-public
+      ADDRESS_PACKS_ROOT: /app/deploy/public/address-packs
       SIGNING_PUBLIC_KEY_PATH: /run/secrets/signing_public_key
       SIGNING_KEY_ID: ${SIGNING_KEY_ID:?set SIGNING_KEY_ID}
     secrets:
       - signing_public_key
     volumes:
       - public_release:/var/lib/resilientgeo-public:ro
+      - ../deploy/public/address-packs:/app/deploy/public/address-packs:ro
     read_only: true
     tmpfs:
       - /tmp

@@ -147,6 +147,42 @@ class MapLayers {
         )
         .toList(growable: false);
     final eventNow = (now ?? DateTime.now()).toUtc();
+    final visibleEvents =
+        showEvents
+            ? events
+                .where((event) => event.isShownAt(eventNow))
+                .where(isMapVisibleEvent)
+                .where((event) => meshEventFocusPoint(event) != null)
+                .toList(growable: false)
+            : const <MeshEvent>[];
+    final revealAllZoom = revealAllAtZoom ?? _defaultRevealAllZoom;
+    final displayPercentage = (zoomPercentage ?? 100).clamp(0, 100).toInt();
+    if (zoom != null &&
+        onClusterSelected != null &&
+        administrativeIndex != null &&
+        zoom < revealAllZoom &&
+        (zoomPercentage == null ||
+            displayPercentage < MapLibreMapConfig.revealAllPercentage)) {
+      final level = _administrativeLevelForZoom(
+        zoom,
+        zoomPercentage: zoomPercentage,
+      );
+      if (level != MapAdministrativeLevel.village &&
+          administrativeIndex.counties.isNotEmpty &&
+          administrativeIndex.subdivisions.isNotEmpty) {
+        return _administrativeSummaryMarkers(
+          visibleFacilities,
+          visibleEvents,
+          index: administrativeIndex,
+          level: level,
+          zoom: zoom,
+          zoomPercentage: displayPercentage,
+          revealAllAtZoom: revealAllZoom,
+          onClusterSelected: onClusterSelected,
+          currentLocation: currentLocation,
+        );
+      }
+    }
     final rawMarkers = <MapMarkerData>[
       ..._facilityMarkers(
         visibleFacilities,
@@ -154,21 +190,14 @@ class MapLayers {
         compactMarkers: compactMarkers,
         administrativeIndex: administrativeIndex,
       ),
-      if (showEvents)
-        ...events
-            .where((event) => event.isShownAt(eventNow))
-            .where(isMapVisibleEvent)
-            .where((event) => meshEventFocusPoint(event) != null)
-            .map(
-              (event) =>
-                  _eventMarker(event, onEventSelected, compact: compactMarkers),
-            ),
+      ...visibleEvents.map(
+        (event) =>
+            _eventMarker(event, onEventSelected, compact: compactMarkers),
+      ),
       if (currentLocation != null) _locationMarker(currentLocation),
     ];
     if (zoom == null || onClusterSelected == null) return rawMarkers;
-    final revealAllZoom = revealAllAtZoom ?? _defaultRevealAllZoom;
     if (zoom >= revealAllZoom) return rawMarkers;
-    final displayPercentage = (zoomPercentage ?? 100).clamp(0, 100).toInt();
     if (zoomPercentage != null &&
         displayPercentage >= MapLibreMapConfig.revealAllPercentage) {
       return rawMarkers;
@@ -223,30 +252,12 @@ class MapLayers {
         standalone.add(marker);
         continue;
       }
-      final areaHint = marker.administrativeAreaName;
-      final buckets = _areaBuckets[index] ??= {};
-      final pointBuckets = buckets.putIfAbsent(marker.point, () => {});
-      final bucketKey = '${level.name}:${areaHint ?? ''}';
-      if (!pointBuckets.containsKey(bucketKey)) {
-        final hinted =
-            areaHint == null
-                ? null
-                : index.findByName(
-                  level,
-                  areaHint,
-                  parent:
-                      level == MapAdministrativeLevel.subdivision
-                          ? index
-                              .nearest(
-                                marker.point,
-                                MapAdministrativeLevel.county,
-                              )
-                              ?.name
-                          : null,
-                );
-        pointBuckets[bucketKey] = hinted ?? index.areaFor(marker.point, level);
-      }
-      final area = pointBuckets[bucketKey];
+      final area = _areaForPoint(
+        marker.point,
+        index: index,
+        level: level,
+        hint: marker.administrativeAreaName,
+      );
       if (area == null) {
         unassigned.add(marker);
         continue;
@@ -296,7 +307,185 @@ class MapLayers {
         ),
       );
     }
-    final bubbles = output
+    return _mergeAdministrativeBubbles(
+      output,
+      level: level,
+      zoom: zoom,
+      zoomPercentage: zoomPercentage,
+      revealAllAtZoom: revealAllAtZoom,
+      countThreshold: countThreshold,
+      onClusterSelected: onClusterSelected,
+    );
+  }
+
+  /// Overview bubbles need counts and one representative position per unique
+  /// facility coordinate. Building a widget for every facility first makes a
+  /// nationwide zoom transition wait for tens of thousands of unused widgets.
+  static List<MapMarkerData> _administrativeSummaryMarkers(
+    List<StaticFeature> facilities,
+    List<MeshEvent> events, {
+    required MapAdministrativeIndex index,
+    required MapAdministrativeLevel level,
+    required double zoom,
+    required int zoomPercentage,
+    required double revealAllAtZoom,
+    required MapClusterSelection onClusterSelected,
+    GeoPoint? currentLocation,
+  }) {
+    final points = <GeoPoint, _FacilityPointSummary>{};
+    for (final facility in facilities) {
+      final geometry = facility.geometry;
+      if (geometry is! PointGeometry) continue;
+      final summary = points.putIfAbsent(
+        geometry.point,
+        () => _FacilityPointSummary(),
+      );
+      summary.itemCount += 1;
+      if (facility.kind == 'shelter') summary.shelterCount += 1;
+      if (facility.kind == 'medical') summary.medicalCount += 1;
+      final hint = _administrativeNameForFeature(facility, index);
+      if (hint != null) summary.hints.add(hint);
+    }
+
+    final groups = <String, _AdministrativeSummaryGroup>{};
+    void addPoint(
+      GeoPoint point, {
+      String? hint,
+      required int itemCount,
+      int shelterCount = 0,
+      int medicalCount = 0,
+      int eventCount = 0,
+      bool hasCriticalEvent = false,
+    }) {
+      final area = _areaForPoint(point, index: index, level: level, hint: hint);
+      if (area == null) return;
+      final group = groups.putIfAbsent(
+        area.key,
+        () => _AdministrativeSummaryGroup(area),
+      );
+      group.add(
+        point,
+        itemCount: itemCount,
+        shelterCount: shelterCount,
+        medicalCount: medicalCount,
+        eventCount: eventCount,
+        hasCriticalEvent: hasCriticalEvent,
+      );
+    }
+
+    for (final entry in points.entries) {
+      final point = entry.key;
+      final summary = entry.value;
+      addPoint(
+        point,
+        hint: summary.hints.length == 1 ? summary.hints.single : null,
+        itemCount: summary.itemCount,
+        shelterCount: summary.shelterCount,
+        medicalCount: summary.medicalCount,
+      );
+    }
+    for (final event in events) {
+      final point = meshEventFocusPoint(event);
+      if (point == null) continue;
+      addPoint(
+        point,
+        itemCount: 1,
+        eventCount: 1,
+        hasCriticalEvent:
+            event.severity == 'CRITICAL' || event.severity == 'HIGH',
+      );
+    }
+
+    final countThreshold = switch (level) {
+      MapAdministrativeLevel.county => _countyCountPercentage,
+      MapAdministrativeLevel.subdivision => _subdivisionCountPercentage,
+      MapAdministrativeLevel.village => 100,
+    };
+    final bubbles = <MapMarkerData>[
+      if (currentLocation != null) _locationMarker(currentLocation),
+      for (final group in groups.values)
+        _clusterMarker(
+          MapMarkerCluster(
+            members: <MapMarkerData>[
+              MapMarkerData(
+                key: ValueKey<String>(
+                  'administrative-summary-${group.area.key}',
+                ),
+                point: group.pointForLevel(level),
+                width: 0,
+                height: 0,
+                child: const SizedBox.shrink(),
+                onTap: () {},
+                kind: MapMarkerKind.facility,
+                itemCount: group.itemCount,
+                shelterCount: group.shelterCount,
+                medicalCount: group.medicalCount,
+                eventCount: group.eventCount,
+                hasCriticalEvent: group.hasCriticalEvent,
+              ),
+            ],
+            point: group.pointForLevel(level),
+          ),
+          onClusterSelected: onClusterSelected,
+          zoomPercentage: zoomPercentage,
+          targetZoom: _nextAdministrativeZoom(
+            level,
+            revealAllAtZoom: revealAllAtZoom,
+          ),
+          areaName: group.area.displayName,
+          countThreshold: countThreshold,
+          forceBubble: true,
+        ),
+    ];
+    return _mergeAdministrativeBubbles(
+      bubbles,
+      level: level,
+      zoom: zoom,
+      zoomPercentage: zoomPercentage,
+      revealAllAtZoom: revealAllAtZoom,
+      countThreshold: countThreshold,
+      onClusterSelected: onClusterSelected,
+    );
+  }
+
+  static MapAdministrativeArea? _areaForPoint(
+    GeoPoint point, {
+    required MapAdministrativeIndex index,
+    required MapAdministrativeLevel level,
+    String? hint,
+  }) {
+    final buckets = _areaBuckets[index] ??= {};
+    final pointBuckets = buckets.putIfAbsent(point, () => {});
+    final bucketKey = '${level.name}:${hint ?? ''}';
+    if (!pointBuckets.containsKey(bucketKey)) {
+      final hinted =
+          hint == null
+              ? null
+              : index.findByName(
+                level,
+                hint,
+                parent:
+                    level == MapAdministrativeLevel.subdivision
+                        ? index
+                            .nearest(point, MapAdministrativeLevel.county)
+                            ?.name
+                        : null,
+              );
+      pointBuckets[bucketKey] = hinted ?? index.areaFor(point, level);
+    }
+    return pointBuckets[bucketKey];
+  }
+
+  static List<MapMarkerData> _mergeAdministrativeBubbles(
+    List<MapMarkerData> markers, {
+    required MapAdministrativeLevel level,
+    required double zoom,
+    required int zoomPercentage,
+    required double revealAllAtZoom,
+    required int countThreshold,
+    required MapClusterSelection onClusterSelected,
+  }) {
+    final bubbles = markers
         .where((marker) => marker.kind == MapMarkerKind.cluster)
         .toList(growable: false);
     final mergedBubbles = clusterMapMarkers(
@@ -318,7 +507,7 @@ class MapLayers {
       );
     });
     return <MapMarkerData>[
-      ...output.where((marker) => marker.kind != MapMarkerKind.cluster),
+      ...markers.where((marker) => marker.kind != MapMarkerKind.cluster),
       ...mergedBubbles,
     ];
   }
@@ -571,6 +760,53 @@ class _AdministrativeMarkerGroup {
 
   final MapAdministrativeArea area;
   final List<MapMarkerData> members = <MapMarkerData>[];
+}
+
+class _FacilityPointSummary {
+  int itemCount = 0;
+  int shelterCount = 0;
+  int medicalCount = 0;
+  final Set<String> hints = <String>{};
+}
+
+class _AdministrativeSummaryGroup {
+  _AdministrativeSummaryGroup(this.area);
+
+  final MapAdministrativeArea area;
+  int itemCount = 0;
+  int shelterCount = 0;
+  int medicalCount = 0;
+  int eventCount = 0;
+  bool hasCriticalEvent = false;
+  int pointCount = 0;
+  double longitudeSum = 0;
+  double latitudeSum = 0;
+
+  void add(
+    GeoPoint point, {
+    required int itemCount,
+    required int shelterCount,
+    required int medicalCount,
+    required int eventCount,
+    required bool hasCriticalEvent,
+  }) {
+    this.itemCount += itemCount;
+    this.shelterCount += shelterCount;
+    this.medicalCount += medicalCount;
+    this.eventCount += eventCount;
+    this.hasCriticalEvent |= hasCriticalEvent;
+    pointCount += 1;
+    longitudeSum += point.longitude;
+    latitudeSum += point.latitude;
+  }
+
+  GeoPoint pointForLevel(MapAdministrativeLevel level) =>
+      level == MapAdministrativeLevel.county
+          ? area.point
+          : GeoPoint(
+            longitude: longitudeSum / pointCount,
+            latitude: latitudeSum / pointCount,
+          );
 }
 
 List<MapMarkerData> _clusterMarkers(

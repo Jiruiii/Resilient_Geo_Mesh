@@ -58,7 +58,7 @@ export function buildMedicalCountyCoverage({ features = [], unresolved = [], exc
   const counties = [...counts.values()].map((row) => ({
     ...row,
     status: row.master_count === row.located_count + row.unlocated_count + row.excluded_count
-      && row.unlocated_count === 0 ? 'complete' : 'partial',
+      && row.unlocated_count === 0 && row.excluded_count === 0 ? 'complete' : 'partial',
   }));
   return {
     status: counties.every((row) => row.status === 'complete') && unassigned === 0 ? 'complete' : 'partial',

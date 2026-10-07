@@ -29,6 +29,7 @@ import {
 import {
   mergeMedicalCoordinates,
   normalizeMedicalFacilitiesReport,
+  partitionMedicalIdentityConflicts,
   reconcileEmergencyMedicalFacilities,
 } from '../sources/medical.mjs';
 
@@ -482,6 +483,24 @@ test('medical normalization reports unresolved nationwide rows instead of invent
   assert.equal(report.features[0].properties.coordinate_source, 'mohw-medical-master');
   assert.equal(report.features[0].properties.coordinate_source_version, report.features[0].source_version);
   assert.equal(report.features[0].properties.coordinate_match_method, 'source_coordinates');
+});
+
+test('keeps a nearby-address candidate out of the medical point layer', () => {
+  const feature = {
+    feature_id: 'medical:H001',
+    properties: {
+      coordinate_match_method: 'nearby_address_candidate',
+      source_record: { 機構代碼: 'H001', 機構名稱: '候選診所', 地址: '臺北市內湖區內湖路1號' },
+    },
+  };
+
+  const result = partitionMedicalIdentityConflicts({ features: [feature] });
+
+  assert.deepEqual(result.features, []);
+  assert.equal(result.unresolved.length, 1);
+  assert.equal(result.unresolved[0].coordinate_failure_reason, 'unverified_coordinate_match');
+  assert.equal(result.identity_conflict_count, 0);
+  assert.equal(result.unresolved_reason_counts.unverified_coordinate_match, 1);
 });
 
 test('medical coordinate supplement resolves only an unambiguous official coordinate match', () => {

@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, rm, stat } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rename, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 
@@ -16,6 +16,9 @@ import { AUXILIARY_LAYER_IDS, SOURCE_REGISTRY } from '../source-registry.mjs';
 import { isPublishableResult } from '../collector/medical-release-policy.mjs';
 
 const MAX_PUBLIC_FILE_BYTES = 8 * 1024 * 1024;
+const MEDICAL_LAYER_IDS = new Set(['taiwan-medical', 'taiwan-medical-directory']);
+const MAX_MEDICAL_LAYER_CHUNKS = 512;
+const MAX_MEDICAL_CHUNK_TARGET_BYTES = 2 * 1024 * 1024;
 export const FEED_REFRESH_BEFORE_EXPIRY_MS = 60 * 60 * 1000;
 const STATIC_REFRESH_BEFORE_EXPIRY_MS = 60 * 60 * 1000;
 const DYNAMIC_SOURCE_RE = /^[a-z][a-z0-9-]+$/u;
@@ -163,17 +166,42 @@ function medicalCoverage(result, previous) {
     'candidate_count',
     'matched_count',
     'unresolved_count',
+    'excluded_count',
+    'identity_conflict_count',
+    'duplicate_institution_code_group_count',
+    'duplicate_institution_code_affected_row_count',
+    'duplicate_institution_code_extra_row_count',
+    'duplicate_point_id_group_count',
+    'duplicate_point_id_affected_row_count',
+    'duplicate_point_id_extra_row_count',
     'rejected_coordinate_count',
   ];
   const output = {};
   for (const field of integerFields) {
     if (Number.isSafeInteger(report[field]) && report[field] >= 0) output[field] = report[field];
   }
+  const layerSourceVersion = report.layer_source_version
+    ?? result?.features?.[0]?.source_version
+    ?? previous?.layer_source_version;
+  if (typeof report.roster_complete === 'boolean') output.roster_complete = report.roster_complete;
+  if (typeof layerSourceVersion === 'string' && layerSourceVersion.length > 0) {
+    output.layer_source_version = layerSourceVersion;
+  }
   if (report.unresolved_reason_counts && typeof report.unresolved_reason_counts === 'object') {
     output.unresolved_reason_counts = Object.fromEntries(
-      ['no_coordinate_candidate', 'name_address_mismatch', 'multiple_candidates', 'source_missing']
+      [
+        'no_coordinate_candidate', 'name_address_mismatch', 'multiple_candidates', 'source_missing',
+        'duplicate_institution_code', 'duplicate_point_id', 'missing_institution_code', 'unverified_coordinate_match',
+      ]
         .map((reason) => [reason, report.unresolved_reason_counts[reason]])
         .filter(([, count]) => Number.isSafeInteger(count) && count >= 0),
+    );
+  }
+  if (report.excluded_reason_counts && typeof report.excluded_reason_counts === 'object') {
+    output.excluded_reason_counts = Object.fromEntries(
+      Object.entries(report.excluded_reason_counts)
+        .filter(([reason, count]) => /^[a-z][a-z0-9_]*$/u.test(reason)
+          && Number.isSafeInteger(count) && count >= 0),
     );
   }
   const countyCoverage = report.county_coverage;
@@ -242,6 +270,23 @@ async function writeCheckedJson(filePath, value, maxBytes = MAX_PUBLIC_FILE_BYTE
 
 async function readReleasePointer(root, releasePointerStore) {
   return createReleaseStore({ releaseRoot: root, releasePointerStore }).readCurrentPointer();
+}
+
+async function nextUnusedLayerVersion(root, layerId, currentVersion) {
+  const versionsRoot = path.join(root, 'releases', 'layers', layerId);
+  let entries;
+  try {
+    entries = await readdir(versionsRoot, { withFileTypes: true });
+  } catch (error) {
+    if (error.code === 'ENOENT') return currentVersion + 1;
+    throw error;
+  }
+  const highestExistingVersion = entries
+    .filter((entry) => entry.isDirectory() && /^[1-9]\d*$/u.test(entry.name))
+    .map((entry) => Number(entry.name))
+    .filter(Number.isSafeInteger)
+    .reduce((highest, version) => Math.max(highest, version), currentVersion);
+  return highestExistingVersion + 1;
 }
 
 export async function commitReleasePointer({ releaseRoot, revision, v2ManifestPath,
@@ -423,7 +468,7 @@ async function publishGovernmentFiles({ root, feed, files, sourceStatuses, publi
     }));
     await writeCheckedJson(path.join(stagingRoot, 'releases', String(feed.revision), 'feed.json'), feed);
     await writeCheckedJson(path.join(stagingRoot, 'current', 'feed.json'), feed);
-    await writeCheckedJson(path.join(stagingRoot, 'current', 'source-status.json'), sourceStatuses);
+    if (sourceStatuses) await writeCheckedJson(path.join(stagingRoot, 'current', 'source-status.json'), sourceStatuses);
     await verifyGovernmentOutput(feed, files, publicKey, signingKeyId, stagingRoot);
 
     const immutableRoot = path.join(root, 'releases', String(feed.revision));
@@ -434,7 +479,7 @@ async function publishGovernmentFiles({ root, feed, files, sourceStatuses, publi
       await rename(stagedImmutableRoot, immutableRoot);
     }
     await writeCheckedJson(path.join(root, 'current', 'feed.json'), feed);
-    await writeCheckedJson(path.join(root, 'current', 'source-status.json'), sourceStatuses);
+    if (sourceStatuses) await writeCheckedJson(path.join(root, 'current', 'source-status.json'), sourceStatuses);
   } finally {
     await rm(stagingRoot, { recursive: true, force: true });
   }
@@ -473,7 +518,7 @@ async function publishStaticFiles({ root, layerId, bundle, publicKey, signingKey
 }
 
 export async function publishGovernmentRelease({ releaseRoot, previousRoot = releaseRoot, results,
-  signingKey, now = new Date(), releasePointerStore, deferPointer = false } = {}) {
+  signingKey, now = new Date(), releasePointerStore, deferPointer = false, deferSourceStatus = false } = {}) {
   const root = absoluteRoot(releaseRoot, 'releaseRoot');
   const previousBase = absoluteRoot(previousRoot, 'previousRoot');
   const { privateKey, publicKey, signingKeyId } = keyParts(signingKey);
@@ -532,8 +577,10 @@ export async function publishGovernmentRelease({ releaseRoot, previousRoot = rel
     v2ManifestPath = v2.manifestPath;
   }
   if (unchanged) {
-    const sourceStatuses = buildPublicSourceStatuses(results, previousStatuses, previous.feed, currentTime);
-    await writeCheckedJson(path.join(root, 'current', 'source-status.json'), sourceStatuses);
+    if (!deferSourceStatus) {
+      const sourceStatuses = buildPublicSourceStatuses(results, previousStatuses, previous.feed, currentTime);
+      await writeCheckedJson(path.join(root, 'current', 'source-status.json'), sourceStatuses);
+    }
     if (!deferPointer) {
       await commitReleasePointer({
         releaseRoot: root,
@@ -555,7 +602,9 @@ export async function publishGovernmentRelease({ releaseRoot, previousRoot = rel
     root,
     feed: output.feed,
     files: output.files,
-    sourceStatuses: buildPublicSourceStatuses(results, previousStatuses, output.feed, currentTime),
+    sourceStatuses: deferSourceStatus
+      ? null
+      : buildPublicSourceStatuses(results, previousStatuses, output.feed, currentTime),
     publicKey,
     signingKeyId,
   });
@@ -615,7 +664,12 @@ export async function publishStaticLayer({ layerId, features, releaseRoot, signi
     if (error.code !== 'ENOENT') throw error;
   }
   const safeFeatures = features.map(stripSourceRecords);
+  const medicalLayer = MEDICAL_LAYER_IDS.has(layerId);
+  const previousWithinClientLimit = !medicalLayer
+    || (Array.isArray(previous?.manifest?.chunks)
+      && previous.manifest.chunks.length <= MAX_MEDICAL_LAYER_CHUNKS);
   if (previous
+    && previousWithinClientLimit
     && semanticFeaturesHash(previous.chunks.flatMap((chunk) => chunk.features ?? []))
       === semanticFeaturesHash(safeFeatures)
     && Date.parse(previous.manifest.expires_at) - currentTime.getTime() > STATIC_REFRESH_BEFORE_EXPIRY_MS) {
@@ -634,23 +688,38 @@ export async function publishStaticLayer({ layerId, features, releaseRoot, signi
       unchanged: true,
     };
   }
-  const datasetVersion = (previous?.manifest?.dataset_version ?? 0) + 1;
-  const bundle = buildSignedLayer(safeFeatures, {
+  const datasetVersion = await nextUnusedLayerVersion(
+    root,
     layerId,
-    privateKey,
-    signingKeyId,
-    datasetId,
-    namespace,
-    source,
-    sourceVersion,
-    datasetVersion,
-    expiresAt,
-    now: currentTime,
-    priority,
-    // Public layer packages are downloaded over mobile networks; keep chunks
-    // comfortably below response limits without producing thousands of tiny requests.
-    targetSizeBytes: targetSizeBytes ?? 256 * 1024,
-  });
+    previous?.manifest?.dataset_version ?? 0,
+  );
+  let chunkTargetBytes = targetSizeBytes ?? 256 * 1024;
+  let bundle;
+  while (true) {
+    bundle = buildSignedLayer(safeFeatures, {
+      layerId,
+      privateKey,
+      signingKeyId,
+      datasetId,
+      namespace,
+      source,
+      sourceVersion,
+      datasetVersion,
+      expiresAt,
+      now: currentTime,
+      priority,
+      // Start with 256 KiB; only increase medical chunk size if needed to
+      // remain below the fixed 512-chunk limit enforced by Web and Android.
+      targetSizeBytes: chunkTargetBytes,
+    });
+    if (!medicalLayer || bundle.chunks.length <= MAX_MEDICAL_LAYER_CHUNKS) break;
+    if (chunkTargetBytes >= MAX_MEDICAL_CHUNK_TARGET_BYTES) {
+      const error = new Error(`medical layer exceeds the ${MAX_MEDICAL_LAYER_CHUNKS}-chunk client limit`);
+      error.code = 'MEDICAL_LAYER_CHUNK_LIMIT';
+      throw error;
+    }
+    chunkTargetBytes = Math.min(chunkTargetBytes * 2, MAX_MEDICAL_CHUNK_TARGET_BYTES);
+  }
   await publishStaticFiles({
     root,
     layerId,

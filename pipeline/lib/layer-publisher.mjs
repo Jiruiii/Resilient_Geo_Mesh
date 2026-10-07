@@ -1,7 +1,7 @@
 import { buildFeatureBundle } from './feature-bundle.mjs';
 import { signFeature } from './feature-contract.mjs';
 
-const DAY_MS = 24 * 60 * 60 * 1000;
+const STATIC_LAYER_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 function requireFeatureList(features) {
   if (!Array.isArray(features) || features.length === 0) {
@@ -59,7 +59,7 @@ export function buildSignedLayer(features, {
     return signFeature(unsigned, privateKey);
   });
   const created = createdAt ?? now.toISOString();
-  const expires = expiresAt ?? new Date(new Date(created).getTime() + DAY_MS).toISOString();
+  const expires = expiresAt ?? new Date(new Date(created).getTime() + STATIC_LAYER_TTL_MS).toISOString();
   return buildFeatureBundle(signedFeatures, {
     datasetId: datasetId ?? first.dataset_id,
     layerId,

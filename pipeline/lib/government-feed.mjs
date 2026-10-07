@@ -23,12 +23,48 @@ export function verifyFeed(feed, publicKey, { signingKeyId = FEED_KEY_ID } = {})
   return feed;
 }
 
+function migratePreviousFeedKeyId(previous, previousEvents, publicKey, signingKeyId) {
+  const previousKeyId = previous.signing_key_id;
+  if (previousKeyId === signingKeyId) return previousEvents;
+
+  // A renamed key ID is accepted only when the existing feed and every prior
+  // bundle verify with the currently configured public key. Rebuild those
+  // bundles below so their manifests and chunks carry the current key ID.
+  verifyFeed(previous, publicKey, { signingKeyId: previousKeyId });
+  if (!Array.isArray(previous.datasets) || !(previousEvents.chunks instanceof Map)) {
+    throw new Error('Invalid signed government feed');
+  }
+  for (const dataset of previous.datasets) {
+    const chunks = dataset.chunk_paths?.map((name) => previousEvents.chunks.get(name));
+    if (!Array.isArray(chunks) || chunks.some((chunk) => !chunk)) {
+      throw new Error('Invalid signed government feed');
+    }
+    const result = verifyBundle({ manifest: dataset.manifest, chunks }, publicKey, {
+      trustedKeyIds: [previousKeyId],
+    });
+    if (!result.valid) throw new Error('Invalid signed government feed');
+  }
+
+  const migrated = { ...previousEvents };
+  for (const [sourceId, events] of Object.entries(previousEvents)) {
+    if (sourceId === 'chunks' || !Array.isArray(events)) continue;
+    migrated[sourceId] = events.map((event) => event.signing_key_id === previousKeyId
+      ? { ...event, signing_key_id: signingKeyId }
+      : event);
+  }
+  Object.defineProperty(migrated, 'chunks', { value: previousEvents.chunks });
+  return migrated;
+}
+
 // Versions survive restarts in the signed public ledger. Missing records are not
 // interpreted as "reopened": retain the last signed event until its own TTL.
 // Never publish a raw response, request URL, credential or exception message.
 export function buildGovernmentFeed({ previous, previousEvents = {}, results, privateKey, publicKey,
   signingKeyId = FEED_KEY_ID, now = new Date() }) {
-  if (previous) verifyFeed(previous, publicKey, { signingKeyId });
+  if (previous) {
+    verifyFeed(previous, publicKey, { signingKeyId: previous.signing_key_id });
+    previousEvents = migratePreviousFeedKeyId(previous, previousEvents, publicKey, signingKeyId);
+  }
   const revision = (previous?.revision ?? 0) + 1;
   const createdAt = now.toISOString();
   const ledger = structuredClone(previous?.event_versions ?? {});
@@ -93,7 +129,8 @@ export function buildGovernmentFeed({ previous, previousEvents = {}, results, pr
       checked_at: createdAt, unresolved_count: result.unresolvedCount ?? 0 });
     if (!events.length) continue;
     const priorDataset = previous?.datasets.find(dataset => dataset.source_id === id);
-    if (priorDataset && sha256Canonical(events) === sha256Canonical(previousEvents[id] ?? [])) {
+    if (priorDataset?.manifest?.signing_key_id === signingKeyId
+      && sha256Canonical(events) === sha256Canonical(previousEvents[id] ?? [])) {
       datasets.push(priorDataset);
       for (const name of priorDataset.chunk_paths) {
         const chunk = previousEvents.chunks?.get(name);

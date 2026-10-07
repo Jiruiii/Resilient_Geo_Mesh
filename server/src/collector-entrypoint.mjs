@@ -71,16 +71,21 @@ function createPublisher({ config, signingKey, getNow }) {
   const releasePointerStore = config.releasePointerStore;
   return async (results, { assertLockHeld } = {}) => {
     const now = getNow();
-    const government = await publishGovernmentRelease({
-      releaseRoot: config.publicReleaseRoot,
-      previousRoot: config.publicReleaseRoot,
-      results,
-      signingKey,
-      now,
-      releasePointerStore,
-      deferPointer: true,
-    });
+    const medicalResult = results.find((result) => result.sourceId === 'taiwan-medical');
+    const medicalReport = medicalResult?.normalized?.coordinate_report ?? medicalResult?.coordinateReport;
+    const directoryFeatures = medicalResult?.normalized?.medical_directory_features ?? [];
+    const expectedLayerSourceVersion = medicalReport?.layer_source_version
+      ?? medicalResult?.features?.[0]?.source_version;
+    if (medicalResult && (typeof expectedLayerSourceVersion !== 'string'
+      || medicalResult.features?.[0]?.source_version !== expectedLayerSourceVersion
+      || directoryFeatures.length === 0
+      || directoryFeatures.some((feature) => feature?.source_version !== expectedLayerSourceVersion))) {
+      const error = new Error('medical point and directory features must share a source version');
+      error.code = 'MEDICAL_LAYER_VERSION_MISMATCH';
+      throw error;
+    }
     const layerVersions = {};
+    const layerManifests = {};
     for (const result of results) {
       if (result.kind !== 'static') continue;
       if ((result.features ?? []).length > 0) {
@@ -94,6 +99,7 @@ function createPublisher({ config, signingKey, getNow }) {
           deferPointer: true,
         });
         layerVersions[result.sourceId] = layer.datasetVersion;
+        layerManifests[result.sourceId] = layer.manifest;
       }
       if (result.sourceId === 'taiwan-medical' && (result.emergencyMedicalFeatures ?? []).length > 0) {
         const layer = await publishStaticLayer({
@@ -119,14 +125,42 @@ function createPublisher({ config, signingKey, getNow }) {
           deferPointer: true,
         });
         layerVersions['taiwan-medical-directory'] = layer.datasetVersion;
+        layerManifests['taiwan-medical-directory'] = layer.manifest;
       }
     }
+    if (medicalResult) {
+      const medicalManifest = layerManifests['taiwan-medical'];
+      const directoryManifest = layerManifests['taiwan-medical-directory'];
+      if (!medicalManifest || !directoryManifest
+        || medicalManifest.source_version !== directoryManifest.source_version
+        || medicalManifest.source_version !== expectedLayerSourceVersion) {
+        const error = new Error('medical point and directory layers must share a source version');
+        error.code = 'MEDICAL_LAYER_VERSION_MISMATCH';
+        throw error;
+      }
+    }
+    const government = await publishGovernmentRelease({
+      releaseRoot: config.publicReleaseRoot,
+      previousRoot: config.publicReleaseRoot,
+      results,
+      signingKey,
+      now,
+      releasePointerStore,
+      deferPointer: true,
+      deferSourceStatus: true,
+    });
     await assertLockHeld?.();
     await commitReleasePointer({
       releaseRoot: config.publicReleaseRoot,
       revision: government.revision,
       v2ManifestPath: government.v2ManifestPath,
       layerVersions,
+      releasePointerStore,
+    });
+    await publishSourceStatus({
+      releaseRoot: config.publicReleaseRoot,
+      results,
+      now,
       releasePointerStore,
     });
     return government;

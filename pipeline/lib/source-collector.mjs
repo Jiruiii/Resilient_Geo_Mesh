@@ -24,6 +24,7 @@ import {
   fetchMedicalFacilities,
   mergeMedicalCoordinates,
   normalizeMedicalFacilitiesReport,
+  partitionMedicalIdentityConflicts,
   reconcileEmergencyMedicalFacilities,
 } from '../sources/medical.mjs';
 import {
@@ -315,12 +316,17 @@ async function defaultAdapter({ definition, scope, config, now, previousSnapshot
       rawSnapshot,
       addressCoordinateFeatures,
     });
+    const partitioned = partitionMedicalIdentityConflicts({
+      features: enriched.features,
+      unresolved: enriched.unresolved,
+      excluded: report.excluded,
+    });
     const emergencyMedical = config.emergencyMedicalRoster && config.emergencyMedicalCrosswalk
       ? reconcileEmergencyMedicalFacilities({
         roster: config.emergencyMedicalRoster,
         crosswalk: config.emergencyMedicalCrosswalk,
-        medicalFeatures: enriched.features,
-        unresolvedMedical: enriched.unresolved,
+        medicalFeatures: partitioned.features,
+        unresolvedMedical: partitioned.unresolved,
         now,
       })
       : {
@@ -336,6 +342,10 @@ async function defaultAdapter({ definition, scope, config, now, previousSnapshot
       };
     const coordinateReport = {
       source_count: report.source_count,
+      roster_complete: rawSnapshot.payload?.partial !== true,
+      layer_source_version: partitioned.features[0]?.source_version
+        ?? rawSnapshot.response?.headers?.etag
+        ?? rawSnapshot.retrieved_at,
       source_ids: [...new Set(coordinateSourceIds)],
       query_count: coordinateResult.query_count,
       successful_query_count: coordinateResult.successful_query_count ?? coordinateResult.query_count,
@@ -343,14 +353,25 @@ async function defaultAdapter({ definition, scope, config, now, previousSnapshot
       failed_query_error_counts: coordinateResult.failed_query_error_counts ?? {},
       failed_fallback_source_count: coordinateResult.failed_fallback_source_count ?? 0,
       candidate_count: coordinateResult.features.length + addressCoordinateFeatures.length,
-      matched_count: enriched.features.length,
-      unresolved_count: enriched.unresolved.length,
+      matched_count: partitioned.features.length,
+      unresolved_count: partitioned.unresolved.length,
+      excluded_count: partitioned.excluded.length,
+      identity_conflict_count: partitioned.identity_conflict_count,
+      duplicate_institution_code_group_count: partitioned.duplicate_institution_code_group_count,
+      duplicate_institution_code_affected_row_count: partitioned.duplicate_institution_code_affected_row_count,
+      duplicate_institution_code_extra_row_count: partitioned.duplicate_institution_code_extra_row_count,
+      duplicate_point_id_group_count: partitioned.duplicate_point_id_group_count,
+      duplicate_point_id_affected_row_count: partitioned.duplicate_point_id_affected_row_count,
+      duplicate_point_id_extra_row_count: partitioned.duplicate_point_id_extra_row_count,
       rejected_coordinate_count: coordinateResult.rejected_coordinate_count,
-      unresolved_reason_counts: enriched.unresolved_reason_counts,
+      unresolved_reason_counts: partitioned.unresolved_reason_counts,
+      excluded_reason_counts: partitioned.excluded.length > 0
+        ? { outside_taiwan_boundary: partitioned.excluded.length }
+        : {},
       county_coverage: buildMedicalCountyCoverage({
-        features: enriched.features,
-        unresolved: enriched.unresolved,
-        excluded: report.excluded,
+        features: partitioned.features,
+        unresolved: partitioned.unresolved,
+        excluded: partitioned.excluded,
         options: scopeOptions(scope),
       }),
       emergency_hospital_count: emergencyMedical.report.hospital_count,
@@ -360,25 +381,23 @@ async function defaultAdapter({ definition, scope, config, now, previousSnapshot
       emergency_medical_coverage: emergencyMedical.report.coverage,
       emergency_unresolved_reason_counts: emergencyMedical.report.unresolved_reason_counts,
     };
-    if (enriched.features.length === 0) {
+    if (partitioned.features.length === 0) {
       const error = new Error('official medical coordinates produced an empty layer');
       error.code = 'MEDICAL_LAYER_EMPTY';
       error.coordinateReport = coordinateReport;
       throw error;
     }
     const output = staticNormalized(definition.sourceId, rawSnapshot, {
-      features: enriched.features,
+      features: partitioned.features,
       status_events: [],
-      unresolved_medical: enriched.unresolved,
-      unresolved_medical_count: enriched.unresolved.length,
-      excluded_medical: report.excluded,
+      unresolved_medical: partitioned.unresolved,
+      unresolved_medical_count: partitioned.unresolved.length,
+      excluded_medical: partitioned.excluded,
       medical_directory_features: buildMedicalDirectoryFeatures({
-        locatedFeatures: enriched.features,
-        unresolved: enriched.unresolved,
-        excluded: report.excluded,
-        sourceVersion: enriched.features[0]?.source_version
-          ?? rawSnapshot.response?.headers?.etag
-          ?? rawSnapshot.retrieved_at,
+        locatedFeatures: partitioned.features,
+        unresolved: partitioned.unresolved,
+        excluded: partitioned.excluded,
+        sourceVersion: coordinateReport.layer_source_version,
         sourceUrl: 'https://data.gov.tw/dataset/15393',
         issuedAt: rawSnapshot.retrieved_at,
         expiresAt: new Date(Date.parse(rawSnapshot.retrieved_at) + 30 * 24 * 60 * 60 * 1000).toISOString(),
@@ -392,12 +411,14 @@ async function defaultAdapter({ definition, scope, config, now, previousSnapshot
       rawSnapshot,
       normalized: output,
       features: output.features,
-      unresolved: enriched.unresolved,
+      unresolved: partitioned.unresolved,
+      excluded: partitioned.excluded,
       coordinateReport,
       emergencyMedicalFeatures: emergencyMedical.features,
       emergencyMedicalReport: emergencyMedical.report,
       publishable: true,
-      ...(coordinateReport.failed_query_count > 0 || coordinateReport.failed_fallback_source_count > 0
+      ...(partitioned.unresolved.length > 0 || partitioned.excluded.length > 0
+        || coordinateReport.failed_query_count > 0 || coordinateReport.failed_fallback_source_count > 0
         ? { status: 'partial' }
         : {}),
     };

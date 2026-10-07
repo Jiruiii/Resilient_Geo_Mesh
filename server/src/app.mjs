@@ -1,6 +1,7 @@
 import Fastify from 'fastify';
 
 import { registerFeedRoutes } from './routes/feed.mjs';
+import { registerAddressPackRoutes } from './routes/address-packs.mjs';
 import { registerHealthRoutes } from './routes/health.mjs';
 import { registerLayerRoutes } from './routes/layers.mjs';
 import { registerMetadataRoutes } from './routes/metadata.mjs';
@@ -18,6 +19,7 @@ export function buildApp({ config = {}, releaseStore, sourceStateStore = {}, log
   const dependencies = { config, releaseStore, sourceStateStore };
   registerHealthRoutes(app, dependencies);
   registerFeedRoutes(app, dependencies);
+  registerAddressPackRoutes(app, dependencies);
   registerLayerRoutes(app, dependencies);
   registerSourceStatusRoutes(app, dependencies);
   registerMetadataRoutes(app, dependencies);

@@ -3,11 +3,13 @@ import { createHash } from 'node:crypto';
 import { TAIWAN_COUNTIES } from '../sources/taiwan-counties.mjs';
 
 const CODE_FIELDS = [
-  '機構代碼', '醫療機構代碼', '院所代碼', '醫事機構代碼', 'facility_code', 'institution_code', 'medical_id', 'id', 'ID',
+  '機構代碼', '醫療機構代碼', '院所代碼', '醫事機構代碼', '代碼',
+  'facility_code', 'institution_code', 'medical_id', 'id', 'ID',
 ];
 const NAME_FIELDS = ['機構名稱', '醫療機構名稱', '院所名稱', '醫事機構名稱', '名稱', 'name'];
 const ADDRESS_FIELDS = ['地址', '機構地址', '醫事機構地址', 'address'];
 const AREA_FIELDS = ['縣市鄉鎮', '縣市及鄉鎮市區', '行政區', '行政區域', '縣市區名', 'administrative_area'];
+const SOURCE_ROW_ID_FIELDS = ['source_row_id', 'row_id', 'record_id', '資料列編號', '資料序號', '序號', '_rowid'];
 
 function firstValue(record, fields) {
   for (const field of fields) {
@@ -25,6 +27,22 @@ function identifier(value) {
 
 function recordCode(record) {
   return firstValue(record, CODE_FIELDS);
+}
+
+function rowDiscriminator(record) {
+  const sourceRowId = firstValue(record, SOURCE_ROW_ID_FIELDS);
+  if (sourceRowId) return `row-${identifier(sourceRowId)}`;
+  const stableFields = [
+    ...NAME_FIELDS,
+    ...ADDRESS_FIELDS,
+    ...AREA_FIELDS,
+    'phone', '電話', '聯絡電話', '分類', '機構類別', '醫療類別', 'type',
+  ];
+  const values = Object.fromEntries(stableFields
+    .filter((field) => record?.[field] !== undefined && record[field] !== null)
+    .map((field) => [field, String(record[field]).trim()])
+    .sort(([left], [right]) => left.localeCompare(right)));
+  return `row-${createHash('sha256').update(JSON.stringify(values)).digest('hex').slice(0, 24)}`;
 }
 
 function countyMetadata(record, properties = {}) {
@@ -59,7 +77,7 @@ export function buildMedicalDirectoryFeatures({
     ...excluded.map((record) => ({ state: 'excluded', value: record })),
   ];
   const identityOccurrences = new Map();
-  const features = rows.map(({ state, value }) => {
+  const preparedRows = rows.map(({ state, value }) => {
     const sourceRecord = value?.source_record ?? value ?? {};
     const properties = value?.properties ?? {};
     const name = firstValue(properties, ['name']) ?? firstValue(sourceRecord, NAME_FIELDS);
@@ -71,8 +89,27 @@ export function buildMedicalDirectoryFeatures({
       : value.medical_id ?? recordCode(sourceRecord) ?? `${name ?? ''}:${address ?? ''}`;
     if (!identity) throw new TypeError('medical directory record has no stable identity');
     const baseFeatureId = `medical-directory:${identifier(identity)}`;
-    const occurrence = (identityOccurrences.get(baseFeatureId) ?? 0) + 1;
-    identityOccurrences.set(baseFeatureId, occurrence);
+    return {
+      state,
+      value,
+      sourceRecord,
+      properties,
+      name,
+      address,
+      administrativeArea,
+      baseFeatureId,
+      rowIdentity: `${baseFeatureId}:${rowDiscriminator(sourceRecord)}`,
+    };
+  });
+  const baseCounts = new Map();
+  for (const row of preparedRows) baseCounts.set(row.baseFeatureId, (baseCounts.get(row.baseFeatureId) ?? 0) + 1);
+  const features = preparedRows.map((row) => {
+    const {
+      state, value, sourceRecord, properties, name, address, administrativeArea, baseFeatureId, rowIdentity,
+    } = row;
+    const stableBaseFeatureId = baseCounts.get(baseFeatureId) > 1 ? rowIdentity : baseFeatureId;
+    const occurrence = (identityOccurrences.get(stableBaseFeatureId) ?? 0) + 1;
+    identityOccurrences.set(stableBaseFeatureId, occurrence);
     const county = countyMetadata(sourceRecord, properties);
     const featureProperties = {
       name,
@@ -93,7 +130,7 @@ export function buildMedicalDirectoryFeatures({
       namespace: 'official.medical',
       dataset_id: 'resilientgeo-taiwan-medical-directory',
       layer_id: 'taiwan-medical-directory',
-      feature_id: occurrence === 1 ? baseFeatureId : `${baseFeatureId}:${occurrence}`,
+      feature_id: occurrence === 1 ? stableBaseFeatureId : `${stableBaseFeatureId}:${occurrence}`,
       feature_type: 'MEDICAL_DIRECTORY_ENTRY',
       geometry: null,
       properties: featureProperties,

@@ -69,7 +69,7 @@ class GovernmentFeedSync(
         fun validateBase(url: String, allowLocal: Boolean = false): URI {
             val uri = URI(url.trim().let { if (it.endsWith('/')) it else "$it/" })
             require(uri.host != null && uri.rawUserInfo == null && uri.rawQuery == null && uri.rawFragment == null) { "Invalid feed address" }
-            require(uri.scheme == "https" || allowLocal && uri.scheme == "http" && uri.host in setOf("127.0.0.1", "localhost")) {
+            require(uri.scheme == "https" || allowLocal && uri.scheme == "http" && uri.host in setOf("127.0.0.1", "localhost", "10.0.2.2")) {
                 "Government feed requires HTTPS"
             }
             return uri

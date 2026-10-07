@@ -231,6 +231,10 @@ test('source status and metadata expose only sanitized public fields', async () 
       name_address_mismatch: 2,
       multiple_candidates: 0,
       source_missing: 0,
+      duplicate_institution_code: 0,
+      duplicate_point_id: 0,
+      missing_institution_code: 0,
+      unverified_coordinate_match: 2,
       secret_reason: 'must not pass through',
     },
     emergency_hospital_count: 15,
@@ -266,6 +270,16 @@ test('source status and metadata expose only sanitized public fields', async () 
       name_address_mismatch: 1,
       multiple_candidates: 1,
       source_missing: 0,
+    });
+    assert.deepEqual(source.unresolved_reason_counts, {
+      no_coordinate_candidate: 1,
+      name_address_mismatch: 2,
+      multiple_candidates: 0,
+      source_missing: 0,
+      duplicate_institution_code: 0,
+      duplicate_point_id: 0,
+      missing_institution_code: 0,
+      unverified_coordinate_match: 2,
     });
     assert.deepEqual(source.coordinate_source_ids, ['nlsc-medical-coordinates', 'official-doorplate:10007']);
     assert.equal(JSON.stringify(status.json()).includes('secret'), false);
