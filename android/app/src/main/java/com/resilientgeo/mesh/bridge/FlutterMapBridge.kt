@@ -7,6 +7,7 @@ import com.resilientgeo.mesh.online.GovernmentSyncManager
 import com.resilientgeo.mesh.routing.EvacuationRouteService
 import com.resilientgeo.mesh.routing.RouteResult
 import com.resilientgeo.mesh.routing.RouteStatus
+import com.resilientgeo.mesh.transport.MeshTransportSettings
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
@@ -64,6 +65,7 @@ class FlutterMapBridge(
     private val eventChannel = EventChannel(messenger, EVENT_CHANNEL_NAME)
     private var eventObservation: Job? = null
     private val syncStatus = com.resilientgeo.mesh.emergency.SyncStatusStore(context)
+    private val transportSettings = MeshTransportSettings(context.applicationContext)
 
     /**
      * Verified static layers, started as soon as the bridge exists. First

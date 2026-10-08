@@ -30,7 +30,7 @@ void main() {
     );
   });
 
-  test('does not apply the NCDR filter to other official event sources', () {
+  test('keeps CWA events without applying NCDR visibility metadata', () {
     final cwa = MeshEvent.fromJson(<String, dynamic>{
       'namespace': 'official.cwa',
       'event_id': 'cwa:earthquake',
@@ -41,8 +41,26 @@ void main() {
       'attributes': <String, dynamic>{'map_visible': false},
     });
 
+    expect(isAppSupportedEvent(cwa), isTrue);
     expect(filterMapEvents(<MeshEvent>[cwa]), contains(cwa));
   });
+
+  test(
+    'recognizes live CWA feed namespaces independently of NCDR metadata',
+    () {
+      final cwa = MeshEvent.fromJson(<String, dynamic>{
+        'namespace': 'official.live.cwa-warning',
+        'event_id': 'cwa:warning:rain',
+        'event_type': 'RAIN_WARNING',
+        'issued_at': '2026-09-26T03:00:00Z',
+        'expires_at': '2099-01-01T00:00:00Z',
+        'attributes': <String, dynamic>{'map_visible': false},
+      });
+
+      expect(isAppSupportedEvent(cwa), isTrue);
+      expect(filterMapEvents(<MeshEvent>[cwa]), contains(cwa));
+    },
+  );
 }
 
 MeshEvent _event(

@@ -37,6 +37,8 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
+        with:
+          lfs: true
 
       - uses: subosito/flutter-action@v2
         with:
@@ -68,6 +70,8 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
+        with:
+          lfs: true
 
       - uses: actions/setup-java@v6
         with:

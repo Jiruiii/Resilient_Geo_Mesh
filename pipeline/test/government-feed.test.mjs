@@ -19,6 +19,14 @@ function ncdrEvent(relevance, eventId) {
   value.attributes = { ...value.attributes, theme: 'hazard', operational_relevance: relevance };
   return value;
 }
+function cwaEvent(eventId) {
+  const value = event();
+  value.event_id = eventId;
+  value.event_type = 'EARTHQUAKE_INTENSITY';
+  value.source = 'CWA';
+  value.attributes = { ...value.attributes, theme: 'earthquake', operational_relevance: 'BACKGROUND' };
+  return value;
+}
 function build(results, extra = {}) { return buildGovernmentFeed({ ...keys, now, results, ...extra }); }
 async function restore(output) { return readPreviousEvents(output.feed, async name => output.files.get(name), keys.publicKey); }
 
@@ -51,6 +59,19 @@ test('public NCDR rebuild removes BACKGROUND events from the previous public led
 
   const publishedEvents = [...second.files.values()].flatMap((chunk) => chunk.events);
   assert.deepEqual(publishedEvents.map((value) => value.event_id), ['ncdr:active']);
+});
+
+test('NCDR background filtering does not remove CWA official events', () => {
+  const output = build([{
+    id: 'cwa-warning',
+    status: 'ok',
+    events: [cwaEvent('cwa:warning:rain')],
+  }]);
+
+  const publishedEvents = [...output.files.values()].flatMap((chunk) => chunk.events);
+  assert.deepEqual(publishedEvents.map((value) => value.event_id), ['cwa:warning:rain']);
+  assert.equal(publishedEvents[0].source, 'CWA');
+  assert.equal(publishedEvents[0].namespace, 'official.live.cwa-warning');
 });
 
 test('publisher rejects conflicting revisions and detects rollback before upload', async () => {

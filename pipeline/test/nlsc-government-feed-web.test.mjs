@@ -48,6 +48,46 @@ function buildRelease({ retracted = false, events = true, severity = 'HIGH' } = 
   return { keys, output };
 }
 
+function buildCwaRelease() {
+  const keys = generateEd25519KeyPair();
+  const cwaSourceIds = ['cwa-earthquake', 'cwa-warning', 'cwa-typhoon'];
+  const results = cwaSourceIds.map((id) => ({
+    id,
+    status: 'ok',
+    events: [{
+      schema_version: 'event-v0',
+      namespace: 'official.cwa',
+      event_id: `${id}:web-test`,
+      event_type: 'CWA_WARNING',
+      severity: 'HIGH',
+      source: 'CWA',
+      source_version: now.toISOString(),
+      event_version: 1,
+      issued_at: now.toISOString(),
+      expires_at: new Date(now.getTime() + 86_400_000).toISOString(),
+      geometry: { type: 'Point', coordinates: [121.5, 25.0] },
+      attributes: {
+        area_id: 'tw.63000100',
+        theme: id,
+        map_visible: false,
+      },
+      provenance: {
+        original_source: id,
+        received_at: now.toISOString(),
+        transport_source: { kind: 'server', node_id: 'test' },
+      },
+    }],
+  }));
+  const output = buildGovernmentFeed({
+    privateKey: keys.privateKey,
+    publicKey: keys.publicKey,
+    signingKeyId: 'central-server-2026',
+    now,
+    results,
+  });
+  return { keys, output, cwaSourceIds };
+}
+
 function browserContext(publicKey, responses = {}, { indexedDB, now = Date.now(), timers = [] } = {}) {
   const encoded = publicKey.export({ format: 'der', type: 'spki' }).toString('base64');
   const currentNow = () => (typeof now === 'function' ? now() : now);
@@ -218,6 +258,34 @@ test('browser loader downloads and verifies the same-origin signed Server feed',
   assert.equal(result.stale, false);
   assert.equal(result.events.length, 1);
   assert.equal(result.events[0].event_id, 'ncdr:web-test');
+});
+
+test('browser verifies and caches all three CWA official event feeds', async () => {
+  const { keys, output, cwaSourceIds } = buildCwaRelease();
+  const responses = { '/feed.json': output.feed };
+  for (const dataset of output.feed.datasets) {
+    for (const path of dataset.chunk_paths) responses[`/${path}`] = output.files.get(path);
+  }
+  const storage = memoryIndexedDB();
+  const onlineContext = browserContext(keys.publicKey, responses, {
+    indexedDB: storage,
+    now: now.getTime(),
+  });
+
+  const online = JSON.parse(await onlineContext.loadNLSCGovernmentFeed());
+
+  assert.equal(online.events.length, 3);
+  assert.deepEqual(online.events.map((event) => event.namespace),
+    cwaSourceIds.map((sourceId) => `official.live.${sourceId}`));
+  assert.equal(online.events.every((event) => event.source === 'CWA'), true);
+
+  const offlineContext = browserContext(keys.publicKey, {}, {
+    indexedDB: storage,
+    now: now.getTime(),
+  });
+  const offline = JSON.parse(await offlineContext.loadNLSCGovernmentFeed());
+  assert.equal(offline.stale, true);
+  assert.equal(offline.events.length, 3);
 });
 
 test('a zero-alert Server update replaces cached alerts and stays empty offline', async () => {
