@@ -100,15 +100,18 @@ test('Caddy proxies only the documented public server paths', async () => {
   assert.doesNotMatch(caddy, /raw|source-cache|private_data/u);
 });
 
-test('cross-platform parity workflow runs Android instrumentation on an API 36 emulator', async () => {
-  const workflow = await read('.github/workflows/platform-parity.yml');
+test('app validation workflow tests Flutter app code and Android instrumentation without a Web build', async () => {
+  const workflow = await read('.github/workflows/app-validation.yml');
+  assert.match(workflow, /^name: App validation$/mu);
   assert.match(workflow, /pull_request:/u);
+  assert.match(workflow, /flutter-app-tests:[\s\S]*?flutter analyze --no-pub[\s\S]*?flutter test/u);
+  assert.doesNotMatch(workflow, /flutter build web|flutter-web|platform-parity/u);
   assert.match(workflow, /android:[\s\S]*?runs-on: macos-15-intel/u);
   assert.match(workflow, /reactivecircus\/android-emulator-runner@v2\.38\.0/u);
   assert.match(workflow, /api-level: 36/u);
+  assert.match(workflow, /emulator-boot-timeout: 900/u);
   assert.match(workflow, /:app:assembleDebugAndroidTest/u);
   assert.match(workflow, /:app:connectedDebugAndroidTest/u);
-  assert.match(workflow, /name: platform-parity/u);
 });
 
 test('root docker build context excludes nested dotenv files and local data', async () => {
