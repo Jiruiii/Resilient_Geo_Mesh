@@ -1,6 +1,6 @@
 # 全台真實資料提供與 Flutter Demo 整合指南
 
-> **更新 2026-10-05：**本文件下方「Flutter Demo JSON asset 匯出」是舊的預覽／一次性流程，不是目前 Web／Android 的靜態資料下載路徑。底圖目前使用隨 App 提供的 OSM／Protomaps PMTiles；相機範圍與歷史 NLSC 試用見 [Map_description.md](../Map_description.md)。簽章 layer、告警 TTL、門牌涵蓋及資料狀態見[資料說明](../data_description.md)與[點位涵蓋報告](data-coverage-2026-10-04.md)。Web／Android client 程式已加入，但新 Server 網域尚未部署驗證。
+> **更新 2026-10-08：**本文件下方「Flutter Demo JSON asset 匯出」是舊的預覽／一次性流程，不是目前 Web／Android 的靜態資料下載路徑。底圖目前使用隨 App 提供的 OSM／Protomaps PMTiles；相機範圍與歷史 NLSC 試用見 [Map_description.md](../Map_description.md)。簽章 layer、告警 TTL、門牌涵蓋及資料狀態見[資料說明](../data_description.md)與[點位涵蓋報告](data-coverage-2026-10-04.md)。Web／Android client 程式已加入，但新 Server 網域尚未部署驗證。
 
 本文件後半保留舊版 Flutter Demo JSON 匯出流程，作為歷史操作參考；現行 Web／Android 的資料契約與運作狀態以本頁更新說明及[資料說明](../data_description.md)為準。
 
@@ -12,7 +12,7 @@
 
 中央 Server 的資料流是：官方來源 → 單一排程 collector → private raw/normalized cache → signed government feed 或 static layer → read-only Fastify API。API request 只讀已發布內容，不會觸發官方 API。Web／Android client 程式已加入，但仍須部署正式 HTTPS 網域並做兩端下載驗收。
 
-目前 Server 的預設範圍是：NCDR 全台災害事件（公開 feed 排除 `BACKGROUND`）、CWA 地震／天氣特報／颱風，以及獨立的靜態避難所位置與醫療資源。App 的官方動態告警只保留 NCDR；CWA、TDX 與舊避難所狀態 feed 不會進入 Web／Android 的事件快取、地圖或通知。OSM／Protomaps 底圖隨 App 內附，不由資料 Server 提供；避難所位置與醫療資源走簽章 layer。避難所開設狀態 XML 不在目前收集範圍。TDX 與 OSM POI adapter 保留但不在預設排程。Web 與 Android 都已接入簽章 layer、告警 feed 與門牌包資料路徑；正式網域及兩端外部下載驗收仍待完成。
+目前 Server 的預設範圍是：NCDR 全台災害事件（公開 feed 排除 `BACKGROUND`）、CWA 地震／天氣特報／颱風，以及獨立的靜態避難所位置與醫療資源。App 的官方動態事件支援 NCDR 與三種 CWA feed；NCDR 的 `BACKGROUND` 篩選不套用到 CWA。TDX 與舊避難所狀態 feed 不會進入 Web／Android 的事件快取、地圖或通知。OSM／Protomaps 底圖隨 App 內附，不由資料 Server 提供；避難所位置與醫療資源走簽章 layer。避難所開設狀態 XML 不在目前收集範圍。TDX 與 OSM POI adapter 保留但不在預設排程。Web 與 Android 都已接入簽章 layer、告警 feed 與門牌包資料路徑；正式網域及兩端外部下載驗收仍待完成。
 
 ## Web 與 Android 同步開發規則
 
@@ -449,7 +449,7 @@ Web 可以使用 remote loader；Android 仍應以已驗證的 Room／bridge 為
 
 ### NCDR 有資料但地圖只出現少數事件
 
-這是預期行為：Flutter Demo 只顯示未過期且 `map_visible=true` 的 NCDR 事件；一般行政通知、消防檢查等 `BACKGROUND` 資料仍可能保留在 JSON，但不會畫成逃生／改道路線用 marker。
+NCDR Demo 只顯示未過期且 `map_visible=true` 的 NCDR 事件；一般行政通知、消防檢查等 `BACKGROUND` 資料仍可能保留在 JSON，但不會畫成逃生／改道路線用 marker。CWA 地震、天氣特報與颱風事件不套用 NCDR 的 `map_visible` 或 `operational_relevance` 篩選，未過期且通過簽章驗證後可顯示在地圖上。
 
 ### TDX 收集結果是 `partial`
 

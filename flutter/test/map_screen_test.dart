@@ -33,7 +33,7 @@ void main() {
       expect(find.text('靜態資料更新：2026-9-5 00:00:00'), findsOneWidget);
       expect(find.text('資料快照：2026-09-05T00:00:00Z'), findsNothing);
       expect(find.text('目前位置：尚未取得'), findsOneWidget);
-      final pointCount = tester.widget<Text>(find.text('院所／避難所：0'));
+      final pointCount = tester.widget<Text>(find.text('全臺院所／避難所：0'));
       expect(pointCount.maxLines, 1);
       expect(pointCount.softWrap, isFalse);
       expect(find.text('回報警示'), findsNothing);

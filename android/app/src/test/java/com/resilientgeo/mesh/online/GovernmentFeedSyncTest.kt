@@ -14,7 +14,12 @@ import java.util.Base64
 
 class GovernmentFeedSyncTest {
     private fun resource(name: String) = javaClass.classLoader!!.getResource(name)!!.readText()
-    private val trust = TrustedKeyStore.fromJson(resource("trust/trusted-keys.json"))
+    private val trust = JSONObject(resource("trust/trusted-keys.json")).let { keys ->
+        // The fixture uses a deterministic test-only private key while keeping
+        // the production-allowed key ID expected by GovernmentFeedVerifier.
+        keys.put("central-server-2026", keys.getString("cwa-fixture-test-2026"))
+        TrustedKeyStore.fromJson(keys.toString())
+    }
     private fun feed() = JSONObject(resource("government/feed.json"))
     private fun chunk() = JSONObject(resource("government/chunk.json"))
     private val fixtureTime = Instant.parse("2026-09-27T12:00:00Z")
@@ -30,6 +35,23 @@ class GovernmentFeedSyncTest {
         assertEquals(1, sync.sync("https://example.com/", FeedCursor()).downloaded)
         assertEquals(4, attempts)
         assertEquals(1, applied)
+    }
+
+    @Test fun cwaOfficialDatasetIsVerifiedDownloadedAndIngested() = runTest {
+        var ingestedSource: String? = null
+        val sync = GovernmentFeedSync(trust, { url ->
+            if (url.endsWith("feed.json")) feed() else chunk()
+        }, { _, _, _ -> null }, { value ->
+            ingestedSource = value.getJSONArray("events").getJSONObject(0).getString("source")
+            true
+        }, { fixtureTime })
+
+        val result = sync.sync("https://example.com/", FeedCursor())
+
+        assertEquals("cwa-warning", result.feed.getJSONArray("datasets")
+            .getJSONObject(0).getString("source_id"))
+        assertEquals(1, result.downloaded)
+        assertEquals("CWA", ingestedSource)
     }
 
     @Test fun exhaustedNetworkRetriesAndInvalidDataDoNotProduceCursor() = runTest {

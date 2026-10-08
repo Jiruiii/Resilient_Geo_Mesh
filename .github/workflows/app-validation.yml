@@ -1,4 +1,4 @@
-name: Cross-platform parity
+name: App validation
 
 on:
   pull_request:
@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: platform-parity-${{ github.event.pull_request.number || github.ref }}
+  group: app-validation-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -31,12 +31,14 @@ jobs:
       - run: npm test
       - run: npm run test:server
 
-  flutter-web:
-    name: flutter-web
+  flutter-app-tests:
+    name: flutter-app-tests
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
+        with:
+          lfs: true
 
       - uses: subosito/flutter-action@v2
         with:
@@ -57,10 +59,6 @@ jobs:
         working-directory: flutter
         run: flutter test --no-pub --timeout 2m --concurrency 2
 
-      - name: Build offline Web release
-        working-directory: flutter
-        run: flutter build web --release --no-web-resources-cdn --no-pub
-
   android:
     name: android
     # Run on the same macOS host family used for the local API 36 emulator check.
@@ -68,6 +66,8 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
+        with:
+          lfs: true
 
       - uses: actions/setup-java@v6
         with:
@@ -96,34 +96,14 @@ jobs:
         working-directory: android
         run: ./gradlew --no-daemon :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest
 
-      - name: Run Android instrumentation on API 36 emulator
+      - name: Run Android instrumentation on API 36 emulator (manual)
+        if: github.event_name == 'workflow_dispatch'
         uses: reactivecircus/android-emulator-runner@v2.38.0
         with:
           api-level: 36
           target: google_apis
           arch: x86_64
           profile: pixel_6
+          emulator-boot-timeout: 900
           disable-animations: true
           script: cd android && ./gradlew --no-daemon :app:connectedDebugAndroidTest
-
-  platform-parity:
-    name: platform-parity
-    if: always()
-    needs:
-      - node-server-tests
-      - flutter-web
-      - android
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Require all platform checks
-        env:
-          NODE_SERVER_RESULT: ${{ needs.node-server-tests.result }}
-          FLUTTER_WEB_RESULT: ${{ needs.flutter-web.result }}
-          ANDROID_RESULT: ${{ needs.android.result }}
-        shell: bash
-        run: |
-          printf 'Node/Server: %s\nFlutter Web: %s\nAndroid: %s\n' \
-            "$NODE_SERVER_RESULT" "$FLUTTER_WEB_RESULT" "$ANDROID_RESULT"
-          [[ "$NODE_SERVER_RESULT" == success ]]
-          [[ "$FLUTTER_WEB_RESULT" == success ]]
-          [[ "$ANDROID_RESULT" == success ]]

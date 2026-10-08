@@ -42,23 +42,25 @@ void main() {
     expect(event.isExpired, isTrue);
   });
 
-  testWidgets('tapping a shelter shows planned capacity without live occupancy', (
-    tester,
-  ) async {
-    await tester.pumpWidget(
-      _testApp(features: const <StaticFeature>[_shelter]),
-    );
-    await _finishMapLoad(tester);
+  testWidgets(
+    'tapping a shelter shows planned capacity without live occupancy',
+    (tester) async {
+      await tester.pumpWidget(
+        _testApp(features: const <StaticFeature>[_shelter]),
+      );
+      await _finishMapLoad(tester);
 
-    await tester.tap(find.bySemanticsLabel('潭美國小'));
-    await tester.pump();
+      await tester.tap(find.bySemanticsLabel('潭美國小'));
+      await tester.pump();
 
-    expect(find.text('潭美國小'), findsOneWidget);
-    expect(find.text('預計收容人數：81人'), findsOneWidget);
-    expect(find.text('收容人數：無資料'), findsNothing);
-    expect(find.text('來源：taipei-shelter'), findsOneWidget);
-    expect(find.text('更新時間：2026-9-5 00:00:00'), findsNWidgets(2));
-  });
+      expect(find.text('潭美國小'), findsOneWidget);
+      expect(find.text('預計收容人數：81人'), findsOneWidget);
+      expect(find.text('收容人數：無資料'), findsNothing);
+      expect(find.text('來源：taipei-shelter'), findsOneWidget);
+      expect(find.text('更新時間：2026-9-5 00:00:00'), findsOneWidget);
+      expect(find.text('靜態資料更新：2026-9-5 00:00:00'), findsOneWidget);
+    },
+  );
 
   testWidgets('tapping a medical marker opens medical details', (tester) async {
     await tester.pumpWidget(
@@ -231,7 +233,7 @@ void main() {
     await tester.pump();
 
     expect(find.byType(FeatureDetailsSheet), findsNothing);
-    expect(find.text('更新時間：2026-9-5 00:00:00'), findsOneWidget);
+    expect(find.text('靜態資料更新：2026-9-5 00:00:00'), findsOneWidget);
   });
 }
 

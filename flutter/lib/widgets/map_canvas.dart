@@ -1297,7 +1297,8 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
                   );
                 },
               ),
-            if (!_usesPlatformMap) ..._buildPreviewMarkers(markers),
+            if (!_usesPlatformMap)
+              ..._buildPreviewMarkers(markers, viewportSize),
             if (widget.showReportLocationPicker)
               const Positioned.fill(
                 child: IgnorePointer(
@@ -1388,7 +1389,11 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
   /// Desktop Flutter does not host the MapLibre platform view. Keep the
   /// provider-neutral marker widgets available there for UI development and
   /// accessibility tests; Android/iOS use the real screen projection above.
-  Iterable<Widget> _buildPreviewMarkers(List<MapMarkerData> markers) sync* {
+  Iterable<Widget> _buildPreviewMarkers(
+    List<MapMarkerData> markers,
+    Size viewportSize,
+  ) sync* {
+    final markerTop = viewportSize.height * 0.6;
     for (var index = 0; index < markers.length; index += 1) {
       final marker = markers[index];
       final column = index % 6;
@@ -1396,7 +1401,7 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
       yield Positioned(
         key: marker.key,
         left: 16 + (column * 44),
-        top: 300 + (row * 44),
+        top: markerTop + (row * 44),
         width: marker.width,
         height: marker.height,
         child: marker.child,

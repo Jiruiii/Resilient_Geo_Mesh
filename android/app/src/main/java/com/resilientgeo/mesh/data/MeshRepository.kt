@@ -744,17 +744,11 @@ class MeshRepository(
     private fun isUnsupportedOfficialEventJson(event: JSONObject): Boolean {
         val namespace = event.optString("namespace")
         if (!namespace.startsWith("official.")) return false
-        val isNcdrNamespace = namespace == "official.ncdr" ||
-            namespace.startsWith("official.ncdr.") ||
-            namespace == "official.live.ncdr" ||
-            namespace.startsWith("official.live.ncdr.")
-        return !isNcdrNamespace || !event.optString("source").equals("NCDR", ignoreCase = true)
+        return !supportsOfficialEvent(namespace, event.optString("source"))
     }
 
     private fun isUnsupportedOfficialNamespace(namespace: String): Boolean =
-        namespace.startsWith("official.") &&
-            namespace != "official.ncdr" && !namespace.startsWith("official.ncdr.") &&
-            namespace != "official.live.ncdr" && !namespace.startsWith("official.live.ncdr.")
+        namespace.startsWith("official.") && !supportsOfficialNamespace(namespace)
 
     /** Drop expired official payloads while preserving the signed version floor against peer replay. */
     fun purgeExpiredOfficialEvents(now: Instant = Instant.now()): Int {

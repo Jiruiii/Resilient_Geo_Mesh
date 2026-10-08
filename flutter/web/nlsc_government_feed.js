@@ -5,6 +5,9 @@
     return value;
   };
   const feedKeyIds = new Set(['government-feed-2026', 'central-server-2026']);
+  const supportedDatasetIds = new Set([
+    'ncdr', 'cwa-earthquake', 'cwa-warning', 'cwa-typhoon',
+  ]);
   const eventPayloadFields = [
     'namespace', 'event_id', 'event_type', 'geometry', 'severity', 'source',
     'source_version', 'event_version', 'issued_at', 'expires_at', 'attributes',
@@ -34,6 +37,23 @@
   function isNcdrEvent(event) {
     return event?.source === 'NCDR' &&
       (event.namespace === 'official.live.ncdr' || event.namespace === 'official.ncdr');
+  }
+
+  function isCwaEvent(event) {
+    const namespace = event?.namespace;
+    return event?.source === 'CWA' && typeof namespace === 'string' && (
+      namespace === 'official.cwa' || namespace.startsWith('official.cwa.') ||
+      ['cwa-earthquake', 'cwa-warning', 'cwa-typhoon']
+        .some((sourceId) => namespace === `official.live.${sourceId}`)
+    );
+  }
+
+  function isSupportedEvent(event) {
+    return isNcdrEvent(event) || isCwaEvent(event);
+  }
+
+  function isSafeChunkPath(path) {
+    return /^releases\/\d+\/(?:ncdr|cwa-earthquake|cwa-warning|cwa-typhoon)\/\d+\.json$/u.test(path);
   }
 
   function timestamp(value, field) {
@@ -74,9 +94,9 @@
         throw new Error('告警來源不受支援或重複');
       }
       seenSources.add(source);
-      // The App consumes official alerts only from NCDR. Ignore every other
-      // signed dataset before validating or downloading its manifest/chunks.
-      if (source !== 'ncdr') continue;
+      // Ignore unsupported signed datasets before validating or downloading
+      // their manifests/chunks. NCDR and all three CWA event feeds are shown.
+      if (!supportedDatasetIds.has(source)) continue;
       const manifest = dataset.manifest;
       if (!manifest || manifest.schema_version !== 'manifest-v0' ||
           manifest.dataset_id !== `government-${source}` ||
@@ -154,7 +174,7 @@
     }
 
     const events = [];
-    for (const { manifest, paths } of metadata.manifests) {
+    for (const { source, manifest, paths } of metadata.manifests) {
       let datasetBytes = 0;
       for (let index = 0; index < paths.length; index += 1) {
         const path = paths[index];
@@ -183,7 +203,8 @@
           const event = chunk.events[eventIndex];
           if (event.event_id !== expected.event_ids[eventIndex]) throw new Error('告警事件 ID 與清單不一致');
           await verifyEvent(event, manifest.namespace, manifest.signing_key_id);
-          if (event.source !== 'NCDR') throw new Error('NCDR 告警來源不一致');
+          const expectedSource = source === 'ncdr' ? 'NCDR' : 'CWA';
+          if (event.source !== expectedSource) throw new Error('官方告警來源不一致');
           events.push(event);
         }
         datasetBytes += chunk.byte_length;
@@ -213,9 +234,9 @@
     const events = [];
     const seen = new Set();
     for (const event of stored.events) {
-      // Older browser caches can contain CWA/TDX events. Drop those records
-      // while preserving any still-valid NCDR events for offline use.
-      if (!isNcdrEvent(event)) continue;
+      // Drop unsupported records from older browser caches while preserving
+      // valid NCDR and CWA events for offline use.
+      if (!isSupportedEvent(event)) continue;
       const identity = `${event?.namespace}/${event?.event_id}`;
       const namespace = knownEvents.get(identity);
       if (!namespace || seen.has(identity)) throw new Error('告警快取內容與簽章清單不符');
@@ -342,7 +363,7 @@
     await Promise.all(Array.from({ length: Math.min(4, paths.length) }, async () => {
       while (nextIndex < paths.length) {
         const index = nextIndex++;
-        if (!/^releases\/\d+\/ncdr\/\d+\.json$/u.test(paths[index])) {
+        if (!isSafeChunkPath(paths[index])) {
           throw new Error('告警分塊路徑不安全');
         }
         documents[index] = { path: paths[index], chunk: await requestJson(`/${paths[index]}`, 8 * 1024 * 1024) };

@@ -50,9 +50,9 @@ class EvacuationScenarioTest {
             .minWithOrNull(compareBy({ it.value.distanceM!! }, { it.key }))!!.key
 
     @Test
-    fun `mesh events reroute and then redirect the evacuation`() = runTest {
+    fun `road closure reroutes and retired fire agency status is ignored`() = runTest {
         val closure = chunkEvents("step2-road-closed.json")
-        val shelterFull = chunkEvents("step3-shelter-full.json")
+        val retiredShelterStatus = chunkEvents("step3-shelter-full.json")
         val closureId = JSONObject(closure.single()).getString("event_id")
 
         assertTrue(shelters.keys.containsAll(listOf("西湖國小", "西湖國中")))
@@ -70,9 +70,10 @@ class EvacuationScenarioTest {
         assertEquals(listOf(closureId), rerouted.blockedEventIds)
         assertTrue(rerouted.polyline != baseline.polyline)
 
-        val step3 = routes(closure + shelterFull)
-        assertEquals(RouteStatus.NO_ROUTE, step3.getValue("西湖國小").status)
-        assertEquals("SHELTER_FULL", step3.getValue("西湖國小").warnings.first().code)
-        assertEquals("西湖國中", recommended(step3))
+        val step3 = routes(closure + retiredShelterStatus)
+        val destination = step3.getValue("西湖國小")
+        assertEquals(RouteStatus.OK, destination.status)
+        assertEquals("SHELTER_STATUS_UNKNOWN", destination.warnings.first().code)
+        assertEquals("西湖國小", recommended(step3))
     }
 }

@@ -1,5 +1,6 @@
 package com.resilientgeo.mesh.online
 
+import com.resilientgeo.mesh.data.supportsOfficialFeedDataset
 import com.resilientgeo.mesh.trust.Canonical
 import com.resilientgeo.mesh.trust.Ed25519Verifier
 import com.resilientgeo.mesh.trust.TrustedKeyStore
@@ -35,9 +36,9 @@ object GovernmentFeedVerifier {
             val source = dataset.getString("source_id")
             require(source.isNotBlank()) { "Government feed source is empty" }
             require(ids.add(source)) { "Duplicate source" }
-            // The App consumes only NCDR alerts. The feed envelope is signed,
-            // so other source metadata can be safely ignored here.
-            if (source != "ncdr") continue
+            // Verify manifests for the sources the App may download. Other
+            // signed source metadata can be safely ignored here.
+            if (!supportsOfficialFeedDataset(source)) continue
             val manifest = dataset.getJSONObject("manifest")
             signature(manifest, trust, signingKeyId)
             val hashInput = copyWithout(manifest, "signature", "manifest_hash")
