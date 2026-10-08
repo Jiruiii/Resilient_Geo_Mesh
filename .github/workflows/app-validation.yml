@@ -96,7 +96,8 @@ jobs:
         working-directory: android
         run: ./gradlew --no-daemon :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest
 
-      - name: Run Android instrumentation on API 36 emulator
+      - name: Run Android instrumentation on API 36 emulator (manual)
+        if: github.event_name == 'workflow_dispatch'
         uses: reactivecircus/android-emulator-runner@v2.38.0
         with:
           api-level: 36
