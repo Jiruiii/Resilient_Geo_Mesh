@@ -143,7 +143,14 @@ class OfflineMapAssetStore {
   }
 
   Future<Map<String, String>> installPmtiles() {
-    return _installedFiles ??= _installPmtiles();
+    return _installedFiles ??= _installPmtiles().catchError((
+      Object error,
+      StackTrace stack,
+    ) {
+      // A failed install must be retryable after space/IO problems are fixed.
+      _installedFiles = null;
+      Error.throwWithStackTrace(error, stack);
+    });
   }
 
   Future<Map<String, String>> _installPmtiles() async {
@@ -172,13 +179,12 @@ class OfflineMapAssetStore {
             return installed;
           }
         }
+        // Real native IO errors propagate to the map's retry surface. Loading
+        // hundreds of MB through rootBundle after a disk failure can exhaust
+        // the Flutter heap and hides the original, actionable error.
       } on MissingPluginException {
         // Flutter preview hosts have no Android asset bridge; use the
         // deterministic bundle fallback below for tests and iOS previews.
-      } on PlatformException {
-        // The native bridge reports a useful error to logs, while the
-        // fallback keeps the module usable in a host that has not registered
-        // the optional streaming bridge yet.
       }
     }
 

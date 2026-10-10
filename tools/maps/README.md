@@ -4,6 +4,22 @@
 
 地圖使用 `flutter/assets/map/pmtiles/` 內的五個向量套件：全台概覽與北、中、南、東分區。Android 安裝時將內建 Flutter assets 複製到 App 私有目錄供 PMTiles 隨機讀取；Web 直接讀取隨建置輸出的資產。Server 不提供 `/maps/*` 路由，也不參與底圖更新。相機縮放和台灣可視邊界以 [Map_description.md](../../Map_description.md) 所列程式設定為準。
 
+## OSM 去重、字形與回歸驗證（2026-10-11）
+
+`deduplicate_pmtiles.py` 依 north、central、south、east 順序保留唯一圖磚；相同座標若內容不同會拒絕合併，完成後再比對全部圖磚雜湊。輸出必須使用獨立目錄，不覆寫輸入。替換 App 資產時須同步更新 `offline_map_manifest.dart` 的 SHA-256。
+
+```bash
+python -m pip install -r tools/maps/requirements-pmtiles.txt
+python tools/maps/deduplicate_pmtiles.py --source flutter/assets/map/pmtiles --output output/deduplicated-maps
+python tools/maps/test_map_glyphs.py
+node --test tools/maps/test_pmtiles_protocol.cjs
+python tools/maps/test_no_remote_map_runtime.py
+```
+
+`fetch_map_glyphs.py` 可重建固定 commit 的 256 個 Noto BMP 字形包、授權與 metadata；只有執行此開發工具時才下載，App 使用內建檔案。`test_map_glyphs.py` 驗證雜湊與參考地名的實際 bitmap，避免只有空 PBF 的假覆蓋。增補平面罕字限制見根目錄 `Map_description.md`。
+
+`taiwan-map-checkpoints.json` 提供 30 個跨全台、離島及交界的驗收座標。展示用 Web 靜態伺服器應支援 Range / 206，避免首次開圖下載完整 PMTiles。
+
 ## Chrome MapLibre Web runtime
 
 Chrome 使用隨 App 內嵌的 MapLibre GL JS `6.4.1`，檔案位於
