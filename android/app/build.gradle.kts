@@ -21,6 +21,11 @@ android {
     }
 
     buildTypes {
+        getByName("debug") {
+            // Install an isolated hardware-test app when a phone's existing APK
+            // was signed on another workstation. The normal app ID is unchanged.
+            applicationIdSuffix = providers.gradleProperty("meshTestApplicationIdSuffix").orNull
+        }
         create("profile") {
             initWith(getByName("debug"))
             matchingFallbacks += listOf("debug")
@@ -33,9 +38,8 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
-        // minSdk 26 ships java.time natively, so unlike module B's original
-        // standalone project (minSdk 24), no core library desugaring is
-        // needed for the trust adapter's Instant-based timestamp parsing.
+        // Required by Nearby 19.4, independently of the app's minSdk.
+        isCoreLibraryDesugaringEnabled = true
     }
 
     kotlinOptions {
@@ -76,6 +80,7 @@ android {
 }
 
 dependencies {
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
     implementation(project(":flutter"))
 
     implementation(libs.androidx.core.ktx)
@@ -87,11 +92,9 @@ dependencies {
     implementation(libs.androidx.lifecycle.viewmodel.ktx)
     implementation(libs.kotlinx.coroutines.android)
 
-    // No Play Services dependency: ADR-001 rejected Nearby Connections
-    // after both test devices got a Google-side INTERNAL_ERROR, and its
-    // implementation has been removed. BLE GATT needs only the platform
-    // Bluetooth APIs, which is also what lets this app work with no
-    // Google services present at all.
+    // Nearby is optional at runtime; native transports remain available without GMS.
+    implementation(libs.play.services.nearby)
+    implementation(libs.kotlinx.coroutines.play.services)
 
     // Local database (module B): events, versions, expiry.
     implementation(libs.androidx.room.runtime)

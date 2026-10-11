@@ -10,6 +10,7 @@
 | 完成項目、剩餘功能與實機驗收 | [MVP 進度總表](mvp-remaining-tasks.md) |
 | 資料一致性、TTL、推薦與兩機修正 | [可靠性與實機驗證](reliability-device-validation.md) |
 | 同步狀態頁與避難災害情境 | [功能與驗證紀錄](sync-status-disaster-filter.md) |
+| Nearby、Wi-Fi Direct／BLE 自動備援與離線實測 | [自動交換](nearby-auto-transport.md) |
 | 事件更新與到期自動重算路線 | [自動重算與實機驗證](automatic-route-refresh.md) |
 | Central Server 政府 API 更新、簽章 release 與離線轉傳邊界 | [Central Server 政府資料更新](government-online-sync.md) |
 | 目前 OSM 底圖與歷史 NLSC 試用範圍 | [Map description](../Map_description.md) |

@@ -40,6 +40,51 @@ import java.util.concurrent.atomic.AtomicInteger
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class AutoPeerSyncEngineTest {
 
+    @Test fun `an incoming hello bypasses the BLE head start gate`() = runTest {
+        val medium = FakeMedium()
+        val a = FakeTransport("a", medium)
+        val b = FakeTransport("b", medium)
+        medium.register(a); medium.register(b)
+        val receiver = AutoPeerSyncEngine(a, "a", { summaryJson("a", emptyList()) },
+            { _, _, _ -> null }, { ChunkIngestResult.Applied(emptyList()) }, backgroundScope,
+            mayInitiate = { false }, receptiveWindowMillis = 100)
+        val sender = AutoPeerSyncEngine(b, "b", { summaryJson("b", emptyList()) },
+            { _, _, _ -> null }, { ChunkIngestResult.Applied(emptyList()) }, backgroundScope,
+            receptiveWindowMillis = 100)
+        receiver.start(); sender.start(); runCurrent()
+        b.advertise("a"); runCurrent()
+        advanceTimeBy(10); runCurrent() // Let the asynchronous HELLO arrive before the next sighting.
+        a.advertise("b")
+        settle()
+        assertEquals(1, receiver.stats().peersSynced)
+        assertEquals(1, sender.stats().peersSynced)
+        receiver.stop(); sender.stop()
+    }
+
+    @Test fun `BLE remains visible while fast transport has a head start then retries`() = runTest {
+        val medium = FakeMedium()
+        val a = FakeTransport("a", medium)
+        val b = FakeTransport("b", medium)
+        medium.register(a); medium.register(b)
+        var allow = false
+        val receiver = AutoPeerSyncEngine(a, "a", { summaryJson("a", emptyList()) },
+            { _, _, _ -> null }, { ChunkIngestResult.Applied(emptyList()) }, backgroundScope,
+            mayInitiate = { allow }, clock = { testScheduler.currentTime }, receptiveWindowMillis = 100)
+        val sender = AutoPeerSyncEngine(b, "b", { summaryJson("b", emptyList()) },
+            { _, _, _ -> null }, { ChunkIngestResult.Applied(emptyList()) }, backgroundScope,
+            receptiveWindowMillis = 100)
+        receiver.start(); sender.start(); runCurrent()
+        a.advertise("b"); runCurrent()
+        assertEquals(1, receiver.visiblePeerCount(30_000))
+        assertEquals(0, a.connectCount.get())
+        allow = true
+        a.advertise("b"); b.advertise("a")
+        settle()
+        assertEquals(1, receiver.stats().peersSynced)
+        assertEquals(1, sender.stats().peersSynced)
+        receiver.stop(); sender.stop()
+    }
+
     @Test fun `a stale requests done marker cannot complete a new encounter`() = runTest {
         val medium = FakeMedium()
         val a = FakeTransport("a", medium)

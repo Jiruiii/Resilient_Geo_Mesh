@@ -20,6 +20,11 @@ final class SyncStatus {
     this.wifiEnabled = false,
     this.wifiPermissionsGranted = false,
     this.locationEnabled = false,
+    this.activeTransports = const [],
+    this.nearbyAvailable = false,
+    this.nearbyReady = false,
+    this.fallbackReason,
+    this.lastFailureTransport,
   });
 
   final bool emergencyModeEnabled,
@@ -34,6 +39,32 @@ final class SyncStatus {
   final DateTime? lastSuccessAt, lastFailureAt;
   final String? lastFailureCode;
   final String transport;
+  final List<String> activeTransports;
+  final bool nearbyAvailable, nearbyReady;
+  final String? fallbackReason, lastFailureTransport;
+  bool get automatic => transport == 'auto';
+  bool get usesNearby => transport == 'nearby';
+  static String transportLabel(String value) => switch (value) {
+    'auto' => '自動選擇',
+    'nearby' => 'Nearby',
+    'wifi_direct' => 'Wi-Fi Direct',
+    'ble' => '藍牙 BLE',
+    _ => '未知方式',
+  };
+  String get activeTransportLabel =>
+      !serviceRunning || activeTransports.isEmpty
+          ? '尚未啟動'
+          : activeTransports.map(transportLabel).join(' + ');
+  String? get fallbackDescription {
+    final reason = fallbackReason;
+    if (reason == null) return null;
+    if (reason == 'fast_transport_unavailable') return '高速傳輸尚未就緒，正在嘗試藍牙備援。';
+    final label = reason.startsWith('nearby_') ? 'Nearby' : 'Wi-Fi Direct';
+    if (reason.endsWith('_no_peer')) return '$label 暫未完成交換，已改試其他方式。';
+    if (reason.endsWith('_unavailable')) return '$label 目前不可用，已改試其他方式。';
+    return '$label 嘗試失敗，已改試其他方式。';
+  }
+
   final bool wifiDirectAvailable,
       wifiEnabled,
       wifiPermissionsGranted,
@@ -73,6 +104,12 @@ final class SyncStatus {
     }
     return SyncStatus(
       transport: message['transport'] as String? ?? 'ble',
+      activeTransports:
+          (message['active_transports'] as List?)?.cast<String>() ?? const [],
+      nearbyAvailable: message['nearby_available'] as bool? ?? false,
+      nearbyReady: message['nearby_ready'] as bool? ?? false,
+      fallbackReason: message['fallback_reason'] as String?,
+      lastFailureTransport: message['last_failure_transport'] as String?,
       wifiDirectAvailable: message['wifi_direct_available'] as bool? ?? false,
       wifiEnabled: message['wifi_enabled'] as bool? ?? false,
       wifiPermissionsGranted:
@@ -98,7 +135,17 @@ final class SyncStatus {
 
   String get activityLabel {
     if (!emergencyModeEnabled) return '緊急模式未開啟';
-    if (usesWifiDirect) {
+    if (automatic) {
+      if (serviceRunning && activeTransports.isEmpty) {
+        return '等待可用傳輸方式，請確認藍牙、Wi-Fi 與附近裝置權限';
+      }
+    } else if (usesNearby) {
+      if (!nearbyAvailable) {
+        return 'Nearby 所需的 Google Play services 不可用，可改用自動模式';
+      }
+      if (!bluetoothEnabled || !wifiEnabled) return '請開啟藍牙與 Wi-Fi，不需要連上網際網路';
+      if (!nearbyReady) return 'Nearby 尚未就緒，請確認附近裝置／區域網路權限與定位設定';
+    } else if (usesWifiDirect) {
       if (!wifiDirectAvailable) return '裝置不支援 Wi-Fi Direct';
       if (!wifiPermissionsGranted) return '尚未取得 Wi-Fi 附近裝置權限';
       if (!wifiEnabled) return '請開啟 Wi-Fi';
@@ -120,9 +167,10 @@ final class SyncStatus {
 
   String get failureDescription => switch (lastFailureCode) {
     'connection_failed' =>
-      usesWifiDirect ? 'Wi-Fi Direct 連線未成功或已逾時，請確認對方已接受連線邀請' : '藍牙連線未成功或已逾時',
+      '${transportLabel(lastFailureTransport ?? transport)} 連線未成功或已逾時',
     'hello_timeout' => '對方未在時間內回應資料摘要',
-    'send_failed' => usesWifiDirect ? 'Wi-Fi Direct 訊息傳送失敗' : '藍牙訊息傳送失敗',
+    'send_failed' =>
+      '${transportLabel(lastFailureTransport ?? transport)} 訊息傳送失敗',
     'transfer_incomplete' => '需要的資料未收齊，或資料驗證未通過',
     'session_failed' => '同步過程中發生錯誤',
     'discovery_failed' => '無法搜尋附近節點',

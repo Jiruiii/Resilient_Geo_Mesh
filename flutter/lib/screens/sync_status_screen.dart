@@ -1,12 +1,18 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../data/bridge_failure.dart';
 import '../data/map_bridge.dart';
 import '../data/sync_status.dart';
 
 class SyncStatusScreen extends StatefulWidget {
-  const SyncStatusScreen({super.key, required this.bridge});
+  const SyncStatusScreen({
+    super.key,
+    required this.bridge,
+    this.isWeb = kIsWeb,
+  });
   final MapBridge bridge;
+  final bool isWeb;
   @override
   State<SyncStatusScreen> createState() => _SyncStatusScreenState();
 }
@@ -20,6 +26,7 @@ class _SyncStatusScreenState extends State<SyncStatusScreen>
   @override
   void initState() {
     super.initState();
+    if (widget.isWeb) return;
     WidgetsBinding.instance.addObserver(this);
     unawaited(_refresh());
     _timer = Timer.periodic(const Duration(seconds: 3), (_) {
@@ -97,6 +104,26 @@ class _SyncStatusScreenState extends State<SyncStatusScreen>
 
   @override
   Widget build(BuildContext context) {
+    if (widget.isWeb) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('同步狀態')),
+        body: ListView(
+          padding: const EdgeInsets.all(16),
+          children: const [
+            ListTile(
+              title: Text('附近裝置離線交換'),
+              subtitle: Text(
+                'Android App 會自動嘗試 Nearby、Wi-Fi Direct 與藍牙 BLE，不需要網際網路。',
+              ),
+            ),
+            ListTile(
+              title: Text('請使用 Android App 交換'),
+              subtitle: Text('網頁版無法使用這套原生無線傳輸服務；仍可透過既有伺服器更新取得已驗證資料。'),
+            ),
+          ],
+        ),
+      );
+    }
     final status = _status;
     return Scaffold(
       appBar: AppBar(
@@ -141,32 +168,68 @@ class _SyncStatusScreenState extends State<SyncStatusScreen>
             Card(
               child: Column(
                 children: [
-                  Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: DropdownButtonFormField<String>(
-                      value: status.transport,
-                      decoration: const InputDecoration(labelText: '傳輸方式'),
-                      items: const [
-                        DropdownMenuItem(value: 'ble', child: Text('藍牙 BLE')),
-                        DropdownMenuItem(
-                          value: 'wifi_direct',
-                          child: Text('Wi-Fi Direct'),
-                        ),
-                      ],
-                      onChanged:
-                          _changing ||
-                                  _error != null ||
-                                  status.emergencyModeEnabled
-                              ? null
-                              : _setTransport,
+                  ListTile(
+                    title: const Text('傳輸方式'),
+                    subtitle: Text(SyncStatus.transportLabel(status.transport)),
+                  ),
+                  ListTile(
+                    title: const Text('目前啟用'),
+                    subtitle: Text(status.activeTransportLabel),
+                  ),
+                  if (status.automatic)
+                    const Padding(
+                      padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
+                      child: Text(
+                        '優先嘗試 Nearby，再嘗試 Wi-Fi Direct；藍牙保留作為備援。只需開啟緊急模式，不必手動選擇。',
+                      ),
                     ),
+                  if (status.fallbackDescription != null)
+                    Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Text(status.fallbackDescription!),
+                    ),
+                  ExpansionTile(
+                    title: const Text('進階：指定傳輸方式'),
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: DropdownButtonFormField<String>(
+                          value: status.transport,
+                          decoration: const InputDecoration(labelText: '傳輸方式'),
+                          items: const [
+                            DropdownMenuItem(
+                              value: 'auto',
+                              child: Text('自動選擇（建議）'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'nearby',
+                              child: Text('Nearby'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'ble',
+                              child: Text('藍牙 BLE'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'wifi_direct',
+                              child: Text('Wi-Fi Direct'),
+                            ),
+                          ],
+                          onChanged:
+                              _changing ||
+                                      _error != null ||
+                                      status.emergencyModeEnabled
+                                  ? null
+                                  : _setTransport,
+                        ),
+                      ),
+                    ],
                   ),
                   Padding(
                     padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
                     child: Text(
                       status.emergencyModeEnabled
                           ? '切換傳輸方式前，請先關閉緊急模式。'
-                          : '兩支手機請選擇相同方式，再開啟緊急模式。',
+                          : '指定單一方式時，兩支手機需選擇相同方式。Nearby 需要可用的 Google Play services，但傳輸不需上網。',
                     ),
                   ),
                   SwitchListTile(
@@ -177,7 +240,18 @@ class _SyncStatusScreenState extends State<SyncStatusScreen>
                     value: status.emergencyModeEnabled,
                     onChanged: _changing || _error != null ? null : _setEnabled,
                   ),
-                  if (status.usesWifiDirect) ...[
+                  if (status.automatic || status.usesNearby)
+                    ListTile(
+                      title: const Text('Nearby'),
+                      subtitle: Text(
+                        status.nearbyAvailable
+                            ? 'Google Play services 可用；傳輸能力仍以實際連線結果為準。'
+                            : 'Google Play services 不可用，自動模式仍可嘗試原生傳輸。',
+                      ),
+                    ),
+                  if (status.usesWifiDirect ||
+                      status.automatic ||
+                      status.usesNearby) ...[
                     ListTile(
                       title: const Text('Wi-Fi Direct'),
                       trailing: Text(
@@ -197,16 +271,17 @@ class _SyncStatusScreenState extends State<SyncStatusScreen>
                     ListTile(
                       title: const Text('系統定位服務'),
                       trailing: Text(
-                        status.locationEnabled ? '已開啟' : '請開啟以搜尋裝置',
+                        status.locationEnabled ? '已開啟' : 'Wi-Fi Direct 需要開啟',
                       ),
                     ),
                     const Padding(
                       padding: EdgeInsets.all(16),
                       child: Text(
-                        '不需要網際網路或同一台路由器。請在對方手機接受系統連線邀請；若未授權，重新開啟緊急模式或至系統 App 設定允許。此模式一次加入一個群組；無法連線時可切回藍牙。',
+                        '不需要網際網路或同一台路由器。原生 Wi-Fi Direct 需要系統定位開啟，且可能要求對方接受系統連線邀請。自動模式會在高速方式無法使用時繼續嘗試其他方式。',
                       ),
                     ),
-                  ] else ...[
+                  ],
+                  if (!status.usesWifiDirect) ...[
                     ListTile(
                       title: const Text('藍牙'),
                       trailing: Text(
@@ -273,7 +348,9 @@ class _SyncStatusScreenState extends State<SyncStatusScreen>
                   ),
                   const Padding(
                     padding: EdgeInsets.fromLTRB(16, 0, 16, 16),
-                    child: Text('資料已一致時也會完成同步；完成次數不代表不同裝置數。'),
+                    child: Text(
+                      '資料已一致時也會完成同步；完成次數不代表不同裝置數。附近節點依通道計數，同一手機可能重複出現。',
+                    ),
                   ),
                 ],
               ),
