@@ -11,7 +11,7 @@ import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertTrue
 import java.io.Closeable
 
-/** Test-only AP isolation; no elevated permissions remain during the radio test. */
+/** Test-only AP isolation; also supports a phone that starts without an AP. */
 @SuppressLint("MissingPermission")
 class OfflineWifiTestNetwork(context: Context) : Closeable {
     private val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
@@ -23,20 +23,22 @@ class OfflineWifiTestNetwork(context: Context) : Closeable {
         automation.adoptShellPermissionIdentity("android.permission.NETWORK_SETTINGS")
         try {
             val id = wifi.connectionInfo.networkId
-            assertTrue("Test must start on the control AP", id >= 0)
-            networkToRestore = id
-            assertTrue("Could not temporarily disable control AP", wifi.disableNetwork(id))
+            if (id >= 0) {
+                networkToRestore = id
+                assertTrue("Could not temporarily disable control AP", wifi.disableNetwork(id))
+            }
         } finally { automation.dropShellPermissionIdentity() }
         withTimeout(10000) {
-            while (connectivity.allNetworks.any {
-                val caps = connectivity.getNetworkCapabilities(it)
-                caps != null && (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
-                    caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) &&
-                    caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-            }) delay(250)
+            while (hasInternetNetwork()) delay(250)
         }
         assertTrue("Wi-Fi must remain enabled", wifi.isWifiEnabled)
     }
+
+    private fun hasInternetNetwork() = connectivity.allNetworks.any {
+        connectivity.getNetworkCapabilities(it)?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
+    }
+
+    fun assertDisconnected() = assertTrue("An Internet-capable network appeared during the offline test", !hasInternetNetwork())
 
     override fun close() {
         networkToRestore?.let { id ->

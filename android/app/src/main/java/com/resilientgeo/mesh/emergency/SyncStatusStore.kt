@@ -15,14 +15,16 @@ import java.time.Instant
 class SyncStatusStore(context: Context) {
     private val appContext = context.applicationContext
     private val preferences = appContext.getSharedPreferences("sync_status", Context.MODE_PRIVATE)
-    fun started() = telemetry.start(SystemClock.elapsedRealtime())
-    fun stopped() = telemetry.stop()
+    fun started() { activeTransports = emptyList(); fallbackReason = null; telemetry.start(SystemClock.elapsedRealtime()) }
+    fun stopped() { activeTransports = emptyList(); fallbackReason = null; telemetry.stop() }
+    fun transports(active: List<String>, reason: String?) { activeTransports = active.toList(); fallbackReason = reason }
     fun heartbeat(discovery: Boolean, nearby: Int, stats: AutoPeerSyncEngine.Stats?) =
         telemetry.update(discovery, nearby, stats, SystemClock.elapsedRealtime())
-    fun record(outcome: AutoPeerSyncEngine.SyncOutcome) {
+    fun record(outcome: AutoPeerSyncEngine.SyncOutcome, transport: String? = null) {
         val at = Instant.now().toString()
         if (outcome.succeeded) preferences.edit().putString("last_success_at", at).apply()
-        else preferences.edit().putString("last_failure_at", at).putString("last_failure_code", outcome.failureCode).apply()
+        else preferences.edit().putString("last_failure_at", at).putString("last_failure_code", outcome.failureCode)
+            .putString("last_failure_transport", transport).apply()
     }
     fun message(): Map<String, Any?> {
         val adapter = appContext.getSystemService(BluetoothManager::class.java)?.adapter
@@ -34,10 +36,15 @@ class SyncStatusStore(context: Context) {
         val enabled = SharedPreferencesEmergencyModeState(appContext).isEnabled
         val live = telemetry.snapshot(SystemClock.elapsedRealtime())
         val transport = MeshTransportSettings(appContext)
-        val radioReady = if (transport.mode == MeshTransportSettings.WIFI_DIRECT) transport.wifiReady() else granted && bluetoothEnabled
-        val discovery = enabled && live.serviceRunning && live.discoveryActive && radioReady
+        val active = if (enabled && live.serviceRunning) activeTransports.filter { transport.ready(it) } else emptyList()
+        val discovery = enabled && live.serviceRunning && live.discoveryActive && active.isNotEmpty()
         return mapOf(
             "transport" to transport.mode,
+            "active_transports" to active,
+            "fallback_reason" to if (enabled && live.serviceRunning) fallbackReason else null,
+            "nearby_available" to transport.nearbyAvailable(),
+            "nearby_permissions_granted" to transport.nearbyGranted(),
+            "nearby_ready" to transport.nearbyReady(),
             "wifi_direct_available" to transport.wifiAvailable(),
             "wifi_enabled" to transport.wifiEnabled(),
             "wifi_permissions_granted" to transport.wifiGranted(),
@@ -56,8 +63,13 @@ class SyncStatusStore(context: Context) {
             "last_success_at" to preferences.getString("last_success_at", null),
             "last_failure_at" to preferences.getString("last_failure_at", null),
             "last_failure_code" to preferences.getString("last_failure_code", null),
+            "last_failure_transport" to preferences.getString("last_failure_transport", null),
             "observed_at" to Instant.now().toString(),
         )
     }
-    private companion object { val telemetry = SyncTelemetry() }
+    private companion object {
+        val telemetry = SyncTelemetry()
+        @Volatile var activeTransports: List<String> = emptyList()
+        @Volatile var fallbackReason: String? = null
+    }
 }

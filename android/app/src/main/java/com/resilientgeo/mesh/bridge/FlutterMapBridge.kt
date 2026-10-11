@@ -92,7 +92,7 @@ class FlutterMapBridge(
             "getSyncStatus" -> result.success(syncStatus.message())
             "setSyncTransport" -> {
                 val mode = (call.arguments as? Map<*, *>)?.get("transport") as? String
-                if (mode !in listOf("ble", "wifi_direct")) {
+                if (mode !in MeshTransportSettings.MODES) {
                     result.error(INVALID_ARGUMENTS, "Unknown sync transport", null)
                 } else if (emergencyMode.isEnabled) {
                     result.error(METHOD_ERROR, "請先關閉緊急模式再切換傳輸方式", null)

@@ -1,5 +1,7 @@
 # Wi-Fi Direct 同步
 
+> 2026-10-10：正式預設改為 [Nearby 與自動備援](nearby-auto-transport.md)。以下手動選擇操作仍適用進階指定 Wi-Fi Direct 模式；「目前不自動切換」描述的是 10-04 版本。
+
 2026-10-04：新增可選的 Android Wi-Fi Direct transport，沿用現有
 HELLO / DIFF / REQUEST / TRANSFER、簽章驗證、Room 與分片快取。
 藍牙仍是預設。兩種傳輸方式需在兩台手機上選擇一致；目前不自動切換。

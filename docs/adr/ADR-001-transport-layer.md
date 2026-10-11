@@ -1,5 +1,7 @@
 # ADR-001：MVP 傳輸層選擇
 
+> 2026-10-10：Nearby 已重新實作並加入自動備援候選，見 [自動交換](../nearby-auto-transport.md)。下方的「Google 側／非 App 端可控」是當時推論，未確認根因，不代表已證實永久不相容。新的實機驗證尚待完成。
+
 > 2026-10-04 後續：BLE 仍為預設，新增可選 Wi-Fi Direct transport，使用 DNS-SD、P2P 介面／Network socket 綁定及現有驗證流程。使用與驗證見 [Wi-Fi Direct](../wifi-direct.md)。下方「否決」為 2026-09-05 舊實作的歷史決策；當時 TCP 逾時的根因未確認，不能據此判定 Wi-Fi Direct 必須 root。
 
 - 狀態：**Accepted（BLE GATT），裝置相容性已轉正**，2026-09-05 實機 Spike 後定案，同日用 Sharp SH-M32 補測相容性後轉正

@@ -88,6 +88,7 @@ class AutoPeerSyncEngine(
     private val failureCooldownMillis: Long = FAILURE_COOLDOWN_MS,
     private val clock: () -> Long = System::currentTimeMillis,
     private val onSyncOutcome: (SyncOutcome) -> Unit = {},
+    private val mayInitiate: () -> Boolean = { true },
 ) {
     private enum class Phase {
         DISCOVERED, CONNECTING, EXCHANGING, SYNCED, FAILED;
@@ -124,6 +125,8 @@ class AutoPeerSyncEngine(
             latestRemoteSummary = summary
             remoteSummarySeq.incrementAndGet()
         }
+
+        fun hasUnconsumedHello() = remoteSummarySeq.get() > helloConsumedSeq
 
         /** Returns the latest HELLO if it hasn't already been acted on this round, else null. */
         fun takeUnconsumedHello(): RemoteHello? {
@@ -222,6 +225,9 @@ class AutoPeerSyncEngine(
             return
         }
         val peerId = advertisement.transportIdentity ?: advertisement.peerId
+        // Keep advertisements visible while a faster transport gets a short head start.
+        // Incoming messages are still accepted; repeated sightings retry after the gate opens.
+        if (!mayInitiate() && sessions[peerId]?.hasUnconsumedHello() != true) return
         val session = sessions.computeIfAbsent(peerId) { PeerSession(it) }
         session.connectionAddress = advertisement.peerId
         session.lastSeenAtMillis = clock()

@@ -1,6 +1,6 @@
 # Resilient Geo Mesh
 
-> 2026-10-04：新增可選的 **Wi-Fi Direct** 同步。在「個人設定 → 同步狀態」關閉緊急模式後選擇傳輸方式，兩台選擇一致再啟動。藍牙仍為預設；Wi-Fi Direct 的權限、系統邀請、單群組限制與驗證方式見 [Wi-Fi Direct 文件](docs/wifi-direct.md)。
+> 2026-10-10：新增 **Nearby 與自動備援**。在「個人設定 → 同步狀態」開啟緊急模式，自動優先嘗試 Nearby，再嘗試 Wi-Fi Direct，BLE 保持可用作備援；不需網際網路。Nearby 需 Google Play services，原生備援不需要。策略、權限、Web 限制與實機驗證紀錄見 [自動交換文件](docs/nearby-auto-transport.md)。
 
 > 極端通訊環境下的空間情報系統 — 當基地台總頻寬受限時，讓附近的手機彼此交換各自缺少的災情資料分片。
 
@@ -263,7 +263,7 @@ repo 內不含任何 API 金鑰、Token 或個人資料。金鑰僅由本機 git
 | `org.json`                                                           | Public Domain                     | JVM 單元測試中的 JSON 解析（Android 內建版為 stub） |
 | kotlinx.coroutines                                                   | Apache-2.0                        | 非同步傳輸流程                                      |
 | Fastify                                                              | MIT                               | Central Server 的 HTTP API                         |
-| Google Play Services Nearby                                          | Google APIs 服務條款              | ADR-001 評估用，**已否決**，程式碼保留作為決策佐證  |
+| Google Play Services Nearby                                          | Google APIs 服務條款              | 自動交換的優先候選；無 GMS 時使用原生 Wi-Fi Direct / BLE 備援  |
 | JUnit 4                                                              | EPL-1.0                           | 單元測試                                            |
 
 pipeline 與 simulator 的資料處理使用 Node.js 內建模組；Central Server 使用 Fastify 提供 HTTP API。Python 測試僅使用標準庫。啟動畫面使用專案內的 Geo light/dark phone logo；Android 原生 starting window 使用對應的 square logo，會依系統深色模式切換。

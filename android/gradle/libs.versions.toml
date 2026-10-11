@@ -15,7 +15,8 @@ room = "2.6.1"
 bouncycastle = "1.78.1"
 androidxTestRunner = "1.6.2"
 jsonOrg = "20240303"
-coroutines = "1.8.1"
+coroutines = "1.10.2"
+nearby = "19.4.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -37,6 +38,8 @@ bouncycastle-bcprov = { group = "org.bouncycastle", name = "bcprov-jdk18on", ver
 json-org = { group = "org.json", name = "json", version.ref = "jsonOrg" }
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "coroutines" }
+kotlinx-coroutines-play-services = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-play-services", version.ref = "coroutines" }
+play-services-nearby = { group = "com.google.android.gms", name = "play-services-nearby", version.ref = "nearby" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

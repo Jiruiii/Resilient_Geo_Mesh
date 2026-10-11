@@ -83,11 +83,14 @@ void main() {
         ),
       );
       await tester.pump();
+      await tester.tap(find.text('進階：指定傳輸方式'));
+      await tester.pumpAndSettle();
       await tester.tap(find.byType(DropdownButtonFormField<String>));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Wi-Fi Direct').last);
       await tester.pumpAndSettle();
       expect(mode, 'wifi_direct');
+      await tester.ensureVisible(find.byType(Switch));
       await tester.tap(find.byType(Switch));
       await tester.pump();
       expect(
@@ -133,6 +136,81 @@ void main() {
       );
     },
   );
+
+  test(
+    'automatic mode keeps working without GMS when native Wi-Fi is ready',
+    () {
+      final status = SyncStatus.fromMessage({
+        ...message(),
+        'transport': 'auto',
+        'active_transports': ['wifi_direct'],
+        'bluetooth_enabled': false,
+        'ble_permissions_granted': false,
+        'nearby_available': false,
+        'fallback_reason': 'nearby_discovery_failed',
+        'last_failure_code': 'send_failed',
+        'last_failure_transport': 'nearby',
+      });
+      expect(status.activityLabel, '正在與附近節點同步');
+      expect(status.activeTransportLabel, 'Wi-Fi Direct');
+      expect(status.fallbackDescription, contains('Nearby 嘗試失敗'));
+      expect(status.failureDescription, 'Nearby 訊息傳送失敗');
+    },
+  );
+
+  testWidgets('web explains offline exchange without polling native APIs', (
+    tester,
+  ) async {
+    const channel = MethodChannel('test/web-sync');
+    var calls = 0;
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(channel, (_) async {
+      calls++;
+      return message();
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SyncStatusScreen(
+          bridge: MapBridge(methodChannel: channel),
+          isWeb: true,
+        ),
+      ),
+    );
+    await tester.pump(const Duration(seconds: 10));
+    expect(find.text('請使用 Android App 交換'), findsOneWidget);
+    expect(find.byType(Switch), findsNothing);
+    expect(calls, 0);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('auto shows live transports and leaves overrides collapsed', (
+    tester,
+  ) async {
+    const channel = MethodChannel('test/auto-sync');
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(
+      channel,
+      (_) async => {
+        ...message(),
+        'transport': 'auto',
+        'active_transports': ['nearby', 'ble'],
+        'nearby_available': true,
+      },
+    );
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SyncStatusScreen(bridge: MapBridge(methodChannel: channel)),
+      ),
+    );
+    await tester.pump();
+    expect(find.text('Nearby + 藍牙 BLE'), findsOneWidget);
+    expect(find.byType(DropdownButtonFormField<String>), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
 
   testWidgets(
     'polls real bridge data and clearly marks retained data on failure',
