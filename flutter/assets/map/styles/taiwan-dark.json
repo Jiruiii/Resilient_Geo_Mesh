@@ -13,35 +13,65 @@
       "url": "pmtiles://asset://assets/map/pmtiles/taiwan.pmtiles",
       "minzoom": 0,
       "maxzoom": 12,
-      "attribution": "© OpenStreetMap contributors · Protomaps"
+      "attribution": "© OpenStreetMap contributors · Protomaps",
+      "bounds": [
+        118,
+        21.8,
+        122.2,
+        26.5
+      ]
     },
     "taiwan-north": {
       "type": "vector",
       "url": "pmtiles://asset://assets/map/pmtiles/taiwan-north.pmtiles",
       "minzoom": 13,
       "maxzoom": 15,
-      "attribution": "© OpenStreetMap contributors · Protomaps"
+      "attribution": "© OpenStreetMap contributors · Protomaps",
+      "bounds": [
+        118,
+        24,
+        122.2,
+        26.5
+      ]
     },
     "taiwan-central": {
       "type": "vector",
       "url": "pmtiles://asset://assets/map/pmtiles/taiwan-central.pmtiles",
       "minzoom": 13,
       "maxzoom": 15,
-      "attribution": "© OpenStreetMap contributors · Protomaps"
+      "attribution": "© OpenStreetMap contributors · Protomaps",
+      "bounds": [
+        118,
+        23,
+        121.6,
+        24.1
+      ]
     },
     "taiwan-south": {
       "type": "vector",
       "url": "pmtiles://asset://assets/map/pmtiles/taiwan-south.pmtiles",
       "minzoom": 13,
       "maxzoom": 15,
-      "attribution": "© OpenStreetMap contributors · Protomaps"
+      "attribution": "© OpenStreetMap contributors · Protomaps",
+      "bounds": [
+        118,
+        21.8,
+        121.6,
+        23.8
+      ]
     },
     "taiwan-east": {
       "type": "vector",
       "url": "pmtiles://asset://assets/map/pmtiles/taiwan-east.pmtiles",
       "minzoom": 13,
       "maxzoom": 15,
-      "attribution": "© OpenStreetMap contributors · Protomaps"
+      "attribution": "© OpenStreetMap contributors · Protomaps",
+      "bounds": [
+        120.8,
+        21.8,
+        122.2,
+        25.5
+      ]
     },
     "taiwan-reference-labels": {
       "type": "geojson",
@@ -52,7 +82,9 @@
     {
       "id": "taiwan-background",
       "type": "background",
-      "paint": {"background-color": "#1f6570"}
+      "paint": {
+        "background-color": "#1f6570"
+      }
     },
     {
       "id": "taiwan-earth",
@@ -60,22 +92,465 @@
       "source": "taiwan-overview",
       "source-layer": "earth",
       "minzoom": 0,
-      "paint": {"fill-color": "#263b35"}
+      "paint": {
+        "fill-color": "#263b35"
+      },
+      "maxzoom": 13
     },
     {
-      "id": "taiwan-water",
+      "id": "taiwan-north-earth",
       "type": "fill",
-      "source": "taiwan-overview",
-      "source-layer": "water",
-      "paint": {"fill-color": "#1f6570"}
+      "source": "taiwan-north",
+      "source-layer": "earth",
+      "minzoom": 13,
+      "paint": {
+        "fill-color": "#263b35"
+      }
+    },
+    {
+      "id": "taiwan-central-earth",
+      "type": "fill",
+      "source": "taiwan-central",
+      "source-layer": "earth",
+      "minzoom": 13,
+      "paint": {
+        "fill-color": "#263b35"
+      }
+    },
+    {
+      "id": "taiwan-south-earth",
+      "type": "fill",
+      "source": "taiwan-south",
+      "source-layer": "earth",
+      "minzoom": 13,
+      "paint": {
+        "fill-color": "#263b35"
+      }
+    },
+    {
+      "id": "taiwan-east-earth",
+      "type": "fill",
+      "source": "taiwan-east",
+      "source-layer": "earth",
+      "minzoom": 13,
+      "paint": {
+        "fill-color": "#263b35"
+      }
     },
     {
       "id": "taiwan-landuse",
       "type": "fill",
       "source": "taiwan-overview",
       "source-layer": "landuse",
-      "filter": ["all", ["!=", ["get", "kind"], "national_park"], ["!=", ["get", "kind"], "nature_reserve"]],
-      "paint": {"fill-color": "#263b35", "fill-opacity": 0.8}
+      "filter": [
+        "all",
+        [
+          "!=",
+          [
+            "get",
+            "kind"
+          ],
+          "national_park"
+        ],
+        [
+          "!=",
+          [
+            "get",
+            "kind"
+          ],
+          "nature_reserve"
+        ]
+      ],
+      "paint": {
+        "fill-color": "#263b35",
+        "fill-opacity": 0.8
+      },
+      "maxzoom": 13
+    },
+    {
+      "id": "taiwan-north-landuse",
+      "type": "fill",
+      "source": "taiwan-north",
+      "source-layer": "landuse",
+      "minzoom": 13,
+      "filter": [
+        "all",
+        [
+          "!=",
+          [
+            "get",
+            "kind"
+          ],
+          "national_park"
+        ],
+        [
+          "!=",
+          [
+            "get",
+            "kind"
+          ],
+          "nature_reserve"
+        ]
+      ],
+      "paint": {
+        "fill-color": "#263b35",
+        "fill-opacity": 0.8
+      }
+    },
+    {
+      "id": "taiwan-central-landuse",
+      "type": "fill",
+      "source": "taiwan-central",
+      "source-layer": "landuse",
+      "minzoom": 13,
+      "filter": [
+        "all",
+        [
+          "!=",
+          [
+            "get",
+            "kind"
+          ],
+          "national_park"
+        ],
+        [
+          "!=",
+          [
+            "get",
+            "kind"
+          ],
+          "nature_reserve"
+        ]
+      ],
+      "paint": {
+        "fill-color": "#263b35",
+        "fill-opacity": 0.8
+      }
+    },
+    {
+      "id": "taiwan-south-landuse",
+      "type": "fill",
+      "source": "taiwan-south",
+      "source-layer": "landuse",
+      "minzoom": 13,
+      "filter": [
+        "all",
+        [
+          "!=",
+          [
+            "get",
+            "kind"
+          ],
+          "national_park"
+        ],
+        [
+          "!=",
+          [
+            "get",
+            "kind"
+          ],
+          "nature_reserve"
+        ]
+      ],
+      "paint": {
+        "fill-color": "#263b35",
+        "fill-opacity": 0.8
+      }
+    },
+    {
+      "id": "taiwan-east-landuse",
+      "type": "fill",
+      "source": "taiwan-east",
+      "source-layer": "landuse",
+      "minzoom": 13,
+      "filter": [
+        "all",
+        [
+          "!=",
+          [
+            "get",
+            "kind"
+          ],
+          "national_park"
+        ],
+        [
+          "!=",
+          [
+            "get",
+            "kind"
+          ],
+          "nature_reserve"
+        ]
+      ],
+      "paint": {
+        "fill-color": "#263b35",
+        "fill-opacity": 0.8
+      }
+    },
+    {
+      "id": "taiwan-water",
+      "type": "fill",
+      "source": "taiwan-overview",
+      "source-layer": "water",
+      "paint": {
+        "fill-color": "#1f6570"
+      },
+      "maxzoom": 13,
+      "filter": [
+        "==",
+        [
+          "geometry-type"
+        ],
+        "Polygon"
+      ]
+    },
+    {
+      "source": "taiwan-overview",
+      "source-layer": "water",
+      "maxzoom": 13,
+      "id": "taiwan-waterways",
+      "type": "line",
+      "filter": [
+        "==",
+        [
+          "geometry-type"
+        ],
+        "LineString"
+      ],
+      "layout": {
+        "line-cap": "round",
+        "line-join": "round"
+      },
+      "paint": {
+        "line-color": "#1f6570",
+        "line-width": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          8,
+          0.5,
+          13,
+          1,
+          17,
+          2.5
+        ]
+      }
+    },
+    {
+      "id": "taiwan-north-water",
+      "type": "fill",
+      "source": "taiwan-north",
+      "source-layer": "water",
+      "minzoom": 13,
+      "paint": {
+        "fill-color": "#1f6570"
+      },
+      "filter": [
+        "==",
+        [
+          "geometry-type"
+        ],
+        "Polygon"
+      ]
+    },
+    {
+      "source": "taiwan-north",
+      "source-layer": "water",
+      "minzoom": 13,
+      "id": "taiwan-north-waterways",
+      "type": "line",
+      "filter": [
+        "==",
+        [
+          "geometry-type"
+        ],
+        "LineString"
+      ],
+      "layout": {
+        "line-cap": "round",
+        "line-join": "round"
+      },
+      "paint": {
+        "line-color": "#1f6570",
+        "line-width": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          8,
+          0.5,
+          13,
+          1,
+          17,
+          2.5
+        ]
+      }
+    },
+    {
+      "id": "taiwan-central-water",
+      "type": "fill",
+      "source": "taiwan-central",
+      "source-layer": "water",
+      "minzoom": 13,
+      "paint": {
+        "fill-color": "#1f6570"
+      },
+      "filter": [
+        "==",
+        [
+          "geometry-type"
+        ],
+        "Polygon"
+      ]
+    },
+    {
+      "source": "taiwan-central",
+      "source-layer": "water",
+      "minzoom": 13,
+      "id": "taiwan-central-waterways",
+      "type": "line",
+      "filter": [
+        "==",
+        [
+          "geometry-type"
+        ],
+        "LineString"
+      ],
+      "layout": {
+        "line-cap": "round",
+        "line-join": "round"
+      },
+      "paint": {
+        "line-color": "#1f6570",
+        "line-width": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          8,
+          0.5,
+          13,
+          1,
+          17,
+          2.5
+        ]
+      }
+    },
+    {
+      "id": "taiwan-south-water",
+      "type": "fill",
+      "source": "taiwan-south",
+      "source-layer": "water",
+      "minzoom": 13,
+      "paint": {
+        "fill-color": "#1f6570"
+      },
+      "filter": [
+        "==",
+        [
+          "geometry-type"
+        ],
+        "Polygon"
+      ]
+    },
+    {
+      "source": "taiwan-south",
+      "source-layer": "water",
+      "minzoom": 13,
+      "id": "taiwan-south-waterways",
+      "type": "line",
+      "filter": [
+        "==",
+        [
+          "geometry-type"
+        ],
+        "LineString"
+      ],
+      "layout": {
+        "line-cap": "round",
+        "line-join": "round"
+      },
+      "paint": {
+        "line-color": "#1f6570",
+        "line-width": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          8,
+          0.5,
+          13,
+          1,
+          17,
+          2.5
+        ]
+      }
+    },
+    {
+      "id": "taiwan-east-water",
+      "type": "fill",
+      "source": "taiwan-east",
+      "source-layer": "water",
+      "minzoom": 13,
+      "paint": {
+        "fill-color": "#1f6570"
+      },
+      "filter": [
+        "==",
+        [
+          "geometry-type"
+        ],
+        "Polygon"
+      ]
+    },
+    {
+      "source": "taiwan-east",
+      "source-layer": "water",
+      "minzoom": 13,
+      "id": "taiwan-east-waterways",
+      "type": "line",
+      "filter": [
+        "==",
+        [
+          "geometry-type"
+        ],
+        "LineString"
+      ],
+      "layout": {
+        "line-cap": "round",
+        "line-join": "round"
+      },
+      "paint": {
+        "line-color": "#1f6570",
+        "line-width": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          8,
+          0.5,
+          13,
+          1,
+          17,
+          2.5
+        ]
+      }
     },
     {
       "id": "taiwan-buildings",
@@ -83,17 +558,549 @@
       "source": "taiwan-overview",
       "source-layer": "buildings",
       "minzoom": 13,
-      "paint": {"fill-color": "#30363d", "fill-opacity": 0.9}
+      "paint": {
+        "fill-color": "#30363d",
+        "fill-opacity": 0.9
+      },
+      "maxzoom": 13
+    },
+    {
+      "id": "taiwan-north-buildings",
+      "type": "fill",
+      "source": "taiwan-north",
+      "source-layer": "buildings",
+      "minzoom": 13,
+      "paint": {
+        "fill-color": "#30363d",
+        "fill-opacity": 0.9
+      }
+    },
+    {
+      "id": "taiwan-central-buildings",
+      "type": "fill",
+      "source": "taiwan-central",
+      "source-layer": "buildings",
+      "minzoom": 13,
+      "paint": {
+        "fill-color": "#30363d",
+        "fill-opacity": 0.9
+      }
+    },
+    {
+      "id": "taiwan-south-buildings",
+      "type": "fill",
+      "source": "taiwan-south",
+      "source-layer": "buildings",
+      "minzoom": 13,
+      "paint": {
+        "fill-color": "#30363d",
+        "fill-opacity": 0.9
+      }
+    },
+    {
+      "id": "taiwan-east-buildings",
+      "type": "fill",
+      "source": "taiwan-east",
+      "source-layer": "buildings",
+      "minzoom": 13,
+      "paint": {
+        "fill-color": "#30363d",
+        "fill-opacity": 0.9
+      }
     },
     {
       "id": "taiwan-roads",
       "type": "line",
       "source": "taiwan-overview",
       "source-layer": "roads",
-      "filter": ["!=", ["get", "route"], "ferry"],
+      "filter": [
+        "!=",
+        [
+          "get",
+          "route"
+        ],
+        "ferry"
+      ],
       "paint": {
-        "line-color": "#6d7780",
-        "line-width": ["interpolate", ["linear"], ["zoom"], 7, 0.5, 15, 4]
+        "line-color": [
+          "match",
+          [
+            "get",
+            "kind"
+          ],
+          "highway",
+          "#b79963",
+          "major_road",
+          "#a39470",
+          "path",
+          "#706b63",
+          "rail",
+          "#858b91",
+          "#637276"
+        ],
+        "line-width": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          7,
+          0.4,
+          13,
+          [
+            "match",
+            [
+              "get",
+              "kind"
+            ],
+            "highway",
+            2.5,
+            "major_road",
+            2,
+            "path",
+            0.5,
+            "rail",
+            0.6,
+            1
+          ],
+          15,
+          [
+            "match",
+            [
+              "get",
+              "kind"
+            ],
+            "highway",
+            5,
+            "major_road",
+            4,
+            "path",
+            0.8,
+            "rail",
+            0.8,
+            2
+          ],
+          17,
+          [
+            "match",
+            [
+              "get",
+              "kind"
+            ],
+            "highway",
+            10,
+            "major_road",
+            8,
+            "path",
+            1.5,
+            "rail",
+            1.2,
+            5
+          ]
+        ]
+      },
+      "maxzoom": 13,
+      "layout": {
+        "line-cap": "round",
+        "line-join": "round"
+      }
+    },
+    {
+      "id": "taiwan-north-roads",
+      "type": "line",
+      "source": "taiwan-north",
+      "source-layer": "roads",
+      "minzoom": 13,
+      "filter": [
+        "!=",
+        [
+          "get",
+          "route"
+        ],
+        "ferry"
+      ],
+      "paint": {
+        "line-color": [
+          "match",
+          [
+            "get",
+            "kind"
+          ],
+          "highway",
+          "#b79963",
+          "major_road",
+          "#a39470",
+          "path",
+          "#706b63",
+          "rail",
+          "#858b91",
+          "#637276"
+        ],
+        "line-width": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          7,
+          0.4,
+          13,
+          [
+            "match",
+            [
+              "get",
+              "kind"
+            ],
+            "highway",
+            2.5,
+            "major_road",
+            2,
+            "path",
+            0.5,
+            "rail",
+            0.6,
+            1
+          ],
+          15,
+          [
+            "match",
+            [
+              "get",
+              "kind"
+            ],
+            "highway",
+            5,
+            "major_road",
+            4,
+            "path",
+            0.8,
+            "rail",
+            0.8,
+            2
+          ],
+          17,
+          [
+            "match",
+            [
+              "get",
+              "kind"
+            ],
+            "highway",
+            10,
+            "major_road",
+            8,
+            "path",
+            1.5,
+            "rail",
+            1.2,
+            5
+          ]
+        ]
+      },
+      "layout": {
+        "line-cap": "round",
+        "line-join": "round"
+      }
+    },
+    {
+      "id": "taiwan-central-roads",
+      "type": "line",
+      "source": "taiwan-central",
+      "source-layer": "roads",
+      "minzoom": 13,
+      "filter": [
+        "!=",
+        [
+          "get",
+          "route"
+        ],
+        "ferry"
+      ],
+      "paint": {
+        "line-color": [
+          "match",
+          [
+            "get",
+            "kind"
+          ],
+          "highway",
+          "#b79963",
+          "major_road",
+          "#a39470",
+          "path",
+          "#706b63",
+          "rail",
+          "#858b91",
+          "#637276"
+        ],
+        "line-width": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          7,
+          0.4,
+          13,
+          [
+            "match",
+            [
+              "get",
+              "kind"
+            ],
+            "highway",
+            2.5,
+            "major_road",
+            2,
+            "path",
+            0.5,
+            "rail",
+            0.6,
+            1
+          ],
+          15,
+          [
+            "match",
+            [
+              "get",
+              "kind"
+            ],
+            "highway",
+            5,
+            "major_road",
+            4,
+            "path",
+            0.8,
+            "rail",
+            0.8,
+            2
+          ],
+          17,
+          [
+            "match",
+            [
+              "get",
+              "kind"
+            ],
+            "highway",
+            10,
+            "major_road",
+            8,
+            "path",
+            1.5,
+            "rail",
+            1.2,
+            5
+          ]
+        ]
+      },
+      "layout": {
+        "line-cap": "round",
+        "line-join": "round"
+      }
+    },
+    {
+      "id": "taiwan-south-roads",
+      "type": "line",
+      "source": "taiwan-south",
+      "source-layer": "roads",
+      "minzoom": 13,
+      "filter": [
+        "!=",
+        [
+          "get",
+          "route"
+        ],
+        "ferry"
+      ],
+      "paint": {
+        "line-color": [
+          "match",
+          [
+            "get",
+            "kind"
+          ],
+          "highway",
+          "#b79963",
+          "major_road",
+          "#a39470",
+          "path",
+          "#706b63",
+          "rail",
+          "#858b91",
+          "#637276"
+        ],
+        "line-width": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          7,
+          0.4,
+          13,
+          [
+            "match",
+            [
+              "get",
+              "kind"
+            ],
+            "highway",
+            2.5,
+            "major_road",
+            2,
+            "path",
+            0.5,
+            "rail",
+            0.6,
+            1
+          ],
+          15,
+          [
+            "match",
+            [
+              "get",
+              "kind"
+            ],
+            "highway",
+            5,
+            "major_road",
+            4,
+            "path",
+            0.8,
+            "rail",
+            0.8,
+            2
+          ],
+          17,
+          [
+            "match",
+            [
+              "get",
+              "kind"
+            ],
+            "highway",
+            10,
+            "major_road",
+            8,
+            "path",
+            1.5,
+            "rail",
+            1.2,
+            5
+          ]
+        ]
+      },
+      "layout": {
+        "line-cap": "round",
+        "line-join": "round"
+      }
+    },
+    {
+      "id": "taiwan-east-roads",
+      "type": "line",
+      "source": "taiwan-east",
+      "source-layer": "roads",
+      "minzoom": 13,
+      "filter": [
+        "!=",
+        [
+          "get",
+          "route"
+        ],
+        "ferry"
+      ],
+      "paint": {
+        "line-color": [
+          "match",
+          [
+            "get",
+            "kind"
+          ],
+          "highway",
+          "#b79963",
+          "major_road",
+          "#a39470",
+          "path",
+          "#706b63",
+          "rail",
+          "#858b91",
+          "#637276"
+        ],
+        "line-width": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          7,
+          0.4,
+          13,
+          [
+            "match",
+            [
+              "get",
+              "kind"
+            ],
+            "highway",
+            2.5,
+            "major_road",
+            2,
+            "path",
+            0.5,
+            "rail",
+            0.6,
+            1
+          ],
+          15,
+          [
+            "match",
+            [
+              "get",
+              "kind"
+            ],
+            "highway",
+            5,
+            "major_road",
+            4,
+            "path",
+            0.8,
+            "rail",
+            0.8,
+            2
+          ],
+          17,
+          [
+            "match",
+            [
+              "get",
+              "kind"
+            ],
+            "highway",
+            10,
+            "major_road",
+            8,
+            "path",
+            1.5,
+            "rail",
+            1.2,
+            5
+          ]
+        ]
+      },
+      "layout": {
+        "line-cap": "round",
+        "line-join": "round"
       }
     },
     {
@@ -102,16 +1109,51 @@
       "source": "taiwan-reference-labels",
       "minzoom": 5.0,
       "maxzoom": 22,
-      "filter": ["==", ["get", "label_type"], "island"],
+      "filter": [
+        "==",
+        [
+          "get",
+          "label_type"
+        ],
+        "island"
+      ],
       "layout": {
-        "text-field": ["coalesce", ["get", "display_name"], ["get", "name"]],
-        "text-font": ["NotoSansRegular"],
-        "text-size": ["interpolate", ["linear"], ["zoom"], 5.0, 11, 12, 14],
+        "text-field": [
+          "coalesce",
+          [
+            "get",
+            "display_name"
+          ],
+          [
+            "get",
+            "name"
+          ]
+        ],
+        "text-font": [
+          "NotoSansRegular"
+        ],
+        "text-size": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          5.0,
+          11,
+          12,
+          14
+        ],
         "text-allow-overlap": true,
         "text-ignore-placement": true,
         "text-padding": 4
       },
-      "paint": {"text-color": "#d9e1e7", "text-halo-color": "#171b20", "text-halo-width": 1.5}
+      "paint": {
+        "text-color": "#d9e1e7",
+        "text-halo-color": "#171b20",
+        "text-halo-width": 1.5
+      }
     },
     {
       "id": "taiwan-reference-cities",
@@ -119,17 +1161,78 @@
       "source": "taiwan-reference-labels",
       "minzoom": 5.0,
       "maxzoom": 8.5,
-      "filter": ["all", ["==", ["get", "label_type"], "city"], ["==", ["get", "admin_level"], "county"]],
+      "filter": [
+        "all",
+        [
+          "==",
+          [
+            "get",
+            "label_type"
+          ],
+          "city"
+        ],
+        [
+          "==",
+          [
+            "get",
+            "admin_level"
+          ],
+          "county"
+        ]
+      ],
       "layout": {
-        "text-field": ["coalesce", ["get", "display_name"], ["get", "name"]],
-        "text-font": ["NotoSansRegular"],
-        "text-size": ["interpolate", ["linear"], ["zoom"], 5.0, 11, 8.5, 14],
-        "text-allow-overlap": true,
-        "text-ignore-placement": true,
+        "text-field": [
+          "coalesce",
+          [
+            "get",
+            "display_name"
+          ],
+          [
+            "get",
+            "name"
+          ]
+        ],
+        "text-font": [
+          "NotoSansRegular"
+        ],
+        "text-size": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          5.0,
+          11,
+          8.5,
+          14
+        ],
+        "text-allow-overlap": false,
+        "text-ignore-placement": false,
         "text-padding": 4,
-        "symbol-sort-key": ["coalesce", ["get", "min_zoom"], 99]
+        "symbol-sort-key": [
+          "coalesce",
+          [
+            "get",
+            "min_zoom"
+          ],
+          99
+        ],
+        "text-variable-anchor": [
+          "center",
+          "top",
+          "bottom",
+          "left",
+          "right"
+        ],
+        "text-radial-offset": 0.5
       },
-      "paint": {"text-color": "#d9e1e7", "text-halo-color": "#171b20", "text-halo-width": 1}
+      "paint": {
+        "text-color": "#d9e1e7",
+        "text-halo-color": "#171b20",
+        "text-halo-width": 1
+      }
     },
     {
       "id": "taiwan-reference-districts",
@@ -137,17 +1240,52 @@
       "source": "taiwan-reference-labels",
       "minzoom": 8.5,
       "maxzoom": 11.5,
-      "filter": ["==", ["get", "label_type"], "district"],
+      "filter": [
+        "==",
+        [
+          "get",
+          "label_type"
+        ],
+        "district"
+      ],
       "layout": {
-        "text-field": ["get", "name"],
-        "text-font": ["NotoSansRegular"],
-        "text-size": ["interpolate", ["linear"], ["zoom"], 8.5, 10, 11.5, 13],
+        "text-field": [
+          "get",
+          "name"
+        ],
+        "text-font": [
+          "NotoSansRegular"
+        ],
+        "text-size": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          8.5,
+          10,
+          11.5,
+          13
+        ],
         "text-allow-overlap": false,
         "text-ignore-placement": false,
         "text-padding": 4,
-        "symbol-sort-key": ["coalesce", ["get", "min_zoom"], 99]
+        "symbol-sort-key": [
+          "coalesce",
+          [
+            "get",
+            "min_zoom"
+          ],
+          99
+        ]
       },
-      "paint": {"text-color": "#d9e1e7", "text-halo-color": "#171b20", "text-halo-width": 1}
+      "paint": {
+        "text-color": "#d9e1e7",
+        "text-halo-color": "#171b20",
+        "text-halo-width": 1
+      }
     },
     {
       "id": "taiwan-reference-towns",
@@ -155,17 +1293,52 @@
       "source": "taiwan-reference-labels",
       "minzoom": 8.5,
       "maxzoom": 11.5,
-      "filter": ["==", ["get", "label_type"], "town"],
+      "filter": [
+        "==",
+        [
+          "get",
+          "label_type"
+        ],
+        "town"
+      ],
       "layout": {
-        "text-field": ["get", "name"],
-        "text-font": ["NotoSansRegular"],
-        "text-size": ["interpolate", ["linear"], ["zoom"], 8.5, 10, 11.5, 13],
+        "text-field": [
+          "get",
+          "name"
+        ],
+        "text-font": [
+          "NotoSansRegular"
+        ],
+        "text-size": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          8.5,
+          10,
+          11.5,
+          13
+        ],
         "text-allow-overlap": false,
         "text-ignore-placement": false,
         "text-padding": 4,
-        "symbol-sort-key": ["coalesce", ["get", "min_zoom"], 99]
+        "symbol-sort-key": [
+          "coalesce",
+          [
+            "get",
+            "min_zoom"
+          ],
+          99
+        ]
       },
-      "paint": {"text-color": "#d9e1e7", "text-halo-color": "#171b20", "text-halo-width": 1}
+      "paint": {
+        "text-color": "#d9e1e7",
+        "text-halo-color": "#171b20",
+        "text-halo-width": 1
+      }
     },
     {
       "id": "taiwan-reference-villages",
@@ -173,51 +1346,86 @@
       "source": "taiwan-reference-labels",
       "minzoom": 11.5,
       "maxzoom": 22,
-      "filter": ["==", ["get", "label_type"], "village"],
+      "filter": [
+        "==",
+        [
+          "get",
+          "label_type"
+        ],
+        "village"
+      ],
       "layout": {
-        "text-field": ["get", "name"],
-        "text-font": ["NotoSansRegular"],
-        "text-size": ["interpolate", ["linear"], ["zoom"], 11.5, 9, 17, 12],
+        "text-field": [
+          "get",
+          "name"
+        ],
+        "text-font": [
+          "NotoSansRegular"
+        ],
+        "text-size": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          11.5,
+          9,
+          17,
+          12
+        ],
         "text-allow-overlap": false,
         "text-ignore-placement": false,
         "text-padding": 3,
-        "symbol-sort-key": ["coalesce", ["get", "min_zoom"], 99]
+        "symbol-sort-key": [
+          "coalesce",
+          [
+            "get",
+            "min_zoom"
+          ],
+          99
+        ]
       },
-      "paint": {"text-color": "#d9e1e7", "text-halo-color": "#171b20", "text-halo-width": 1}
+      "paint": {
+        "text-color": "#d9e1e7",
+        "text-halo-color": "#171b20",
+        "text-halo-width": 1
+      }
     },
-    {"id":"taiwan-north-water","type":"fill","source":"taiwan-north","source-layer":"water","minzoom":13,"paint":{"fill-color":"#1f6570"}},
-    {"id":"taiwan-central-water","type":"fill","source":"taiwan-central","source-layer":"water","minzoom":13,"paint":{"fill-color":"#1f6570"}},
-    {"id":"taiwan-south-water","type":"fill","source":"taiwan-south","source-layer":"water","minzoom":13,"paint":{"fill-color":"#1f6570"}},
-    {"id":"taiwan-east-water","type":"fill","source":"taiwan-east","source-layer":"water","minzoom":13,"paint":{"fill-color":"#1f6570"}},
-    {"id":"taiwan-north-landuse","type":"fill","source":"taiwan-north","source-layer":"landuse","minzoom":13,"filter":["all",["!=",["get","kind"],"national_park"],["!=",["get","kind"],"nature_reserve"]],"paint":{"fill-color":"#263b35","fill-opacity":0.8}},
-    {"id":"taiwan-central-landuse","type":"fill","source":"taiwan-central","source-layer":"landuse","minzoom":13,"filter":["all",["!=",["get","kind"],"national_park"],["!=",["get","kind"],"nature_reserve"]],"paint":{"fill-color":"#263b35","fill-opacity":0.8}},
-    {"id":"taiwan-south-landuse","type":"fill","source":"taiwan-south","source-layer":"landuse","minzoom":13,"filter":["all",["!=",["get","kind"],"national_park"],["!=",["get","kind"],"nature_reserve"]],"paint":{"fill-color":"#263b35","fill-opacity":0.8}},
-    {"id":"taiwan-east-landuse","type":"fill","source":"taiwan-east","source-layer":"landuse","minzoom":13,"filter":["all",["!=",["get","kind"],"national_park"],["!=",["get","kind"],"nature_reserve"]],"paint":{"fill-color":"#263b35","fill-opacity":0.8}},
-    {"id":"taiwan-north-buildings","type":"fill","source":"taiwan-north","source-layer":"buildings","minzoom":13,"paint":{"fill-color":"#30363d","fill-opacity":0.9}},
-    {"id":"taiwan-central-buildings","type":"fill","source":"taiwan-central","source-layer":"buildings","minzoom":13,"paint":{"fill-color":"#30363d","fill-opacity":0.9}},
-    {"id":"taiwan-south-buildings","type":"fill","source":"taiwan-south","source-layer":"buildings","minzoom":13,"paint":{"fill-color":"#30363d","fill-opacity":0.9}},
-    {"id":"taiwan-east-buildings","type":"fill","source":"taiwan-east","source-layer":"buildings","minzoom":13,"paint":{"fill-color":"#30363d","fill-opacity":0.9}},
-    {"id":"taiwan-north-roads","type":"line","source":"taiwan-north","source-layer":"roads","minzoom":13,"filter":["!=",["get","route"],"ferry"],"paint":{"line-color":"#6d7780","line-width":["interpolate",["linear"],["zoom"],13,1,15,4]}},
-    {"id":"taiwan-central-roads","type":"line","source":"taiwan-central","source-layer":"roads","minzoom":13,"filter":["!=",["get","route"],"ferry"],"paint":{"line-color":"#6d7780","line-width":["interpolate",["linear"],["zoom"],13,1,15,4]}},
-    {"id":"taiwan-south-roads","type":"line","source":"taiwan-south","source-layer":"roads","minzoom":13,"filter":["!=",["get","route"],"ferry"],"paint":{"line-color":"#6d7780","line-width":["interpolate",["linear"],["zoom"],13,1,15,4]}},
-    {"id":"taiwan-east-roads","type":"line","source":"taiwan-east","source-layer":"roads","minzoom":13,"filter":["!=",["get","route"],"ferry"],"paint":{"line-color":"#6d7780","line-width":["interpolate",["linear"],["zoom"],13,1,15,4]}},
     {
       "id": "taiwan-reference-landmarks",
       "type": "symbol",
       "source": "taiwan-reference-labels",
       "minzoom": 11,
       "maxzoom": 22,
-      "filter": ["==", ["get", "label_type"], "landmark"],
+      "filter": [
+        "==",
+        [
+          "get",
+          "label_type"
+        ],
+        "landmark"
+      ],
       "layout": {
-        "text-field": ["get", "name"],
-        "text-font": ["NotoSansRegular"],
+        "text-field": [
+          "get",
+          "name"
+        ],
+        "text-font": [
+          "NotoSansRegular"
+        ],
         "text-size": 12,
         "text-optional": false,
         "text-allow-overlap": true,
         "text-ignore-placement": true,
         "text-padding": 3
       },
-      "paint": {"text-color": "#d8c4ff", "text-halo-color": "#171b20", "text-halo-width": 1.5}
+      "paint": {
+        "text-color": "#d8c4ff",
+        "text-halo-color": "#171b20",
+        "text-halo-width": 1.5
+      }
     },
     {
       "id": "taiwan-road-labels",
@@ -226,17 +1434,73 @@
       "source-layer": "roads",
       "minzoom": 11.5,
       "maxzoom": 13,
-      "filter": ["all", ["!=", ["get", "route"], "ferry"], ["any", ["has", "name"], ["has", "ref"]]],
+      "filter": [
+        "all",
+        [
+          "!=",
+          [
+            "get",
+            "route"
+          ],
+          "ferry"
+        ],
+        [
+          "any",
+          [
+            "has",
+            "name"
+          ],
+          [
+            "has",
+            "ref"
+          ]
+        ]
+      ],
       "layout": {
         "symbol-placement": "line",
-        "text-field": ["coalesce", ["get", "name"], ["get", "ref"]],
-        "text-font": ["NotoSansRegular"],
-        "text-size": ["interpolate", ["linear"], ["zoom"], 11.5, 8, 15, 11],
+        "text-field": [
+          "coalesce",
+          [
+            "get",
+            "name:zh-Hant"
+          ],
+          [
+            "get",
+            "name"
+          ],
+          [
+            "get",
+            "ref"
+          ]
+        ],
+        "text-font": [
+          "NotoSansRegular"
+        ],
+        "text-size": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          11.5,
+          9,
+          15,
+          11,
+          17,
+          13
+        ],
         "text-allow-overlap": false,
         "text-ignore-placement": false,
-        "text-padding": 2
+        "text-padding": 2,
+        "symbol-spacing": 300
       },
-      "paint": {"text-color": "#d9e0e3", "text-halo-color": "#29343b", "text-halo-width": 1}
+      "paint": {
+        "text-color": "#d9e0e3",
+        "text-halo-color": "#29343b",
+        "text-halo-width": 1
+      }
     },
     {
       "id": "taiwan-north-road-labels",
@@ -245,17 +1509,73 @@
       "source-layer": "roads",
       "minzoom": 13,
       "maxzoom": 22,
-      "filter": ["all", ["!=", ["get", "route"], "ferry"], ["any", ["has", "name"], ["has", "ref"]]],
+      "filter": [
+        "all",
+        [
+          "!=",
+          [
+            "get",
+            "route"
+          ],
+          "ferry"
+        ],
+        [
+          "any",
+          [
+            "has",
+            "name"
+          ],
+          [
+            "has",
+            "ref"
+          ]
+        ]
+      ],
       "layout": {
         "symbol-placement": "line",
-        "text-field": ["coalesce", ["get", "name"], ["get", "ref"]],
-        "text-font": ["NotoSansRegular"],
-        "text-size": ["interpolate", ["linear"], ["zoom"], 13, 8, 15, 11],
+        "text-field": [
+          "coalesce",
+          [
+            "get",
+            "name:zh-Hant"
+          ],
+          [
+            "get",
+            "name"
+          ],
+          [
+            "get",
+            "ref"
+          ]
+        ],
+        "text-font": [
+          "NotoSansRegular"
+        ],
+        "text-size": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          11.5,
+          9,
+          15,
+          11,
+          17,
+          13
+        ],
         "text-allow-overlap": false,
         "text-ignore-placement": false,
-        "text-padding": 2
+        "text-padding": 2,
+        "symbol-spacing": 300
       },
-      "paint": {"text-color": "#d9e0e3", "text-halo-color": "#29343b", "text-halo-width": 1}
+      "paint": {
+        "text-color": "#d9e0e3",
+        "text-halo-color": "#29343b",
+        "text-halo-width": 1
+      }
     },
     {
       "id": "taiwan-central-road-labels",
@@ -264,17 +1584,73 @@
       "source-layer": "roads",
       "minzoom": 13,
       "maxzoom": 22,
-      "filter": ["all", ["!=", ["get", "route"], "ferry"], ["any", ["has", "name"], ["has", "ref"]]],
+      "filter": [
+        "all",
+        [
+          "!=",
+          [
+            "get",
+            "route"
+          ],
+          "ferry"
+        ],
+        [
+          "any",
+          [
+            "has",
+            "name"
+          ],
+          [
+            "has",
+            "ref"
+          ]
+        ]
+      ],
       "layout": {
         "symbol-placement": "line",
-        "text-field": ["coalesce", ["get", "name"], ["get", "ref"]],
-        "text-font": ["NotoSansRegular"],
-        "text-size": ["interpolate", ["linear"], ["zoom"], 13, 8, 15, 11],
+        "text-field": [
+          "coalesce",
+          [
+            "get",
+            "name:zh-Hant"
+          ],
+          [
+            "get",
+            "name"
+          ],
+          [
+            "get",
+            "ref"
+          ]
+        ],
+        "text-font": [
+          "NotoSansRegular"
+        ],
+        "text-size": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          11.5,
+          9,
+          15,
+          11,
+          17,
+          13
+        ],
         "text-allow-overlap": false,
         "text-ignore-placement": false,
-        "text-padding": 2
+        "text-padding": 2,
+        "symbol-spacing": 300
       },
-      "paint": {"text-color": "#d9e0e3", "text-halo-color": "#29343b", "text-halo-width": 1}
+      "paint": {
+        "text-color": "#d9e0e3",
+        "text-halo-color": "#29343b",
+        "text-halo-width": 1
+      }
     },
     {
       "id": "taiwan-south-road-labels",
@@ -283,17 +1659,73 @@
       "source-layer": "roads",
       "minzoom": 13,
       "maxzoom": 22,
-      "filter": ["all", ["!=", ["get", "route"], "ferry"], ["any", ["has", "name"], ["has", "ref"]]],
+      "filter": [
+        "all",
+        [
+          "!=",
+          [
+            "get",
+            "route"
+          ],
+          "ferry"
+        ],
+        [
+          "any",
+          [
+            "has",
+            "name"
+          ],
+          [
+            "has",
+            "ref"
+          ]
+        ]
+      ],
       "layout": {
         "symbol-placement": "line",
-        "text-field": ["coalesce", ["get", "name"], ["get", "ref"]],
-        "text-font": ["NotoSansRegular"],
-        "text-size": ["interpolate", ["linear"], ["zoom"], 13, 8, 15, 11],
+        "text-field": [
+          "coalesce",
+          [
+            "get",
+            "name:zh-Hant"
+          ],
+          [
+            "get",
+            "name"
+          ],
+          [
+            "get",
+            "ref"
+          ]
+        ],
+        "text-font": [
+          "NotoSansRegular"
+        ],
+        "text-size": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          11.5,
+          9,
+          15,
+          11,
+          17,
+          13
+        ],
         "text-allow-overlap": false,
         "text-ignore-placement": false,
-        "text-padding": 2
+        "text-padding": 2,
+        "symbol-spacing": 300
       },
-      "paint": {"text-color": "#d9e0e3", "text-halo-color": "#29343b", "text-halo-width": 1}
+      "paint": {
+        "text-color": "#d9e0e3",
+        "text-halo-color": "#29343b",
+        "text-halo-width": 1
+      }
     },
     {
       "id": "taiwan-east-road-labels",
@@ -302,17 +1734,73 @@
       "source-layer": "roads",
       "minzoom": 13,
       "maxzoom": 22,
-      "filter": ["all", ["!=", ["get", "route"], "ferry"], ["any", ["has", "name"], ["has", "ref"]]],
+      "filter": [
+        "all",
+        [
+          "!=",
+          [
+            "get",
+            "route"
+          ],
+          "ferry"
+        ],
+        [
+          "any",
+          [
+            "has",
+            "name"
+          ],
+          [
+            "has",
+            "ref"
+          ]
+        ]
+      ],
       "layout": {
         "symbol-placement": "line",
-        "text-field": ["coalesce", ["get", "name"], ["get", "ref"]],
-        "text-font": ["NotoSansRegular"],
-        "text-size": ["interpolate", ["linear"], ["zoom"], 13, 8, 15, 11],
+        "text-field": [
+          "coalesce",
+          [
+            "get",
+            "name:zh-Hant"
+          ],
+          [
+            "get",
+            "name"
+          ],
+          [
+            "get",
+            "ref"
+          ]
+        ],
+        "text-font": [
+          "NotoSansRegular"
+        ],
+        "text-size": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          11.5,
+          9,
+          15,
+          11,
+          17,
+          13
+        ],
         "text-allow-overlap": false,
         "text-ignore-placement": false,
-        "text-padding": 2
+        "text-padding": 2,
+        "symbol-spacing": 300
       },
-      "paint": {"text-color": "#d9e0e3", "text-halo-color": "#29343b", "text-halo-width": 1}
+      "paint": {
+        "text-color": "#d9e0e3",
+        "text-halo-color": "#29343b",
+        "text-halo-width": 1
+      }
     }
   ]
 }

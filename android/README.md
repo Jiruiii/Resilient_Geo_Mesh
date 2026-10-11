@@ -18,6 +18,28 @@ Single Android project, jointly owned:
   activities rather than content on the Flutter map screen. See
   `C_BLEbroadcast.md` at the repo root for C's device-tested findings.
 
+## 2026-10-11 Windows / Android Studio 執行
+
+1. Android Studio 開啟本專案的 `android/`，等待 Gradle Sync，執行組態選 `app`。
+2. `android/local.properties` 需包含本機 `sdk.dir` 與 `flutter.sdk`（本機已設定，請勿提交個人路徑）。
+3. Device Manager 的模擬器 Graphics 選 **Hardware** 或 **Automatic**，再 Run。這次 API 36 模擬器以硬體 GPU 驗證；SwiftShader 軟體 GPU 在本機會漏畫地圖文字。
+4. 已建置的 APK：`app/build/outputs/apk/debug/app-debug.apk`。首次啟動須等待內建圖資安裝到 App 私有目錄；後續啟動會重用已驗證圖資，底圖不需要網路或 API key。
+
+維護中的根 Gradle 設定會在 Windows 中文路徑下建立 `%LOCALAPPDATA%/ResilientGeo/checkouts/<id>` junction，指向同一份原始碼，並將 Flutter 產物移到 `%LOCALAPPDATA%/ResilientGeo/build/<id>/flutter`。這解決 Flutter 3.29 的 shader/AOT 與 JVM 測試對中文路徑的問題；不用搬動專案或手改生成的 `flutter/.android`。建置使用 compile SDK 36、NDK `27.0.12077973`。
+
+```powershell
+cd android
+.\gradlew.bat :app:assembleDebug :app:testDebugUnitTest '-Pkotlin.compiler.execution.strategy=in-process'
+```
+
+另已產生 `app/build/outputs/apk/profile/app-profile.apk`，可供 AOT 展示與效能驗證：
+
+```powershell
+.\gradlew.bat :app:assembleProfile '-Pkotlin.compiler.execution.strategy=in-process'
+```
+
+Debug 與 Profile 都已在 API 36 硬體 GPU 模擬器離線啟動並操作地圖。Profile 的台北連續拖曳 `gfxinfo` p95 為 28 ms，仍有掉幀；尚未做實體手機效能驗收。完整測試範圍與數據見 [Map_description.md](../Map_description.md)。
+
 ## Current Flutter integration note
 
 `MainActivity` is now a `FlutterFragmentActivity`. The Flutter module is maintained

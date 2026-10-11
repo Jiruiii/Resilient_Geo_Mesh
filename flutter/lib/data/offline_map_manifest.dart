@@ -168,7 +168,7 @@ class OfflineMapPackageCatalog {
     maxLatitude: 24.1,
     sourceDate: _sourceDate,
     sha256:
-        'a4c17eb1d96c0a459fd58f0aa80f8b514a6b2fb3ee9aaead36a6b677abb691cf',
+        '25d0a1521011783e6dd981e11087eaac5c03b8e56ab5dbecd2972a2463611a9e',
   );
 
   static const south = OfflineMapPackageManifest(
@@ -183,7 +183,7 @@ class OfflineMapPackageCatalog {
     maxLatitude: 23.8,
     sourceDate: _sourceDate,
     sha256:
-        '43e33265ea2b0fece0107683d02d441fd5925331faa3bcd9774d54643e509840',
+        '75f23a64c0dc97ab44c754e74353be5e08ffafa8e3957672210fc7aa1e0ac5cf',
   );
 
   static const east = OfflineMapPackageManifest(
@@ -198,7 +198,7 @@ class OfflineMapPackageCatalog {
     maxLatitude: 25.5,
     sourceDate: _sourceDate,
     sha256:
-        'bd09ad17596562f2593b37275178d3413da209f60119924b86b02a6db1cedd36',
+        'b7394239eb2df966a4dbd868b85dee0fb806562339aa61e0e6f572a61efbecc9',
   );
 
   static const regions = <OfflineMapPackageManifest>[north, central, south, east];

@@ -1,9 +1,45 @@
 import 'dart:convert';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:resilientgeo_flutter/data/offline_map_asset_store.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test(
+    'native installation failure propagates and the next attempt retries',
+    () async {
+      const channel = MethodChannel('com.resilientgeo.mesh/offline_map_assets');
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      var attempts = 0;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        attempts++;
+        if (attempts == 1) {
+          throw PlatformException(
+            code: 'map_asset_error',
+            message: 'Disk full',
+          );
+        }
+        final assets = (call.arguments as Map)['assets'] as List;
+        return {
+          for (final asset in assets)
+            asset: '/maps/${(asset as String).split('/').last}',
+        };
+      });
+      addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+      final store = OfflineMapAssetStore();
+      await expectLater(
+        store.installPmtiles(),
+        throwsA(isA<PlatformException>()),
+      );
+      final files = await store.installPmtiles();
+      expect(files.length, 5);
+      await store.installPmtiles();
+      expect(attempts, 2);
+    },
+  );
   test('Android glyphs and sprites resolve inside the Flutter APK bundle', () {
     const style =
         '{"glyphs":"asset://assets/map/fonts/{fontstack}/{range}.pbf",'
