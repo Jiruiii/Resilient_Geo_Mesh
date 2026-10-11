@@ -1,5 +1,34 @@
 # Map Description
 
+## 2026-10-11 全台 OSM 顯示修復
+
+Web 與 Android 共用同一組離線 OSM 樣式、圖磚與字形，不需要申請地圖 API key。
+
+- 修正 z13 以上概覽與區域圖層重疊、道路過粗，以及後畫的地表蓋住文字；道路依種類與縮放級別呈現。水域依幾何類型分成面與線，避免溪流線段被封閉填色成大片假水面。
+- 四個高細節包移除內容完全相同的重複圖磚，236,650 個唯一圖磚的原始內容全部保留。五包總容量從 478,624,646 降至 303,924,719 bytes（減少 36.5%）。區域名稱代表載入分組，實際圖磚歸屬經去重後不再等同行政區；東部資料多數已由其他包持有，不是刪除東部地圖。
+- 補齊原先只有空標頭的中文字形。字形來自固定版本的 MapLibre demotiles Noto Sans Regular，授權與逐檔雜湊保存在 `flutter/assets/map/fonts/NotoSansRegular/`。BMP 範圍內的參考地名逐字驗證有 bitmap；資料中「下石𥕢／石𥕢／𩻸魚堀」的兩個增補平面罕字不在這套字形範圍內，仍可能缺字。
+- Web 先用小範圍 Range 請求判斷伺服器能力，支援 206 時只讀需要的圖磚。只回傳 200 的開發伺服器保留整包快取相容模式；正式展示宜用支援 HTTP Range 的靜態伺服器。
+- Android 安裝圖資失敗後可重試，避免串流安裝失敗時改將整包大型圖資讀入 Dart 記憶體。
+- 概覽縣市標籤啟用避讓與多方向擺放，避免雙北、基隆、新竹等密集地名互相重疊。
+
+驗收位置定義於 `tools/maps/taiwan-map-checkpoints.json`：22 縣市代表點、綠島、蘭嶼、小琉球、東引、三處區域交界及恆春。這是代表點與圖磚完整性驗收，不代表逐條 OSM 道路人工校對；z16–17 仍由 z15 向量圖磚放大。
+
+Windows 中文專案路徑與 Android Studio 啟動方式見 [Android README](android/README.md)。模擬器請用 **Hardware / Automatic GPU**；本機 SwiftShader 軟體 GPU 測試曾漏畫文字，硬體 GPU 已能正常呈現繁體地名。
+
+### 本次驗收結果與限制
+
+| 項目 | 結果 |
+| --- | --- |
+| 圖磚完整性 | 195 個縣市／行政區／離島參考點於 z8、12、13、14、15 均有圖磚；去重前後唯一圖磚內容一致 |
+| Web | 30 點 × 4 種縮放 × 桌面淺色／手機深色，共 240 組檢查；最終樣式另重驗台北、高雄、馬祖、蘭嶼，無地圖載入錯誤 |
+| Flutter／Android | Flutter 全套 285 項、Android JVM 187 項通過；最後樣式修改另跑針對性回歸測試；靜態分析無問題 |
+| Android 顯示 | API 36 硬體 GPU 模擬器，30 點 × z13、15、17，共 90 組均有地表資料；實際確認繁體字、街道與離島 |
+| Android 離線 | 最終 Debug 與 Profile APK 飛航模式冷啟動、地圖縮放及拖曳成功；Profile 另驗證台北模擬定位；重開沿用圖資，未出現 App 崩潰 |
+| Web 拖曳 | 本機測試畫面間隔 p95 約 18 ms，測試期間未出現大於 50 ms 的間隔 |
+| Android 拖曳 | 本機 1080 × 2400 模擬器，台北街道連續 16 次拖曳：Debug p95 29 ms／p99 57 ms；Profile p95 28 ms／p99 40 ms |
+
+Android `gfxinfo` 仍記錄掉幀（Profile FrameTimeline janky 31.63%，legacy 4.46%），因此不能宣稱所有裝置穩定 60 FPS 或完全零卡頓。這些是模擬器量測，尚未以實體手機驗收；Profile 比 Debug 更適合展示效能。底圖離線驗收不等於事件 feed、地址下載或救災資料服務可斷網更新，這些流程維持既有行為。原始本機紀錄與截圖位於忽略版控的 `output/osm-*`。
+
 ## 目前使用的離線 OSM 底圖
 
 Web 與 Android 目前沿用原有的 OpenStreetMap／Protomaps 向量底圖。五個 PMTiles 資產隨 App 提供：`taiwan.pmtiles`、`taiwan-north.pmtiles`、`taiwan-central.pmtiles`、`taiwan-south.pmtiles`、`taiwan-east.pmtiles`。地圖載入時直接使用內建樣式和資產，不會向 Server 下載底圖；OSM attribution 為 `© OpenStreetMap contributors`。

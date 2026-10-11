@@ -30,12 +30,17 @@
     // Flutter's web asset server may answer Range requests with a complete
     // 200 response. Load only the archive that is actually requested, then
     // let PMTiles read byte slices from this in-memory source.
-    var initialRequest = fetch(url);
+    var initialRequest = fetch(url, { headers: { Range: 'bytes=0-16383' } });
     var prepared = initialRequest.then(function (response) {
       var contentRange = response.headers.get('Content-Range') || '';
       var supportsRanges =
         response.status === 206 && /^bytes \d+-\d+\/\d+$/.test(contentRange);
-      if (supportsRanges) return;
+      if (supportsRanges) {
+        // Only a small probe was requested; the PMTiles reader now fetches
+        // the directory and tile ranges it needs, never the complete archive.
+        if (response.body) return response.body.cancel();
+        return;
+      }
       if (!response.ok) {
         throw new Error('Unable to load PMTiles asset: ' + response.status);
       }

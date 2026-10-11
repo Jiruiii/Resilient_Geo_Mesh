@@ -49,6 +49,11 @@ void main() {
           expect(sourceJson['type'], 'vector');
           expect(sourceJson['url'], startsWith('pmtiles://asset://assets/'));
           expect(sourceJson['attribution'], contains('OpenStreetMap'));
+          expect(
+            sourceJson['bounds'],
+            hasLength(4),
+            reason: 'Do not request regional archives outside their coverage',
+          );
         }
         final referenceSource =
             sources['taiwan-reference-labels'] as Map<String, dynamic>;
@@ -218,6 +223,13 @@ void main() {
         expect(referenceCityLayer['minzoom'], 5.0);
         expect(referenceCityLayer['maxzoom'], 8.5);
         expect(jsonEncode(referenceCityLayer['filter']), contains('"city"'));
+        final cityLayout = referenceCityLayer['layout'] as Map<String, dynamic>;
+        expect(cityLayout['text-allow-overlap'], isFalse);
+        expect(cityLayout['text-ignore-placement'], isFalse);
+        expect(
+          cityLayout['text-variable-anchor'],
+          containsAll(['top', 'bottom']),
+        );
         final referenceDistrictLayer = layers
             .whereType<Map<String, dynamic>>()
             .firstWhere((layer) => layer['id'] == 'taiwan-reference-districts');
@@ -279,6 +291,65 @@ void main() {
           }
         }
         expect(landmarkIndex, greaterThan(roadLineIndexes.reduce(math.max)));
+
+        final geometryLayers =
+            layers
+                .whereType<Map<String, dynamic>>()
+                .where((layer) => layer['type'] != 'symbol')
+                .toList();
+        final lastGeometry = layers.indexOf(geometryLayers.last);
+        for (final layer in layers.whereType<Map<String, dynamic>>()) {
+          if (layer['type'] == 'symbol') {
+            expect(
+              layers.indexOf(layer),
+              greaterThan(lastGeometry),
+              reason: '${layer['id']} must not be covered by regional fills',
+            );
+          }
+          if (layer['source'] == 'taiwan-overview') {
+            expect(
+              layer['maxzoom'],
+              13,
+              reason: 'Overview geometry must not double-render over detail',
+            );
+          }
+        }
+        final earthLayers = geometryLayers.where(
+          (layer) => layer['source-layer'] == 'earth',
+        );
+        expect(
+          earthLayers,
+          hasLength(5),
+          reason: 'Detailed coastlines are needed in every regional package',
+        );
+        for (final layer in earthLayers.where(
+          (layer) => layer['source'] != 'taiwan-overview',
+        )) {
+          expect(layer['minzoom'], 13);
+        }
+
+        final waterLayers = geometryLayers.where(
+          (layer) => layer['source-layer'] == 'water',
+        );
+        expect(
+          waterLayers.where((layer) => layer['type'] == 'fill'),
+          hasLength(5),
+        );
+        expect(
+          waterLayers.where((layer) => layer['type'] == 'line'),
+          hasLength(5),
+        );
+        for (final layer in waterLayers) {
+          expect(
+            layer['filter'],
+            [
+              '==',
+              ['geometry-type'],
+              layer['type'] == 'fill' ? 'Polygon' : 'LineString',
+            ],
+            reason: 'Streams must not close into fictitious water polygons',
+          );
+        }
 
         final landuseLayers = layers
             .whereType<Map<String, dynamic>>()
