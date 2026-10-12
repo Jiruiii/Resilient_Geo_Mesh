@@ -3,7 +3,10 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { generateEd25519KeyPair } from '../lib/crypto.mjs';
 import { buildGovernmentFeed, readPreviousEvents, verifyFeed } from '../lib/government-feed.mjs';
-import { verifyBundle } from '../lib/contract.mjs';
+import { eventState, signEvent, verifyBundle, verifyEvent } from '../lib/contract.mjs';
+import { signGovernmentDeviceCertificate } from '../lib/government-device-certificate.mjs';
+import { deviceKeyIdForPublicKey, publicKeySpkiBase64 } from '../lib/device-key.mjs';
+import { eventPayload } from '../lib/canonical.mjs';
 import { normalizeNcdrFeed } from '../sources/ncdr.mjs';
 import { comparePublishedState } from '../lib/government-state.mjs';
 const keys = generateEd25519KeyPair();
@@ -26,6 +29,28 @@ function cwaEvent(eventId) {
   value.source = 'CWA';
   value.attributes = { ...value.attributes, theme: 'earthquake', operational_relevance: 'BACKGROUND' };
   return value;
+}
+function governmentDeviceWarning({ namespace = 'official.announcement', certificateIssuer = keys,
+  issuerKeyId = 'government-feed-2026', eventId = 'warning:mesh:1' } = {}) {
+  const device = generateEd25519KeyPair();
+  const signerPublicKey = publicKeySpkiBase64(device.publicKey);
+  const certificate = signGovernmentDeviceCertificate({
+    certificate_id: 'certificate:mesh:1', device_id: 'device:mesh:1', subject_id: 'user:government:1',
+    signing_key_id: deviceKeyIdForPublicKey(device.publicKey), signer_public_key: signerPublicKey,
+    agency: '測試機關', issued_at: new Date(now.getTime() - 60_000).toISOString(), issuer_key_id: issuerKeyId,
+  }, certificateIssuer.privateKey);
+  return signEvent({
+    schema_version: 'event-v0', namespace, event_id: eventId, event_type: 'GOVERNMENT_DEVICE_WARNING',
+    geometry: { type: 'Point', coordinates: [121.5, 25] }, severity: 'HIGH', source: 'GOVERNMENT',
+    source_version: 'government-device-warning-v1', event_version: 1,
+    issued_at: new Date(now.getTime() - 30_000).toISOString(),
+    expires_at: new Date(now.getTime() + 6 * 60 * 60_000).toISOString(),
+    attributes: { title: '道路警戒', content: '前方道路封閉', category: 'ROAD', area_id: 'tw.national',
+      theme: 'announcement', has_map_location: true, government_device_certificate: certificate },
+    signing_key_id: deviceKeyIdForPublicKey(device.publicKey), signer_public_key: signerPublicKey,
+    provenance: { original_source: 'government-device', received_at: now.toISOString(),
+      transport_source: { kind: 'server', node_id: 'government-api' } },
+  }, device.privateKey);
 }
 function build(results, extra = {}) { return buildGovernmentFeed({ ...keys, now, results, ...extra }); }
 async function restore(output) { return readPreviousEvents(output.feed, async name => output.files.get(name), keys.publicKey); }
@@ -102,6 +127,72 @@ test('government feed signing key metadata comes from the server publisher when 
   assert.doesNotThrow(() => verifyFeed(output.feed, keys.publicKey, {
     signingKeyId: 'server-government-2026',
   }));
+});
+
+test('government feed preserves a valid device warning event and its signature in the central bundle', () => {
+  const warning = governmentDeviceWarning();
+  const output = build([{ id: 'government-announcements', namespace: 'official.announcement', status: 'ok', events: [warning] }]);
+  const published = [...output.files.values()].flatMap((chunk) => chunk.events)[0];
+  assert.deepEqual(eventPayload(published), eventPayload(warning));
+  for (const field of ['payload_hash', 'signature', 'signature_algorithm', 'signing_key_id', 'signer_public_key']) {
+    assert.equal(published[field], warning[field]);
+  }
+  assert.equal(published.provenance.transport_source.node_id, 'government-collector');
+  assert.equal(verifyEvent(published, keys.publicKey, { trustedKeyIds: ['government-feed-2026'], now }).valid, true);
+});
+
+test('government feed rejects tampered device warnings instead of re-signing them', () => {
+  const warning = governmentDeviceWarning();
+  warning.attributes.content = '已被竄改';
+  assert.throws(() => build([{ id: 'government-announcements', namespace: 'official.announcement', status: 'ok', events: [warning] }]),
+    /Invalid device-signed government warning/);
+});
+
+test('government feed rejects device warnings in unsupported namespaces', () => {
+  const warning = governmentDeviceWarning({ namespace: 'official.device-revocation' });
+  assert.throws(() => build([{ id: 'government-announcements', namespace: 'official.announcement', status: 'ok', events: [warning] }]),
+    /Invalid device-signed government warning/);
+});
+
+test('government feed rejects device certificates signed by an unknown issuer', () => {
+  const unknownIssuer = generateEd25519KeyPair();
+  const warning = governmentDeviceWarning({ certificateIssuer: unknownIssuer, issuerKeyId: 'untrusted-issuer' });
+  assert.throws(() => build([{ id: 'government-announcements', namespace: 'official.announcement', status: 'ok', events: [warning] }]),
+    /Invalid device-signed government warning/);
+});
+
+test('government device revocation metadata is classified as internal rather than a public notice', () => {
+  assert.equal(eventState({ namespace: 'official.device-revocation', expires_at: '2026-10-13T00:00:00Z',
+    attributes: { internal_only: true } }, now), 'internal');
+});
+
+test('central revision of a device warning gets a higher version and central signature', async () => {
+  const warning = governmentDeviceWarning();
+  const first = build([{ id: 'government-announcements', namespace: 'official.announcement', status: 'ok', events: [warning] }]);
+  const previousEvents = await restore(first);
+  const revision = { ...warning, attributes: { ...warning.attributes, content: '請改走替代道路' } };
+  for (const field of ['payload_hash', 'signature', 'signature_algorithm', 'signer_public_key']) delete revision[field];
+  revision.signing_key_id = 'government-feed-2026';
+  const second = build([{ id: 'government-announcements', namespace: 'official.announcement', status: 'ok', events: [revision] }],
+    { previous: first.feed, previousEvents, now: new Date(now.getTime() + 60_000) });
+  const updated = [...second.files.values()].flatMap((chunk) => chunk.events)[0];
+  assert.equal(updated.event_version, 2);
+  assert.equal(updated.attributes.content, '請改走替代道路');
+  assert.notEqual(updated.signature, warning.signature);
+  assert.equal(verifyEvent(updated, keys.publicKey, { trustedKeyIds: ['government-feed-2026'], now }).valid, true);
+});
+
+test('central withdrawal of a device warning publishes a higher centrally signed version', async () => {
+  const warning = governmentDeviceWarning();
+  const first = build([{ id: 'government-announcements', namespace: 'official.announcement', status: 'ok', events: [warning] }]);
+  const withdrawnAt = new Date(now.getTime() + 60_000);
+  const withdrawn = build([{ id: 'government-announcements', namespace: 'official.announcement', status: 'ok', events: [],
+    cancelledEventIds: [warning.event_id] }], { previous: first.feed, previousEvents: await restore(first), now: withdrawnAt });
+  const event = [...withdrawn.files.values()].flatMap((chunk) => chunk.events)[0];
+  assert.equal(event.event_version, 2);
+  assert.equal(event.attributes.publication_retracted, true);
+  assert.equal(event.signing_key_id, 'government-feed-2026');
+  assert.equal(verifyEvent(event, keys.publicKey, { trustedKeyIds: ['government-feed-2026'], now: withdrawnAt }).valid, true);
 });
 test('unchanged events reuse immutable chunks and do not download new versions', async () => {
   const first = build([{ id: 'tdx-road', status: 'ok', events: [event()] }]);

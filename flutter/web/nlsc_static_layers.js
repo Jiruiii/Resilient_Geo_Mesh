@@ -81,6 +81,23 @@
     );
   }
 
+  async function verifyEd25519WithSpki(value, publicKeySpkiBase64, signature) {
+    const key = await crypto.subtle.importKey(
+      'spki', fromBase64(publicKeySpkiBase64), { name: 'Ed25519' }, false, ['verify'],
+    );
+    return crypto.subtle.verify(
+      { name: 'Ed25519' },
+      key,
+      fromBase64(signature),
+      encoder.encode(canonicalize(value)),
+    );
+  }
+
+  async function deviceKeyIdFromSpkiBase64(publicKeySpkiBase64) {
+    const digest = await sha256(fromBase64(publicKeySpkiBase64));
+    return `device:${digest.slice('sha256:'.length, 'sha256:'.length + 32)}`;
+  }
+
   function omit(value, fields) {
     return Object.fromEntries(Object.entries(value).filter(([key]) => !fields.includes(key)));
   }
@@ -616,7 +633,8 @@
   }
 
   global.ResilientGeoNLSCStatic = {
-    canonicalize, verifyLayerBundle, linkDirectoryPoints, verifySigned, sha256,
+    canonicalize, verifyLayerBundle, linkDirectoryPoints, verifySigned, verifyEd25519WithSpki,
+    deviceKeyIdFromSpkiBase64, sha256,
     verifyAddressCatalog, verifyAddressManifest, mapFeature,
   };
   global.loadNLSCStaticLayers = loadNLSCStaticLayers;

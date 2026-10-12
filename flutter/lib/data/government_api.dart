@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 
+import 'government_account_cache.dart';
 import 'government_http.dart';
 import 'government_session_store.dart';
 import 'map_bridge.dart';
@@ -23,6 +24,8 @@ class GovernmentApiException implements Exception {
     'invalid_agency' => '請輸入服務機關（最多 120 個字元）',
     'invalid_password' => '密碼至少需要 12 個字元',
     'role_forbidden' => '此帳號沒有執行這項操作的權限',
+    'government_device_not_authorized' => '此手機尚未取得有效的政府簽章憑證',
+    'government_device_revoked' => '此手機的政府簽章憑證已撤銷',
     'csrf_invalid' => '安全驗證已更新，請重新操作',
     'crowd_report_expired' => '回報已超過有效期限，無法上傳或查證',
     'payload_hash_mismatch' => '回報內容已變更，請重新整理後再查證',
@@ -54,6 +57,15 @@ class GovernmentUser {
 
   bool get isSystemAdmin => role == 'SYSTEM_ADMIN';
 
+  Map<String, dynamic> toJson() => <String, dynamic>{
+    'id': id,
+    'account': account,
+    'display_name': displayName,
+    'agency': agency,
+    'role': role,
+    'status': status,
+  };
+
   factory GovernmentUser.fromJson(Map<String, dynamic> json) => GovernmentUser(
     id: json['id'] as String? ?? '',
     account: json['account'] as String? ?? '',
@@ -65,16 +77,26 @@ class GovernmentUser {
 }
 
 typedef GovernmentApiBaseUri = Future<Uri> Function();
+typedef GovernmentHttpSender =
+    Future<GovernmentHttpResponse> Function({
+      required String method,
+      required Uri uri,
+      required Map<String, String> headers,
+      String? body,
+    });
 
 class GovernmentApiClient {
   GovernmentApiClient({
     GovernmentApiBaseUri? baseUri,
     GovernmentSessionStore? sessionStore,
+    GovernmentHttpSender? httpSender,
   }) : _baseUri = baseUri ?? governmentApiDefaultBaseUri,
-       _sessionStore = sessionStore ?? createGovernmentSessionStore();
+       _sessionStore = sessionStore ?? createGovernmentSessionStore(),
+       _httpSender = httpSender ?? sendGovernmentHttp;
 
   final GovernmentApiBaseUri _baseUri;
   final GovernmentSessionStore _sessionStore;
+  final GovernmentHttpSender _httpSender;
   String? _token;
   String? _csrfToken;
 
@@ -99,7 +121,7 @@ class GovernmentApiClient {
       if (token != null) headers['Authorization'] = 'Bearer $token';
       if (_csrfToken != null) headers['X-CSRF-Token'] = _csrfToken!;
     }
-    final response = await sendGovernmentHttp(
+    final response = await _httpSender(
       method: method,
       uri: await _uri(path),
       headers: headers,
@@ -263,6 +285,41 @@ class GovernmentApiClient {
 
   Future<Map<String, dynamic>> uploadCrowdReport(Map<String, dynamic> event) =>
       _send('POST', 'crowd-reports', body: event, authenticated: false);
+
+  Future<Map<String, dynamic>> enrollGovernmentDevice({
+    required String signingKeyId,
+    required String signerPublicKey,
+  }) => _send(
+    'POST',
+    'government/devices',
+    body: <String, Object?>{
+      'signing_key_id': signingKeyId,
+      'signer_public_key': signerPublicKey,
+    },
+  );
+
+  Future<Map<String, dynamic>> currentGovernmentDevice() =>
+      _send('GET', 'government/devices/current');
+
+  Future<Map<String, dynamic>> renewGovernmentDevice() => _send(
+    'POST',
+    'government/devices/current/renew',
+    body: <String, Object?>{},
+  );
+
+  Future<List<Map<String, dynamic>>> listGovernmentDevices() async =>
+      ((await _send('GET', 'government/devices'))['devices'] as List? ??
+              const <Object>[])
+          .whereType<Map>()
+          .map((device) => Map<String, dynamic>.from(device))
+          .toList(growable: false);
+
+  Future<Map<String, dynamic>> revokeGovernmentDevice(String deviceId) =>
+      _send('DELETE', 'government/devices/${Uri.encodeComponent(deviceId)}');
+
+  Future<Map<String, dynamic>> uploadGovernmentWarning(
+    Map<String, dynamic> event,
+  ) => _send('POST', 'government/warnings', body: event);
 }
 
 Future<Uri> governmentApiDefaultBaseUri() async {
@@ -290,13 +347,39 @@ Future<Uri> governmentApiDefaultBaseUri() async {
 }
 
 class GovernmentAuthController extends ChangeNotifier {
-  GovernmentAuthController({GovernmentApiClient? api})
-    : api = api ?? GovernmentApiClient();
+  factory GovernmentAuthController({
+    GovernmentApiClient? api,
+    MapBridge? mapBridge,
+    GovernmentAccountCache? accountCache,
+    bool? androidDeviceMode,
+  }) {
+    final resolvedApi = api ?? GovernmentApiClient();
+    return GovernmentAuthController._(
+      resolvedApi,
+      mapBridge ?? MapBridge(governmentApi: resolvedApi),
+      accountCache ?? SharedPreferencesGovernmentAccountCache(),
+      androidDeviceMode ??
+          (!kIsWeb && defaultTargetPlatform == TargetPlatform.android),
+    );
+  }
+
+  GovernmentAuthController._(
+    this.api,
+    this.mapBridge,
+    this.accountCache,
+    this.androidDeviceMode,
+  );
 
   final GovernmentApiClient api;
+  final MapBridge mapBridge;
+  final GovernmentAccountCache accountCache;
+  final bool androidDeviceMode;
   GovernmentUser? user;
+  Map<String, dynamic>? deviceAuthorization;
+  String? lastRevocationSyncAt;
   bool loading = true;
   bool busy = false;
+  bool restoredOffline = false;
   Object? error;
   bool _restoreStarted = false;
   bool _disposed = false;
@@ -311,10 +394,29 @@ class GovernmentAuthController extends ChangeNotifier {
     loading = true;
     _notifyIfAlive();
     try {
-      user = await api.currentUser();
+      final current = await api.currentUser();
+      user = current;
+      restoredOffline = false;
       error = null;
+      if (current == null) {
+        deviceAuthorization = null;
+        if (androidDeviceMode) await accountCache.clear();
+      } else {
+        if (androidDeviceMode) await accountCache.write(current.toJson());
+        if (androidDeviceMode && current.role == 'GOVERNMENT') {
+          try {
+            await refreshDeviceAuthorization(enrollIfMissing: true);
+          } on Object catch (value) {
+            error = value;
+          }
+        }
+      }
     } on Object catch (value) {
-      error = value;
+      final restored = await _restoreOfflineGovernmentUser();
+      if (!restored) {
+        user = null;
+        error = value;
+      }
     } finally {
       loading = false;
       _notifyIfAlive();
@@ -327,6 +429,21 @@ class GovernmentAuthController extends ChangeNotifier {
     _notifyIfAlive();
     try {
       user = await api.login(account, password);
+      restoredOffline = false;
+      if (androidDeviceMode && user?.role == 'GOVERNMENT') {
+        await accountCache.write(user!.toJson());
+        try {
+          await refreshDeviceAuthorization(enrollIfMissing: true);
+        } on Object catch (deviceError) {
+          error = deviceError;
+          deviceAuthorization = <String, dynamic>{
+            'status': 'ENROLLMENT_PENDING',
+          };
+        }
+      } else {
+        if (androidDeviceMode) await accountCache.clear();
+        deviceAuthorization = null;
+      }
       return true;
     } on Object catch (value) {
       error = value;
@@ -347,8 +464,128 @@ class GovernmentAuthController extends ChangeNotifier {
       error = value;
     } finally {
       user = null;
+      deviceAuthorization = null;
+      restoredOffline = false;
+      if (androidDeviceMode) await accountCache.clear();
       busy = false;
       _notifyIfAlive();
+    }
+  }
+
+  Future<void> refreshDeviceAuthorization({
+    bool enrollIfMissing = false,
+  }) async {
+    final current = user;
+    if (!androidDeviceMode || current == null || current.role != 'GOVERNMENT') {
+      return;
+    }
+    final publicKey = await mapBridge.getGovernmentDevicePublicKey();
+    var remote = await api.currentGovernmentDevice();
+    if (remote['status'] == 'NOT_ENROLLED' && enrollIfMissing) {
+      await api.enrollGovernmentDevice(
+        signingKeyId: publicKey['signing_key_id'] as String,
+        signerPublicKey: publicKey['signer_public_key'] as String,
+      );
+      remote = await api.currentGovernmentDevice();
+    }
+
+    var certificate = remote['certificate'];
+    final expiresAt =
+        certificate is Map
+            ? DateTime.tryParse(certificate['expires_at'] as String? ?? '')
+            : null;
+    if (remote['status'] != 'REVOKED' &&
+        remote['status'] != 'PENDING_CERTIFICATE' &&
+        expiresAt != null &&
+        !expiresAt.isAfter(
+          DateTime.now().toUtc().add(const Duration(hours: 24)),
+        )) {
+      await api.renewGovernmentDevice();
+      remote = await api.currentGovernmentDevice();
+      certificate = remote['certificate'];
+    }
+    if (certificate is Map) {
+      deviceAuthorization = await mapBridge.storeGovernmentDeviceCertificate(
+        Map<String, dynamic>.from(certificate),
+      );
+    } else {
+      deviceAuthorization = await mapBridge.getGovernmentDeviceAuthorization();
+      if (remote['status'] == 'REVOKED') {
+        deviceAuthorization = <String, dynamic>{
+          ...deviceAuthorization!,
+          'status': 'REVOKED',
+        };
+      } else if (deviceAuthorization?['status'] != 'AUTHORIZED') {
+        deviceAuthorization = <String, dynamic>{
+          ...?deviceAuthorization,
+          'status':
+              remote['status'] == 'NOT_ENROLLED'
+                  ? 'NOT_ENROLLED'
+                  : 'PENDING_CERTIFICATE',
+        };
+      }
+    }
+    if (deviceAuthorization?['status'] == 'AUTHORIZED') {
+      await accountCache.write(current.toJson());
+    }
+    await _refreshLastRevocationSync();
+    _notifyIfAlive();
+  }
+
+  Future<Map<String, dynamic>> createDeviceGovernmentWarning(
+    Map<String, Object?> input,
+  ) async {
+    if (!androidDeviceMode || user?.role != 'GOVERNMENT') {
+      throw const GovernmentApiException('role_forbidden', 403);
+    }
+    if (deviceAuthorization?['status'] != 'AUTHORIZED') {
+      await refreshDeviceAuthorization(enrollIfMissing: false);
+    }
+    if (deviceAuthorization?['status'] != 'AUTHORIZED') {
+      throw const GovernmentApiException(
+        'government_device_not_authorized',
+        403,
+      );
+    }
+    return mapBridge.createGovernmentWarning(input);
+  }
+
+  Future<void> _refreshLastRevocationSync() async {
+    try {
+      final status = await mapBridge.getGovernmentSyncStatus();
+      lastRevocationSyncAt = status['last_revocation_sync_at'] as String?;
+    } on Object {
+      // A missing sync-status bridge does not invalidate the locally verified certificate.
+    }
+  }
+
+  Future<bool> _restoreOfflineGovernmentUser() async {
+    if (!androidDeviceMode) return false;
+    try {
+      final cached = await accountCache.read();
+      if (cached == null) return false;
+      final candidate = GovernmentUser.fromJson(cached);
+      if (candidate.role != 'GOVERNMENT' || candidate.status != 'ACTIVE') {
+        await accountCache.clear();
+        return false;
+      }
+      final authorization = await mapBridge.getGovernmentDeviceAuthorization();
+      final expiry = DateTime.tryParse(
+        authorization['certificate_expires_at'] as String? ?? '',
+      );
+      if (authorization['status'] != 'AUTHORIZED' ||
+          expiry == null ||
+          !expiry.isAfter(DateTime.now().toUtc())) {
+        return false;
+      }
+      user = candidate;
+      deviceAuthorization = authorization;
+      restoredOffline = true;
+      error = null;
+      await _refreshLastRevocationSync();
+      return true;
+    } on Object {
+      return false;
     }
   }
 

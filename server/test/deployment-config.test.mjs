@@ -25,11 +25,12 @@ test('compose defines separate government data, authoring, signing, public API, 
   assert.match(serviceBlock(compose, 'api'), /public_release:[^\n]*:ro|read_only:\s*true/iu);
   assert.doesNotMatch(serviceBlock(compose, 'api'), /private_data/u);
   assert.doesNotMatch(serviceBlock(compose, 'government-api'), /SIGNING_PRIVATE_KEY|PUBLIC_RELEASE_ROOT|public_release/u);
+  assert.match(serviceBlock(compose, 'government-api'), /SIGNING_PUBLIC_KEY_PATH/u);
   assert.match(serviceBlock(compose, 'government-publisher'), /SIGNING_PRIVATE_KEY_PATH/u);
   assert.match(serviceBlock(compose, 'government-publisher'), /public_release:/u);
 });
 
-test('only collector and publisher have release write access; authoring and public APIs have no signing key', async () => {
+test('only collector and publisher can write releases; government API has the public issuer key only', async () => {
   const compose = await read('deploy/docker-compose.yml');
   const collector = serviceBlock(compose, 'collector');
   const publisher = serviceBlock(compose, 'government-publisher');
@@ -41,6 +42,7 @@ test('only collector and publisher have release write access; authoring and publ
   assert.match(publisher, /public_release:/u);
   assert.match(publisher, /signing_private_key/u);
   assert.doesNotMatch(governmentApi, /SIGNING_PRIVATE_KEY|PRIVATE_DATA_ROOT|PUBLIC_RELEASE_ROOT/u);
+  assert.match(governmentApi, /signing_public_key/u);
   assert.doesNotMatch(api, /TDX_CLIENT_SECRET|CWA_API_KEY|NCDR_ALERT_API_KEY|SIGNING_PRIVATE_KEY_PATH|PRIVATE_DATA_ROOT/u);
   assert.match(compose, /SIGNING_PRIVATE_KEY_PATH|SIGNING_PRIVATE_KEY_FILE/u);
 });

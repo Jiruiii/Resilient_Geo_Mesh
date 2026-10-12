@@ -8,6 +8,7 @@ import com.resilientgeo.mesh.trust.Ed25519Verifier
 import com.resilientgeo.mesh.trust.TrustedKeyStore
 import com.resilientgeo.mesh.trust.EventVerifier
 import com.resilientgeo.mesh.trust.VerificationResult
+import com.resilientgeo.mesh.trust.DeviceKeys
 import com.resilientgeo.mesh.protocol.ChunkVerifier
 import org.json.JSONObject
 import java.time.Instant
@@ -63,7 +64,14 @@ object GovernmentFeedVerifier {
         }
     }
 
-    fun verifyChunk(chunk: JSONObject, manifest: JSONObject, index: Int, trust: TrustedKeyStore) {
+    fun verifyChunk(
+        chunk: JSONObject,
+        manifest: JSONObject,
+        index: Int,
+        trust: TrustedKeyStore,
+        now: Instant = Instant.now(),
+        revokedAtByCertificateId: Map<String, Instant> = emptyMap(),
+    ) {
         val expected = manifest.getJSONArray("chunks").getJSONObject(index)
         val signingKeyId = manifest.getString("signing_key_id")
         require(signingKeyId in ALLOWED_KEY_IDS) { "Government chunk signing key is not allowed" }
@@ -82,10 +90,17 @@ object GovernmentFeedVerifier {
         require(eventIds.length() == events.length())
         for (i in 0 until events.length()) {
             val event = events.getJSONObject(i)
+            val eventKeyId = event.getString("signing_key_id")
+            val certifiedGovernmentDeviceEvent = event.getString("namespace") == "official.announcement" &&
+                event.optString("source").equals("GOVERNMENT", ignoreCase = true) &&
+                DeviceKeys.isDeviceKeyId(eventKeyId)
             require(event.getString("namespace") == manifest.getString("namespace") &&
-                event.getString("signing_key_id") == signingKeyId && event.getString("event_id") == eventIds.getString(i))
+                (eventKeyId == signingKeyId || certifiedGovernmentDeviceEvent) &&
+                event.getString("event_id") == eventIds.getString(i))
             require(supportsOfficialEvent(event.getString("namespace"), event.getString("source"))) { "Unsupported official source" }
-            require(EventVerifier.verify(event, trust) is VerificationResult.Valid) { "Invalid government event" }
+            require(EventVerifier.verify(event, trust, now, revokedAtByCertificateId) is VerificationResult.Valid) {
+                "Invalid government event"
+            }
         }
     }
 

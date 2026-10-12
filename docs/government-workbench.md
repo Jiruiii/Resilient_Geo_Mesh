@@ -89,6 +89,19 @@ Web 以同源 `HttpOnly`、`SameSite=Strict` session cookie 登入，變更請�
 - API 將變更寫入 PostgreSQL 與 outbox。Publisher 用中央簽章發布 event-v0 `official.announcement`；修改沿用同一 `event_id` 並遞增版本，撤回則發布新的撤回版本。
 - 有座標的公告可出現在地圖；沒有座標的公告只顯示在通知列表。
 
+### Android 政府手機離線警告
+
+- 政府人員首次在 Android 登入時，App 以 Android Keystore 中獨立的 Ed25519 金鑰向 `government-api` 登錄公鑰。帳號必須為啟用中的 `GOVERNMENT`；管理者停用帳號或撤銷手機後，API 不再核發憑證或接受該手機的新上傳。
+- 設備憑證有效 7 天，由 `government-publisher` 以中央金鑰簽署；API 僅傳回憑證，沒有中央私鑰。Android 會檢查中央簽章、裝置公鑰指紋、發布權限及效期，再保存憑證。連線後會在剩餘效期 24 小時內排入續期。
+- 憑證有效時，Android 可離線建立全台警告。事件使用手機私鑰簽署並同時保存到 Room、mesh chunk 與雲端補傳佇列。事件本身的有效期限最多 90 天；憑證之後到期，不會讓憑證有效期間簽出的未過期警告失效。
+- 政府警告使用 `official.announcement`、`source=GOVERNMENT`、`area_id=tw.national`。沒有選地圖位置時不顯示地圖標記。手機端先以政府憑證驗簽，公開中央 feed 仍會另以中央金鑰簽署 manifest 與 chunk。
+- Android 只在使用者已啟用既有「緊急模式」時參與 mesh；App 不會自行啟動藍牙或附近裝置廣播。已簽警告會保留供轉傳；目前 mesh 協定沒有對發布端回報每一台 peer 是否收到，因此畫面不宣稱已送達特定手機。
+- 工作台連線時自動補傳；工作台開啟期間每 5 分鐘重試，亦可按「補傳待上傳警告」。補傳保留原始事件 JSON、`event_id` 與 `payload_hash`；重複請求具冪等性。伺服器成功收件只代表進入發布佇列，App 收到簽章 feed 並核對同一事件後才顯示「已發布」。過期且未上傳的佇列項目會標記為過期，不會送出。
+- 撤銷透過中央簽章的 `government-device-revocations` feed 傳播；資料不包含帳號名稱。Android 同步時先處理撤銷資料，再驗證警告，並透過 mesh relay 原始簽章資料。設備在已知撤銷時間之後簽出的事件會拒絕；撤銷之前的有效警告仍可驗證。離線手機只能依最近一次取得的撤銷資料判斷，工作台會顯示撤銷資訊同步時間。
+- 離線登入僅允許曾登入的啟用政府帳號，且手機本機憑證狀態為 `AUTHORIZED`、憑證未過期時開啟。這只能證明裝置仍持有最後一次取得的有效憑證；離線期間的新停權或撤銷要等資料同步後才會得知。登出清除政府帳號快取與 API session，不會刪除已簽警告、mesh chunk 或待補傳資料。
+
+Web 政府工作台仍透過線上 API 建立中央簽章公告，不執行 BLE mesh。Web feed 驗證器同時驗證 Android 設備簽章警告及中央撤銷資料；撤銷事件留在已驗證的離線快取中供警告驗證，但不會顯示在通知列表。
+
 ### 回報查證
 
 - Web 回報需要線上連線，以瀏覽器 IndexedDB 中不可匯出的裝置私鑰產生 Ed25519 簽章；Android 仍可離線及經 mesh 回報，連線後將原始簽章事件排入重試上傳佇列。
@@ -107,6 +120,10 @@ Web 以同源 `HttpOnly`、`SameSite=Strict` session cookie 登入，變更請�
 | `DELETE /api/v1/auth/sessions/current` | 登出並撤銷 session |
 | `POST /api/v1/government/users` | 系統管理者直接建立政府人員帳號 |
 | `GET /api/v1/government/users`、`PATCH /api/v1/government/users/{userId}` | 系統管理者列出、停用或重新啟用帳號 |
+| `POST /api/v1/government/devices` | 政府人員登錄目前 Android 裝置公鑰並排入憑證簽發 |
+| `GET /api/v1/government/devices/current`、`POST /api/v1/government/devices/current/renew` | 查詢或續期目前裝置的中央簽章憑證 |
+| `GET /api/v1/government/devices`、`DELETE /api/v1/government/devices/{deviceId}` | 系統管理者查看或撤銷裝置 |
+| `POST /api/v1/government/warnings` | 驗證並冪等補傳原始設備簽章警告 |
 | `POST /api/v1/crowd-reports` | 上傳 device-signed crowd event，公開路徑但伺服器會驗簽 |
 | `GET /api/v1/government/reports?status=PENDING` | 查閱待查回報 |
 | `POST /api/v1/government/reports/{eventId}/attestations` | 提交 `CONFIRMED`／`REFUTED` 及原 payload hash |

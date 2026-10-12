@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../data/attestation_index.dart';
+import '../data/government_announcement_time.dart';
 import '../data/map_models.dart';
 import '../widgets/map_layers.dart';
 
@@ -63,6 +64,12 @@ class _EventCard extends StatelessWidget {
     final demo =
         event.namespace?.startsWith('demo') == true ||
         event.source?.toLowerCase() == 'demo';
+    final announcement = event.namespace == 'official.announcement';
+    final areaId = event.attributes?['area_id'];
+    final mapPoint =
+        event.geometry is PointGeometry
+            ? (event.geometry! as PointGeometry).point
+            : null;
     final title = eventName(event);
     return Card(
       child: ListTile(
@@ -98,11 +105,21 @@ class _EventCard extends StatelessWidget {
                   : event.namespace == 'official.announcement'
                   ? '狀態：官方簽章已驗證'
                   : '狀態：${_applyStateLabel(event.effectiveApplyState)}',
-              if (event.namespace == 'official.announcement' &&
-                  event.attributes?['content'] is String)
+              if (announcement)
+                '範圍：${areaId == 'tw.national'
+                    ? '全台灣'
+                    : areaId is String
+                    ? areaId
+                    : '未指定'}',
+              if (announcement) '版本：${event.eventVersion ?? 1}',
+              if (announcement &&
+                  event.attributes?['has_map_location'] == true &&
+                  mapPoint != null)
+                '地圖位置：緯度 ${mapPoint.latitude.toStringAsFixed(6)}，經度 ${mapPoint.longitude.toStringAsFixed(6)}',
+              if (announcement && event.attributes?['content'] is String)
                 '內容：${event.attributes!['content']}',
-              '發布：${event.issuedAt ?? '無資料'}',
-              '有效期限：${event.expiresAt ?? '無資料'}',
+              '發布：${_formatNotificationTime(event.issuedAt, announcement)}',
+              '有效期限：${_formatNotificationTime(event.expiresAt, announcement)}',
             ].join('\n'),
           ),
         ),
@@ -110,6 +127,15 @@ class _EventCard extends StatelessWidget {
       ),
     );
   }
+}
+
+String _formatNotificationTime(String? value, bool taiwanTime) {
+  if (value == null) return '無資料';
+  final parsed = DateTime.tryParse(value);
+  if (parsed == null) return value;
+  return taiwanTime
+      ? GovernmentAnnouncementTime.formatTaiwan(parsed.toUtc())
+      : value;
 }
 
 String _applyStateLabel(String? applyState) => switch (applyState) {

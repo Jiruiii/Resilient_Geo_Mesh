@@ -346,6 +346,8 @@ async function eventsFromGovernmentOutput(feed, files, root) {
     for (const relativePath of dataset.chunk_paths) {
       const chunk = files.get(relativePath)
         ?? JSON.parse(await readFile(path.join(root, relativePath), 'utf8'));
+      // Internal control events stay in the signed sync feed so clients can
+      // refresh revocations; notification consumers suppress this namespace.
       output.push(...(chunk.events ?? []));
     }
   }
@@ -394,7 +396,7 @@ async function publishV2Files({ root, output, publicKey, signingKeyId, now }) {
 
 function buildPublicSourceStatuses(results, previousStatuses, feed, now) {
   const previousById = new Map(previousStatuses.map((status) => [status.source_id, status]));
-  const updated = results.map((result) => {
+  const updated = results.filter((result) => (result.sourceId ?? result.id) !== 'government-device-revocations').map((result) => {
     const sourceId = result.sourceId ?? result.id;
     const definition = SOURCE_REGISTRY.find((source) => source.sourceId === sourceId);
     const previous = previousById.get(sourceId);

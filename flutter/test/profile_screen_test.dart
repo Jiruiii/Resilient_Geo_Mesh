@@ -1,14 +1,20 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart'
     show debugDefaultTargetPlatformOverride;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:resilientgeo_flutter/data/government_account_cache.dart';
 import 'package:resilientgeo_flutter/data/government_api.dart';
+import 'package:resilientgeo_flutter/data/map_bridge.dart';
 import 'package:resilientgeo_flutter/screens/profile_screen.dart';
+import 'package:resilientgeo_flutter/screens/government_workbench_screen.dart';
 
 class _FakeGovernmentApi extends GovernmentApiClient {
   GovernmentUser? current;
   String? lastAccount;
   GovernmentUser? createdUser;
+  final uploadedWarnings = <Map<String, dynamic>>[];
 
   @override
   Future<GovernmentUser?> currentUser() async => current;
@@ -44,6 +50,18 @@ class _FakeGovernmentApi extends GovernmentApiClient {
       <Map<String, dynamic>>[];
 
   @override
+  Future<Map<String, dynamic>> uploadGovernmentWarning(
+    Map<String, dynamic> event,
+  ) async {
+    uploadedWarnings.add(Map<String, dynamic>.from(event));
+    return <String, dynamic>{
+      'event_id': event['event_id'],
+      'payload_hash': event['payload_hash'],
+      'publication_status': 'QUEUED',
+    };
+  }
+
+  @override
   Future<GovernmentUser> createGovernmentUser({
     required String account,
     required String displayName,
@@ -67,7 +85,187 @@ class _FakeGovernmentApi extends GovernmentApiClient {
   }
 }
 
+class _OfflineGovernmentApi extends GovernmentApiClient {
+  @override
+  Future<GovernmentUser?> currentUser() async =>
+      throw const GovernmentApiException('network_unavailable', 0);
+}
+
+class _MemoryGovernmentAccountCache implements GovernmentAccountCache {
+  Map<String, dynamic>? value;
+
+  @override
+  Future<Map<String, dynamic>?> read() async => value;
+
+  @override
+  Future<void> write(Map<String, dynamic> user) async => value = user;
+
+  @override
+  Future<void> clear() async => value = null;
+}
+
+class _DeviceAuthorizationBridge extends MapBridge {
+  _DeviceAuthorizationBridge(
+    this.status, {
+    this.warningStatuses = const [],
+    this.pendingUploads = const [],
+  });
+
+  final String status;
+  final List<Map<String, dynamic>> warningStatuses;
+  final List<Map<String, dynamic>> pendingUploads;
+  final acknowledgedUploads = <String>[];
+
+  @override
+  Future<Map<String, dynamic>> getGovernmentDeviceAuthorization() async =>
+      <String, dynamic>{
+        'status': status,
+        'certificate_expires_at':
+            DateTime.now()
+                .toUtc()
+                .add(const Duration(days: 2))
+                .toIso8601String(),
+      };
+
+  @override
+  Future<List<Map<String, dynamic>>> listGovernmentWarningStatuses() async =>
+      warningStatuses;
+
+  @override
+  Future<List<Map<String, dynamic>>>
+  listPendingGovernmentWarningUploads() async => pendingUploads;
+
+  @override
+  Future<bool> markGovernmentWarningUploaded({
+    required String eventId,
+    required String payloadHash,
+  }) async {
+    acknowledgedUploads.add(eventId);
+    return true;
+  }
+
+  @override
+  Future<bool> markGovernmentWarningExpired({
+    required String eventId,
+    required String payloadHash,
+  }) async => true;
+}
+
 void main() {
+  test(
+    'offline restore requires a currently valid cached government certificate',
+    () async {
+      final cache =
+          _MemoryGovernmentAccountCache()
+            ..value =
+                const GovernmentUser(
+                  id: 'staff-1',
+                  account: 'staff-01',
+                  displayName: '值班人員',
+                  agency: '試辦機關',
+                  role: 'GOVERNMENT',
+                  status: 'ACTIVE',
+                ).toJson();
+      final auth = GovernmentAuthController(
+        api: _OfflineGovernmentApi(),
+        accountCache: cache,
+        mapBridge: _DeviceAuthorizationBridge('AUTHORIZED'),
+        androidDeviceMode: true,
+      );
+      await auth.restore();
+      expect(auth.user?.account, 'staff-01');
+      expect(auth.restoredOffline, isTrue);
+      auth.dispose();
+
+      final expired = GovernmentAuthController(
+        api: _OfflineGovernmentApi(),
+        accountCache: cache,
+        mapBridge: _DeviceAuthorizationBridge('CERTIFICATE_EXPIRED_OR_INVALID'),
+        androidDeviceMode: true,
+      );
+      await expired.restore();
+      expect(expired.user, isNull);
+      expect(expired.restoredOffline, isFalse);
+      expired.dispose();
+    },
+  );
+
+  testWidgets(
+    'government workbench displays real mesh and cloud warning states',
+    (tester) async {
+      final api = _FakeGovernmentApi();
+      final bridge = _DeviceAuthorizationBridge(
+        'AUTHORIZED',
+        warningStatuses: <Map<String, dynamic>>[
+          <String, dynamic>{
+            'event_id': 'announcement:pending',
+            'upload_status': 'PENDING',
+          },
+          <String, dynamic>{
+            'event_id': 'announcement:uploaded',
+            'upload_status': 'UPLOADED',
+          },
+          <String, dynamic>{
+            'event_id': 'announcement:published',
+            'upload_status': 'PUBLISHED',
+          },
+        ],
+        pendingUploads: <Map<String, dynamic>>[
+          <String, dynamic>{
+            'event_id': 'announcement:auto-upload',
+            'payload_hash': 'sha256:auto-upload',
+            'event_json': jsonEncode(<String, dynamic>{
+              'event_id': 'announcement:auto-upload',
+              'payload_hash': 'sha256:auto-upload',
+              'expires_at':
+                  DateTime.now()
+                      .toUtc()
+                      .add(const Duration(hours: 1))
+                      .toIso8601String(),
+              'signature': 'original-signature',
+            }),
+          },
+        ],
+      );
+      final auth =
+          GovernmentAuthController(
+              api: api,
+              mapBridge: bridge,
+              accountCache: _MemoryGovernmentAccountCache(),
+              androidDeviceMode: true,
+            )
+            ..user = const GovernmentUser(
+              id: 'staff-1',
+              account: 'staff-01',
+              displayName: '值班人員',
+              agency: '試辦機關',
+              role: 'GOVERNMENT',
+              status: 'ACTIVE',
+            )
+            ..restoredOffline = true
+            ..loading = false;
+      addTearDown(auth.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(home: GovernmentWorkbenchScreen(auth: auth)),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('官方公告'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('待 mesh 同步'), findsWidgets);
+      expect(find.text('待雲端補傳'), findsOneWidget);
+      expect(find.text('待官方 feed 發布'), findsOneWidget);
+      expect(find.text('已發布'), findsOneWidget);
+      await tester.pump();
+      expect(
+        api.uploadedWarnings.single['event_id'],
+        'announcement:auto-upload',
+      );
+      expect(bridge.acknowledgedUploads, <String>['announcement:auto-upload']);
+    },
+  );
+
   testWidgets('profile keeps preferences without a basemap picker', (
     tester,
   ) async {
@@ -90,7 +288,7 @@ void main() {
     'profile logs in with a non-email account and opens the workbench',
     (tester) async {
       final api = _FakeGovernmentApi();
-      final auth = GovernmentAuthController(api: api);
+      final auth = GovernmentAuthController(api: api, androidDeviceMode: false);
       await tester.pumpWidget(
         MaterialApp(
           home: ProfileScreen(
@@ -158,7 +356,7 @@ void main() {
     tester,
   ) async {
     final api = _FakeGovernmentApi();
-    final auth = GovernmentAuthController(api: api);
+    final auth = GovernmentAuthController(api: api, androidDeviceMode: false);
     await auth.login('admin-01', 'correct-password');
     await tester.pumpWidget(
       MaterialApp(

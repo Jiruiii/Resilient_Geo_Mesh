@@ -31,11 +31,23 @@ function databaseSsl(env) {
 }
 
 export function loadGovernmentApiConfig(env = process.env) {
+  const signingPublicKeyPath = env.SIGNING_PUBLIC_KEY_PATH;
+  const signingPublicKeyPem = env.SIGNING_PUBLIC_KEY_PEM;
+  if (!signingPublicKeyPath && !signingPublicKeyPem) {
+    throw new TypeError('SIGNING_PUBLIC_KEY_PATH or SIGNING_PUBLIC_KEY_PEM is required');
+  }
+  const signingKeyId = env.SIGNING_KEY_ID;
+  if (typeof signingKeyId !== 'string' || !/^[a-z][a-z0-9-]+$/u.test(signingKeyId)) {
+    throw new TypeError('SIGNING_KEY_ID is invalid');
+  }
   return Object.freeze({
     host: env.HOST ?? '0.0.0.0',
     port: port(env, 8788),
     databaseUrl: requiredUrl(env, 'DATABASE_URL', ['postgres:', 'postgresql:']),
     databaseSsl: databaseSsl(env),
+    signingPublicKeyPath: signingPublicKeyPath ? absolutePath(env, 'SIGNING_PUBLIC_KEY_PATH') : null,
+    signingPublicKeyPem: signingPublicKeyPem ?? null,
+    signingKeyId,
   });
 }
 

@@ -11,6 +11,7 @@ import com.resilientgeo.mesh.bridge.FlutterMapBridge
 import com.resilientgeo.mesh.bridge.OfflineMapAssetBridge
 import com.resilientgeo.mesh.bridge.GovernmentSessionKeyStore
 import com.resilientgeo.mesh.bridge.SharedPreferencesEmergencyModeState
+import com.resilientgeo.mesh.trust.GovernmentDeviceKeyStore
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -36,6 +37,7 @@ class MainActivity : FlutterFragmentActivity() {
     private var governmentCheck: Job? = null
     private var governmentAuthChannel: MethodChannel? = null
     private val governmentSessionStore by lazy { GovernmentSessionKeyStore(applicationContext) }
+    private val governmentDeviceKeyStore by lazy { GovernmentDeviceKeyStore(applicationContext) }
 
     override fun onResume() {
         super.onResume()
@@ -85,6 +87,7 @@ class MainActivity : FlutterFragmentActivity() {
         mapBridge = FlutterMapBridge(
             applicationContext,
             flutterEngine.dartExecutor.binaryMessenger,
+            governmentDeviceKeyStore = governmentDeviceKeyStore,
             onEmergencyModeChanged = ::onEmergencyModeChanged,
         )
         offlineMapAssetBridge?.close()

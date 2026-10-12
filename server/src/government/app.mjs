@@ -97,7 +97,7 @@ export function buildGovernmentApp({ store, config = {}, logger = false, now } =
   if (!store) throw new TypeError('government store is required');
   const app = Fastify({ logger, bodyLimit: 64 * 1024, requestTimeout: 10_000, trustProxy: true });
   const auth = createGovernmentAuthService({ store, now });
-  const workbench = createGovernmentWorkbenchService({ store, now });
+  const workbench = createGovernmentWorkbenchService({ store, now, config });
 
   app.get('/api/v1/healthz', async (_request, reply) => {
     try {
@@ -163,6 +163,41 @@ export function buildGovernmentApp({ store, config = {}, logger = false, now } =
 
   app.post('/api/v1/crowd-reports', async (request, reply) => {
     const result = await workbench.uploadCrowdReport(request.body);
+    return reply.code(result.duplicate ? 200 : 202).send(result);
+  });
+
+  app.post('/api/v1/government/devices', async (request, reply) => {
+    const user = await requireMutation(request, auth);
+    const body = request.body ?? {};
+    const result = await workbench.enrollGovernmentDevice({ user,
+      signingKeyId: body.signing_key_id, signerPublicKey: body.signer_public_key });
+    return reply.code(result.duplicate ? 200 : 201).send(result);
+  });
+
+  app.get('/api/v1/government/devices/current', async (request) => {
+    const user = await requireGovernment(request, auth);
+    return workbench.currentGovernmentDevice(user);
+  });
+
+  app.post('/api/v1/government/devices/current/renew', async (request) => {
+    const user = await requireMutation(request, auth);
+    return workbench.renewGovernmentDevice({ user });
+  });
+
+  app.get('/api/v1/government/devices', async (request) => {
+    await requireSystemAdmin(request, auth);
+    return { devices: await workbench.listGovernmentDevices() };
+  });
+
+  app.delete('/api/v1/government/devices/:deviceId', async (request) => {
+    const actor = await requireMutation(request, auth);
+    requireRoles(actor, ['SYSTEM_ADMIN']);
+    return workbench.revokeGovernmentDevice({ deviceId: request.params.deviceId, actorId: actor.id });
+  });
+
+  app.post('/api/v1/government/warnings', async (request, reply) => {
+    const actor = await requireMutation(request, auth);
+    const result = await workbench.uploadGovernmentWarning({ actor, event: request.body });
     return reply.code(result.duplicate ? 200 : 202).send(result);
   });
 

@@ -1,8 +1,12 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 
 import '../data/crowd_report_models.dart';
 import '../data/government_announcement_time.dart';
 import '../data/government_api.dart';
+import '../data/government_warning_upload_queue.dart';
 import '../data/map_models.dart';
 import 'government_announcement_location_picker.dart';
 
@@ -36,14 +40,18 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen> {
   List<Map<String, dynamic>> _reports = const <Map<String, dynamic>>[];
   List<Map<String, dynamic>> _announcements = const <Map<String, dynamic>>[];
   List<Map<String, dynamic>> _users = const <Map<String, dynamic>>[];
+  List<Map<String, dynamic>> _deviceWarnings = const <Map<String, dynamic>>[];
   bool _loading = true;
   bool _busy = false;
+  bool _warningUploadActive = false;
   Object? _error;
+  Timer? _automaticWarningUploadTimer;
 
   bool get _isAdmin => widget.auth.user?.isSystemAdmin == true;
 
   @override
   void dispose() {
+    _automaticWarningUploadTimer?.cancel();
     _attestationNote.dispose();
     _announcementTitle.dispose();
     _announcementContent.dispose();
@@ -59,6 +67,13 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen> {
   void initState() {
     super.initState();
     _refresh();
+    if (widget.auth.androidDeviceMode &&
+        widget.auth.user?.role == 'GOVERNMENT') {
+      _automaticWarningUploadTimer = Timer.periodic(
+        const Duration(minutes: 5),
+        (_) => unawaited(_retryPendingDeviceWarnings()),
+      );
+    }
   }
 
   Future<void> _refresh() async {
@@ -67,6 +82,19 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen> {
       _error = null;
     });
     try {
+      if (widget.auth.androidDeviceMode &&
+          widget.auth.user?.role == 'GOVERNMENT') {
+        if (!widget.auth.restoredOffline) {
+          try {
+            await widget.auth.refreshDeviceAuthorization();
+          } on Object {
+            // Keep local signed alerts visible when device or network refresh fails.
+          }
+        }
+        final localWarnings =
+            await widget.auth.mapBridge.listGovernmentWarningStatuses();
+        if (mounted) setState(() => _deviceWarnings = localWarnings);
+      }
       final values = await Future.wait<Object>(<Future<Object>>[
         widget.auth.api.listReports(),
         widget.auth.api.listAnnouncements(),
@@ -78,6 +106,10 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen> {
         _announcements = values[1] as List<Map<String, dynamic>>;
         if (_isAdmin) _users = values[2] as List<Map<String, dynamic>>;
       });
+      if (widget.auth.androidDeviceMode &&
+          widget.auth.user?.role == 'GOVERNMENT') {
+        unawaited(_retryPendingDeviceWarnings());
+      }
     } on Object catch (error) {
       if (mounted) setState(() => _error = error);
     } finally {
@@ -249,6 +281,9 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen> {
 
   Widget _announcementsPage() => Column(
     children: <Widget>[
+      if (widget.auth.androidDeviceMode &&
+          widget.auth.user?.role == 'GOVERNMENT')
+        _deviceWarningStatusPanel(),
       Padding(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
         child: Align(
@@ -312,6 +347,153 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen> {
       ),
     ],
   );
+
+  Widget _deviceWarningStatusPanel() {
+    final authorization =
+        widget.auth.deviceAuthorization ??
+        const <String, dynamic>{'status': 'NOT_ENROLLED'};
+    final status = authorization['status'] as String? ?? 'NOT_ENROLLED';
+    final expiresAt = DateTime.tryParse(
+      authorization['certificate_expires_at'] as String? ?? '',
+    );
+    final canSync = !_busy && !widget.auth.restoredOffline;
+    return Card(
+      margin: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text('手機官方警告狀態', style: Theme.of(context).textTheme.titleSmall),
+            const SizedBox(height: 4),
+            Text(switch (status) {
+              'AUTHORIZED' => '手機簽章憑證有效',
+              'PENDING_CERTIFICATE' || 'ENROLLMENT_PENDING' => '等待中央核發手機憑證',
+              'REVOKED' => '手機憑證已撤銷',
+              'CERTIFICATE_EXPIRED_OR_INVALID' => '手機憑證已過期或無效',
+              _ => '手機尚未完成官方簽章授權',
+            }),
+            if (expiresAt != null)
+              Text(
+                '憑證有效至：${GovernmentAnnouncementTime.formatTaiwan(expiresAt.toUtc())}',
+              ),
+            Text(
+              widget.auth.restoredOffline
+                  ? '目前使用離線帳號狀態'
+                  : '撤銷資訊最近同步：${widget.auth.lastRevocationSyncAt ?? '尚無同步紀錄'}',
+            ),
+            if (widget.auth.restoredOffline)
+              const Text('目前離線；已簽署警告會保留並等待 mesh 或雲端同步。'),
+            if (_deviceWarnings.isNotEmpty) ...<Widget>[
+              const Divider(height: 16),
+              ..._deviceWarnings.map(_deviceWarningStatusRow),
+            ],
+            if (_deviceWarnings.any((row) => row['upload_status'] == 'PENDING'))
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  onPressed: canSync ? _syncPendingDeviceWarnings : null,
+                  icon: const Icon(Icons.cloud_upload_outlined),
+                  label: const Text('補傳待上傳警告'),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _deviceWarningStatusRow(Map<String, dynamic> row) {
+    final event = _eventFromUploadRow(row);
+    final attributes =
+        event['attributes'] is Map
+            ? Map<String, dynamic>.from(event['attributes'] as Map)
+            : const <String, dynamic>{};
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text(
+            attributes['title'] as String? ??
+                row['event_id'] as String? ??
+                '官方警告',
+          ),
+          Wrap(
+            spacing: 6,
+            children: <Widget>[
+              Chip(
+                label: Text(
+                  governmentWarningCloudStatusLabel(row['upload_status']),
+                ),
+              ),
+              if (row['upload_status'] != 'EXPIRED')
+                const Chip(label: Text('待 mesh 同步')),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Map<String, dynamic> _eventFromUploadRow(Map<String, dynamic> row) {
+    final raw = row['event_json'];
+    try {
+      final event = raw is String ? jsonDecode(raw) : raw;
+      return event is Map
+          ? Map<String, dynamic>.from(event)
+          : const <String, dynamic>{};
+    } on Object {
+      return const <String, dynamic>{};
+    }
+  }
+
+  Future<void> _syncPendingDeviceWarnings() async {
+    await _perform(() async {
+      final bridge = widget.auth.mapBridge;
+      final result = await _warningUploadQueue().flush();
+      final statuses = await bridge.listGovernmentWarningStatuses();
+      if (mounted) setState(() => _deviceWarnings = statuses);
+      if (mounted && result.uploaded > 0) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('已補傳 ${result.uploaded} 則警告，等待官方 feed 發布。')),
+        );
+      }
+    });
+  }
+
+  GovernmentWarningUploadQueue _warningUploadQueue() {
+    final bridge = widget.auth.mapBridge;
+    return GovernmentWarningUploadQueue(
+      pending: bridge.listPendingGovernmentWarningUploads,
+      upload: widget.auth.api.uploadGovernmentWarning,
+      acknowledge:
+          (eventId, payloadHash) => bridge.markGovernmentWarningUploaded(
+            eventId: eventId,
+            payloadHash: payloadHash,
+          ),
+      expire:
+          (eventId, payloadHash) => bridge.markGovernmentWarningExpired(
+            eventId: eventId,
+            payloadHash: payloadHash,
+          ),
+    );
+  }
+
+  Future<void> _retryPendingDeviceWarnings() async {
+    if (!mounted || _warningUploadActive) return;
+    _warningUploadActive = true;
+    try {
+      await _warningUploadQueue().flush();
+      final statuses =
+          await widget.auth.mapBridge.listGovernmentWarningStatuses();
+      if (mounted) setState(() => _deviceWarnings = statuses);
+    } on Object {
+      // Keep the Room outbox and retry on the next online refresh/interval.
+    } finally {
+      _warningUploadActive = false;
+    }
+  }
 
   Future<void> _editAnnouncement([Map<String, dynamic>? existing]) async {
     final title =
@@ -515,7 +697,12 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen> {
     };
     await _perform(() async {
       if (existing == null) {
-        await widget.auth.api.createAnnouncement(input);
+        if (widget.auth.androidDeviceMode &&
+            widget.auth.user?.role == 'GOVERNMENT') {
+          await widget.auth.createDeviceGovernmentWarning(input);
+        } else {
+          await widget.auth.api.createAnnouncement(input);
+        }
       } else {
         await widget.auth.api.reviseAnnouncement(
           existing['event_id'] as String,

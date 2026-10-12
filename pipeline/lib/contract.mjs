@@ -11,7 +11,8 @@ import {
 } from './canonical.mjs';
 import { signCanonical } from './crypto.mjs';
 import { bboxOfEvents } from './geo.mjs';
-import { isDeviceKeyId, resolveDeviceKey } from './device-key.mjs';
+import { deviceKeyIdFromSpkiBase64, isDeviceKeyId, resolveDeviceKey } from './device-key.mjs';
+import { verifyGovernmentDeviceCertificate } from './government-device-certificate.mjs';
 
 const EVENT_REQUIRED = [
   'schema_version',
@@ -155,15 +156,43 @@ function trustedKey(event, trustedKeyIds) {
 export function verifyEvent(event, publicKey, options = {}) {
   const errors = validateEventShape(event);
   if (errors.length > 0) return { valid: false, stage: 'schema', errors, current: false };
-  // Two trust paths. A `device:` key is self-certifying (its id is the
-  // fingerprint of the embedded public key) and is accepted only for crowd.*;
-  // it can never reach the official path below, so relaxing crowd trust cannot
-  // loosen official.*. Every other key must be on the caller's trusted list.
+  // Device keys remain self-certifying only for crowd.*. Government warnings
+  // use a separate path rooted in a centrally signed, time-limited certificate.
   let verificationKey = publicKey;
   if (isDeviceKeyId(event.signing_key_id)) {
-    const device = resolveDeviceKey(event);
-    if (!device.key) return { valid: false, stage: 'trust', errors: [device.error], current: false };
-    verificationKey = device.key;
+    if (event.namespace.startsWith('crowd.')) {
+      const device = resolveDeviceKey(event);
+      if (!device.key) return { valid: false, stage: 'trust', errors: [device.error], current: false };
+      verificationKey = device.key;
+    } else if (event.namespace === 'official.announcement' && event.source === 'GOVERNMENT') {
+      const certificate = event.attributes?.government_device_certificate;
+      if (!certificate) {
+        return { valid: false, stage: 'trust', errors: ['government device certificate is required'], current: false };
+      }
+      if (certificate.signing_key_id !== event.signing_key_id
+        || certificate.signer_public_key !== event.signer_public_key) {
+        return { valid: false, stage: 'trust', errors: ['event signing key does not match government device certificate'], current: false };
+      }
+      if (deviceKeyIdFromSpkiBase64(event.signer_public_key) !== event.signing_key_id) {
+        return { valid: false, stage: 'trust', errors: ['signing_key_id does not match signer_public_key fingerprint'], current: false };
+      }
+      const certificateResult = verifyGovernmentDeviceCertificate(certificate, publicKey, {
+        ...options,
+        at: event.issued_at,
+      });
+      if (!certificateResult.valid) {
+        return { valid: false, stage: 'trust', errors: certificateResult.errors, current: false };
+      }
+      const revokedAt = options.revokedAtByCertificateId instanceof Map
+        ? options.revokedAtByCertificateId.get(certificate.certificate_id)
+        : options.revokedAtByCertificateId?.[certificate.certificate_id];
+      if (revokedAt && Date.parse(event.issued_at) >= Date.parse(revokedAt)) {
+        return { valid: false, stage: 'trust', errors: ['government device certificate was revoked at event issue time'], current: false };
+      }
+      verificationKey = certificateResult.signerPublicKey;
+    } else {
+      return { valid: false, stage: 'trust', errors: ['device keys may only sign crowd.* or certified official.announcement events'], current: false };
+    }
   } else if (!trustedKey(event, options.trustedKeyIds)) {
     return { valid: false, stage: 'trust', errors: ['signing_key_id is not trusted'], current: false };
   }
@@ -298,6 +327,7 @@ export function verifyBundle(bundle, publicKey, options = {}) {
 export function eventState(event, now = new Date()) {
   const expired = now >= parseTime(event.expires_at, 'expires_at');
   if (expired) return 'expired';
+  if (event.namespace === 'official.device-revocation' || event.attributes?.internal_only === true) return 'internal';
   if (event.namespace.startsWith('crowd.')) return 'unverified';
   return 'current';
 }

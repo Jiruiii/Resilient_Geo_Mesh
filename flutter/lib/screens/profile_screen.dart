@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+
+import '../data/government_announcement_time.dart';
 import '../data/government_api.dart';
 import '../data/map_bridge.dart';
 import 'sync_status_screen.dart';
@@ -229,9 +231,30 @@ class _GovernmentAccountSectionState extends State<GovernmentAccountSection> {
                       ],
                     ),
                   ),
-                  Chip(label: Text(user.status == 'ACTIVE' ? '已登入' : '已停用')),
+                  Chip(
+                    label: Text(
+                      _auth.restoredOffline
+                          ? '離線工作台'
+                          : user.status == 'ACTIVE'
+                          ? '已登入'
+                          : '已停用',
+                    ),
+                  ),
                 ],
               ),
+              if (_auth.deviceAuthorization?['certificate_expires_at']
+                  is String)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(
+                    '手機憑證有效期限：${_formatCertificateExpiry(_auth.deviceAuthorization!['certificate_expires_at'] as String)}',
+                  ),
+                ),
+              if (_auth.restoredOffline && _auth.lastRevocationSyncAt != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text('撤銷資訊最近同步：${_auth.lastRevocationSyncAt}'),
+                ),
               const SizedBox(height: 12),
               Wrap(
                 spacing: 8,
@@ -349,4 +372,11 @@ class _GovernmentAccountSectionState extends State<GovernmentAccountSection> {
 
   String _errorText(Object error) =>
       error is GovernmentApiException ? error.message : '登入服務暫時無法使用';
+
+  String _formatCertificateExpiry(String value) {
+    final expiry = DateTime.tryParse(value);
+    return expiry == null
+        ? value
+        : GovernmentAnnouncementTime.formatTaiwan(expiry.toUtc());
+  }
 }

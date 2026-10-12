@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'dart:convert';
 import 'package:flutter/services.dart';
 
 import 'bridge_failure.dart';
@@ -45,6 +46,73 @@ class MapBridge {
 
   Future<Map<String, dynamic>> syncGovernmentNow() =>
       _invokeRequiredMap('syncGovernmentNow');
+
+  Future<Map<String, dynamic>> getGovernmentDevicePublicKey() =>
+      _invokeRequiredMap('getGovernmentDevicePublicKey');
+
+  Future<Map<String, dynamic>> storeGovernmentDeviceCertificate(
+    Map<String, dynamic> certificate,
+  ) => _invokeRequiredMap('storeGovernmentDeviceCertificate', <String, dynamic>{
+    'certificate_json': jsonEncode(certificate),
+  });
+
+  Future<Map<String, dynamic>> getGovernmentDeviceAuthorization() =>
+      _invokeRequiredMap('getGovernmentDeviceAuthorization');
+
+  Future<Map<String, dynamic>> createGovernmentWarning(
+    Map<String, Object?> input,
+  ) => _invokeRequiredMap('createGovernmentWarning', input);
+
+  Future<List<Map<String, dynamic>>> listPendingGovernmentWarningUploads() =>
+      _invokeRequiredMapList('listPendingGovernmentWarningUploads');
+
+  Future<List<Map<String, dynamic>>> listGovernmentWarningStatuses() =>
+      _invokeRequiredMapList('listGovernmentWarningStatuses');
+
+  Future<bool> markGovernmentWarningUploaded({
+    required String eventId,
+    required String payloadHash,
+  }) async {
+    final response = await _invokeRequiredMap('markGovernmentWarningUploaded', {
+      'event_id': eventId,
+      'payload_hash': payloadHash,
+    });
+    if (response['uploaded'] is! bool) {
+      throw const FormatException(
+        'markGovernmentWarningUploaded response is missing boolean uploaded',
+      );
+    }
+    return response['uploaded'] as bool;
+  }
+
+  Future<bool> markGovernmentWarningExpired({
+    required String eventId,
+    required String payloadHash,
+  }) async {
+    final response = await _invokeRequiredMap('markGovernmentWarningExpired', {
+      'event_id': eventId,
+      'payload_hash': payloadHash,
+    });
+    if (response['expired'] is! bool) {
+      throw const FormatException(
+        'markGovernmentWarningExpired response is missing boolean expired',
+      );
+    }
+    return response['expired'] as bool;
+  }
+
+  Future<List<Map<String, dynamic>>> _invokeRequiredMapList(
+    String method,
+  ) async {
+    final response = await _methodChannel.invokeMethod<Object?>(method);
+    if (response is! List) {
+      throw FormatException('$method response must be a list');
+    }
+    return response
+        .whereType<Map>()
+        .map((row) => Map<String, dynamic>.from(row))
+        .toList(growable: false);
+  }
 
   Future<MapInitialState> getInitialState() async {
     final response = await _invokeRequiredMap('getInitialState');
@@ -203,6 +271,8 @@ class MapBridge {
       final code = switch (error.code) {
         'invalid_input' => BridgeFailureCode.invalidInput,
         'signing_unavailable' => BridgeFailureCode.signingUnavailable,
+        'government_device_not_authorized' =>
+          BridgeFailureCode.signingUnavailable,
         'storage_unavailable' => BridgeFailureCode.storageUnavailable,
         'graph_unavailable' => BridgeFailureCode.graphUnavailable,
         'route_engine_error' => BridgeFailureCode.routeEngineError,

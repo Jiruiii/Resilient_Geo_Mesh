@@ -98,6 +98,14 @@ npm run server:cleanup -- --public-root /var/lib/resilientgeo-public --execute
 - Web service worker 快取 Flutter 程式外殼與內建 OSM 資產；簽章資料另存在 OPFS／Android 私有目錄。
 - 告警 feed 依 `expires_at`／撤銷狀態從目前活躍畫面與 Android 儲存移除；來源成功且目前沒有告警時可發布簽章空 feed，來源失敗則沿用上一個可信版本。
 
+### 政府手機警告與憑證撤銷
+
+政府 Android 裝置憑證與警告也進入同一中央簽章 feed。`government-api` 驗證帳號、設備憑證及原始警告簽章後寫入 PostgreSQL outbox；內部 `government-publisher` 負責簽發 7 天設備憑證、將警告原始簽章保留在 `government-announcements`，並產生 `government-device-revocations` 內部來源。中央私鑰不進 API 或手機。
+
+Android 會先下載並保存撤銷來源，再處理公告來源。裝置在 `revoked_at` 之後簽署的警告不會被接受；時間早於撤銷的警告仍可驗簽與轉傳。Web 驗證器遵循相同規則，並在 IndexedDB 離線快取中保存撤銷事件供舊警告驗證；內部撤銷事件不會送入通知或地圖。離線期間看不到尚未同步到該裝置的最新撤銷，介面會顯示最近一次撤銷同步時間。
+
+Android 簽好的警告先原子保存於 Room 事件、mesh chunk 與上傳佇列。政府工作台連線時及開啟期間每五分鐘會以原 event JSON 重試 `POST /api/v1/government/warnings`；網路失敗不會變更已簽內容或 event id。API 回覆排入佇列不等於 feed 已發布；裝置同步到中央簽章 feed 並確認同一 event id 與 payload hash 後，才將本機狀態更新為已發布。Mesh 目前沒有 peer 收件回執；需啟用既有 Android 緊急模式才會開始 mesh 廣播，應用程式不會自動開啟無線電。
+
 資料版本、醫療定位限制與逐縣市狀態見[資料說明](../data_description.md)及[點位涵蓋報告](data-coverage-2026-10-04.md)。目前底圖限制見根目錄 [Map_description.md](../Map_description.md)。
 
 ## 安全界線
