@@ -132,6 +132,31 @@ class MapBridge {
       .receiveBroadcastStream()
       .map<List<MeshEvent>>(eventsFromMessage);
 
+  /// Rescue requests. These rethrow the raw PlatformException /
+  /// MissingPluginException; AndroidRescueService maps them to RescueFailure.
+  Future<Map<String, dynamic>> submitRescueRequest(Map<String, Object?> request) =>
+      _invokeRequiredMap('submitRescueRequest', request);
+
+  Future<Map<String, dynamic>> reviseRescueRequest(
+    String eventId,
+    String action,
+    Map<String, Object?>? request,
+  ) => _invokeRequiredMap('reviseRescueRequest', <String, Object?>{
+    'event_id': eventId,
+    'action': action,
+    'request': request,
+  });
+
+  Future<List<Map<String, dynamic>>> getOwnRescueRequests() async {
+    final response = await _invokeRequiredMap('getOwnRescueRequests');
+    final requests = response['requests'];
+    if (requests is! List) throw const FormatException('getOwnRescueRequests response is missing requests');
+    return requests.whereType<Map>().map((entry) => Map<String, dynamic>.from(entry)).toList(growable: false);
+  }
+
+  Future<Map<String, dynamic>> syncRescueNearby(List<double> bbox) =>
+      _invokeRequiredMap('syncRescueNearby', <String, Object?>{'bbox': bbox});
+
   Future<Map<String, dynamic>> _invokeRequiredMap(
     String method, [
     Map<String, dynamic>? arguments,
