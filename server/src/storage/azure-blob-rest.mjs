@@ -151,5 +151,33 @@ export function createAzureBlobClient({ endpoint, tokenProvider, fetchImpl = glo
       });
       if (!response.ok) throw makeHttpError(response);
     },
+    async listBlobNames(container, prefix) {
+      if (typeof container !== 'string' || !/^[a-z0-9-]{3,63}$/u.test(container)) {
+        throw new TypeError('container name is invalid');
+      }
+      const names = [];
+      let marker = '';
+      do {
+        const url = new URL(`${container}`, `${baseUrl.toString().replace(/\/$/u, '')}/`);
+        url.searchParams.set('restype', 'container');
+        url.searchParams.set('comp', 'list');
+        url.searchParams.set('prefix', prefix);
+        if (marker) url.searchParams.set('marker', marker);
+        const token = await tokenProvider(STORAGE_SCOPE);
+        const response = await fetchImpl(url, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'x-ms-date': now().toUTCString(),
+            'x-ms-version': STORAGE_API_VERSION,
+          },
+          signal: AbortSignal.timeout(30_000),
+        });
+        if (!response.ok) throw makeHttpError(response);
+        const xml = await response.text();
+        for (const match of xml.matchAll(/<Name>([^<]+)<\/Name>/gu)) names.push(match[1]);
+        marker = /<NextMarker>([^<]*)<\/NextMarker>/u.exec(xml)?.[1] ?? '';
+      } while (marker);
+      return names;
+    },
   });
 }

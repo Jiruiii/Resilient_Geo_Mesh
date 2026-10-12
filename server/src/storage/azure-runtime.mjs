@@ -1,6 +1,7 @@
 import { createAzureBlobLeaseProvider } from './azure-blob-lease.mjs';
 import { createAzureBlobClient, createManagedIdentityTokenProvider } from './azure-blob-rest.mjs';
 import { createAzureBlobReleasePointerStore } from './azure-release-pointer.mjs';
+import { createAzureRescueStore } from './crowd-rescue-store.mjs';
 
 export function createAzureRuntimeStorage(config, { env = process.env, fetchImpl = globalThis.fetch } = {}) {
   if (!config?.azureStorageBlobEndpoint) return Object.freeze({});
@@ -21,5 +22,8 @@ export function createAzureRuntimeStorage(config, { env = process.env, fetchImpl
       container: config.azureControlContainer,
       blobName: config.azureCollectorLockBlob,
     }),
+    ...(config.azureCrowdContainer
+      ? { rescueStore: createAzureRescueStore({ blobClient, container: config.azureCrowdContainer }) }
+      : {}),
   });
 }

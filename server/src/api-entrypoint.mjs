@@ -5,6 +5,7 @@ import { loadApiConfig } from './config.mjs';
 import { buildApp } from './app.mjs';
 import { createReleaseStore } from './storage/release-store.mjs';
 import { createAzureRuntimeStorage } from './storage/azure-runtime.mjs';
+import { createFileRescueStore } from './storage/crowd-rescue-store.mjs';
 
 const config = loadApiConfig(process.env);
 const publicKeyPem = process.env.SIGNING_PUBLIC_KEY_PEM
@@ -15,9 +16,12 @@ const releaseStore = createReleaseStore({
   releaseRoot: config.publicReleaseRoot,
   releasePointerStore: azureStorage.releasePointerStore,
 });
+const rescueStore = azureStorage.rescueStore
+  ?? (config.crowdDataRoot ? createFileRescueStore({ root: config.crowdDataRoot }) : null);
 const app = buildApp({
   config: { ...config, signingPublicKey: publicKey },
   releaseStore,
+  rescueStore,
   sourceStateStore: {
     async list() {
       try {

@@ -182,3 +182,20 @@ test('Azure deployment workflow is manual, uses OIDC, and deploys the image by d
   assert.doesNotMatch(workflow, /secrets\.SIGNING_(?:PRIVATE|PUBLIC)_KEY_PEM/u);
   assert.doesNotMatch(workflow, /git push/u);
 });
+
+test('Azure Bicep gives the API write access only to the private crowd container', async () => {
+  const bicep = await read('deploy/azure/main.bicep');
+  assert.match(bicep, /resource crowdContainer 'Microsoft\.Storage\/storageAccounts\/blobServices\/containers@[^']+' = \{\s*parent: blobService\s*name: 'resilientgeo-crowd'\s*properties: \{ publicAccess: 'None' \}/u);
+  assert.match(bicep, /resource apiCrowdBlobWrite 'Microsoft\.Authorization\/roleAssignments@[^']+'[\s\S]*?scope: crowdContainer[\s\S]*?roleDefinitionId: roleBlobContributor, principalId: apiIdentity\.properties\.principalId/u);
+  assert.doesNotMatch(bicep, /scope: controlContainer\s*\n\s*properties: \{ roleDefinitionId: roleBlobContributor, principalId: apiIdentity/u);
+  assert.match(bicep, /name: 'AZURE_CROWD_CONTAINER', value: crowdContainer\.name/u);
+  assert.match(bicep, /managementPolicies[\s\S]*prefixMatch: \[\s*'resilientgeo-crowd\/rescue\/'\s*\][\s\S]*daysAfterModificationGreaterThan: 7/u);
+});
+
+test('docker-compose gives the API a writable crowd volume', async () => {
+  const compose = await read('deploy/docker-compose.yml');
+  assert.match(compose, /CROWD_DATA_ROOT: \/var\/lib\/resilientgeo-crowd/u);
+  assert.match(compose, /- crowd_data:\/var\/lib\/resilientgeo-crowd\n/u);
+  const dockerfile = await read('deploy/Dockerfile');
+  assert.match(dockerfile, /mkdir -p \/var\/lib\/resilientgeo-crowd && chown node:node \/var\/lib\/resilientgeo-crowd/u);
+});
