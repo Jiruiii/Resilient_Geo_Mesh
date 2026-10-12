@@ -1,6 +1,8 @@
 package com.resilientgeo.mesh.ingest
 
+import com.resilientgeo.mesh.trust.DeviceKeys
 import com.resilientgeo.mesh.trust.EventVerifier
+import com.resilientgeo.mesh.trust.RescueContract
 import com.resilientgeo.mesh.trust.TrustedKeyStore
 import com.resilientgeo.mesh.trust.VerificationResult
 import org.json.JSONObject
@@ -15,6 +17,8 @@ import java.time.Instant
  *  3. An older or equal version is rejected outright — the store is left untouched.
  *  4. `official.*` and `crowd.*` (or any other) namespaces never overwrite each other,
  *     because identity is (namespace, event_id), not event_id alone.
+ *     `crowd.*` 的新版本必須由同一個 `signing_key_id` 簽署；`crowd.rescue` 另套用終態與
+ *     `first_issued_at` 規則。
  *  5. An expired event's payload is removed by local retention; its version floor
  *     remains so an older peer copy cannot make it active again.
  */
@@ -47,6 +51,8 @@ object EventIngestor {
         }
 
         if (eventVersion > existing.eventVersion) {
+            val transitionErrors = transitionErrors(namespace, JSONObject(existing.eventJson), event)
+            if (transitionErrors.isNotEmpty()) return IngestResult.RejectedTransition(transitionErrors.first())
             val state = ApplyState.at(namespace, event.getString("expires_at"), now)
             store.save(toStoredEvent(event, namespace, eventId, eventVersion, state))
             return IngestResult.Updated(existing.eventVersion, eventVersion, state)
@@ -57,6 +63,14 @@ object EventIngestor {
         }
 
         return IngestResult.RejectedSameVersionConflict(versionFloor, eventVersion)
+    }
+
+    /** Mirrors the update rules in `ingestEvent()` (contract.mjs). */
+    private fun transitionErrors(namespace: String, stored: JSONObject, incoming: JSONObject): List<String> = when {
+        namespace == RescueContract.NAMESPACE -> RescueContract.transitionErrors(stored, incoming)
+        DeviceKeys.isCrowdNamespace(namespace) &&
+            stored.optString("signing_key_id") != incoming.optString("signing_key_id") -> listOf("signer_mismatch")
+        else -> emptyList()
     }
 
     private fun toStoredEvent(event: JSONObject, namespace: String, eventId: String, eventVersion: Int, state: ApplyState) = StoredEvent(

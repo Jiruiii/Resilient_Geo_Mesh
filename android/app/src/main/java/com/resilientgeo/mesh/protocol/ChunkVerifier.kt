@@ -35,7 +35,7 @@ object ChunkVerifier {
     fun verify(chunk: JSONObject, trustStore: TrustedKeyStore, now: Instant = Instant.now()): Result {
         // Crowd reports travel one per chunk, signed by the reporting device
         // rather than by a bundled official key; see CrowdChunkCodec.
-        if (chunk.optString("dataset_id") == CrowdChunkCodec.DATASET_ID) {
+        if (chunk.optString("dataset_id") in CrowdChunkCodec.DATASET_IDS) {
             return CrowdChunkCodec.verify(chunk, trustStore, now)
         }
         val expectedHash = Canonical.sha256Canonical(chunkContent(chunk))

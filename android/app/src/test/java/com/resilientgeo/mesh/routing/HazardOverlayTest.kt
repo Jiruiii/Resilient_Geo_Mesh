@@ -93,6 +93,26 @@ class HazardOverlayTest {
     }
 
     @Test
+    fun `rescue requests never weight the route`() {
+        // Same setup as the crowd report penalty test above, but a rescue point.
+        val result = overlay(
+            event(
+                "rescue:abcd1234:1",
+                "RESCUE_REQUEST",
+                point(p(1, 0)),
+                namespace = "crowd.rescue",
+                severity = "CRITICAL",
+                attributes = JSONObject().put("request_type", "TRAPPED_DEBRIS"),
+            ),
+        )
+        row0.forEach {
+            assertFalse(result.isBlocked(it))
+            assertEquals(1.0, result.penalty(it), 0.0)
+            assertTrue(result.effects(it).isEmpty())
+        }
+    }
+
+    @Test
     fun `a crowd event claiming CLOSED is still only a penalty`() {
         val result = overlay(
             event("road:w100-crowd", "ROAD_STATUS", RoutingTestSupport.line(p(0, 0), p(2, 0)), namespace = "crowd.road", attributes = JSONObject().put("status", "CLOSED")),

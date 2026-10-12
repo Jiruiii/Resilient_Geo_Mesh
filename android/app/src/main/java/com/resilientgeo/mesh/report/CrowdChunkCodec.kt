@@ -7,6 +7,7 @@ import com.resilientgeo.mesh.trust.DeviceSigningKey
 import com.resilientgeo.mesh.trust.Ed25519Verifier
 import com.resilientgeo.mesh.trust.EventShapeValidator
 import com.resilientgeo.mesh.trust.EventVerifier
+import com.resilientgeo.mesh.trust.RescueContract
 import com.resilientgeo.mesh.trust.TrustedKeyStore
 import com.resilientgeo.mesh.trust.VerificationResult
 import org.json.JSONArray
@@ -35,27 +36,49 @@ object CrowdChunkCodec {
      */
     const val MAX_PAYLOAD_BYTES = 4096
 
-    fun chunkIdFor(eventId: String): String = "crowd:$eventId"
+    private data class Profile(val manifestId: String, val chunkPrefix: String, val theme: String)
 
-    fun eventIdFor(chunkId: String): String? = chunkId.takeIf { it.startsWith("crowd:") }?.removePrefix("crowd:")
+    private val PROFILES = mapOf(
+        DATASET_ID to Profile(MANIFEST_ID, "crowd:", "report"),
+        RescueContract.DATASET_ID to Profile(RescueContract.MANIFEST_ID, "crowd-rescue:", "rescue"),
+    )
+
+    val DATASET_IDS: Set<String> = PROFILES.keys
+
+    fun datasetIdFor(namespace: String): String =
+        if (namespace == RescueContract.NAMESPACE) RescueContract.DATASET_ID else DATASET_ID
+
+    fun chunkIdFor(eventId: String, namespace: String = NAMESPACE): String =
+        PROFILES.getValue(datasetIdFor(namespace)).chunkPrefix + eventId
+
+    fun eventIdFor(chunkId: String): String? = PROFILES.values
+        .firstOrNull { chunkId.startsWith(it.chunkPrefix) }
+        ?.let { chunkId.removePrefix(it.chunkPrefix) }
+
+    private fun namespaceFitsDataset(datasetId: String, namespace: String): Boolean {
+        if (!DeviceKeys.isCrowdNamespace(namespace)) return false
+        return if (datasetId == RescueContract.DATASET_ID) namespace == RescueContract.NAMESPACE else namespace != RescueContract.NAMESPACE
+    }
 
     fun build(event: JSONObject, key: DeviceSigningKey): JSONObject {
         require(event.getString("signing_key_id") == key.keyId()) { "only the reporting device wraps its own report" }
+        val datasetId = datasetIdFor(event.getString("namespace"))
+        val profile = PROFILES.getValue(datasetId)
         val coordinates = event.getJSONObject("geometry").getJSONArray("coordinates")
         val lon = CrowdReportFactory.roundCoordinate(coordinates.getDouble(0))
         val lat = CrowdReportFactory.roundCoordinate(coordinates.getDouble(1))
         val chunk = JSONObject()
             .put("schema_version", "chunk-v0")
-            .put("chunk_id", chunkIdFor(event.getString("event_id")))
-            .put("manifest_id", MANIFEST_ID)
+            .put("chunk_id", profile.chunkPrefix + event.getString("event_id"))
+            .put("manifest_id", profile.manifestId)
             .put("manifest_hash", event.getString("payload_hash"))
-            .put("dataset_id", DATASET_ID)
+            .put("dataset_id", datasetId)
             .put("namespace", event.getString("namespace"))
             .put("dataset_version", DATASET_VERSION)
             .put("sequence", 0)
             .put("priority", priorityForSeverity(event.getString("severity")))
             .put("area_id", "crowd")
-            .put("theme", "report")
+            .put("theme", profile.theme)
             .put("bbox", JSONArray().put(lon).put(lat).put(lon).put(lat))
             .put("created_at", event.getString("issued_at"))
             .put("content_type", "application/json")
@@ -81,7 +104,9 @@ object CrowdChunkCodec {
 
     private fun verifyOrThrow(chunk: JSONObject, trustStore: TrustedKeyStore, now: Instant): ChunkVerifier.Result {
         if (!shapeValid(chunk)) return invalid("crowd_chunk_shape_invalid")
-        if (chunk.optString("dataset_id") != DATASET_ID || !DeviceKeys.isCrowdNamespace(chunk.optString("namespace"))) {
+        val datasetId = chunk.optString("dataset_id")
+        val profile = PROFILES[datasetId]
+        if (profile == null || !namespaceFitsDataset(datasetId, chunk.optString("namespace"))) {
             return invalid("not_a_crowd_chunk")
         }
         val events = chunk.getJSONArray("events")
@@ -90,8 +115,8 @@ object CrowdChunkCodec {
         }
         val event = events.getJSONObject(0)
         if (EventShapeValidator.validate(event).isNotEmpty()) return invalid("crowd_event_shape_invalid")
-        if (chunk.getString("chunk_id") != chunkIdFor(event.getString("event_id")) ||
-            chunk.getString("manifest_id") != MANIFEST_ID ||
+        if (chunk.getString("chunk_id") != profile.chunkPrefix + event.getString("event_id") ||
+            chunk.getString("manifest_id") != profile.manifestId ||
             chunk.getString("manifest_hash") != event.getString("payload_hash") ||
             chunk.getInt("dataset_version") != DATASET_VERSION ||
             chunk.getString("namespace") != event.getString("namespace")

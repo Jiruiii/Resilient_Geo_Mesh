@@ -9,8 +9,12 @@ import com.resilientgeo.mesh.protocol.LayerBundleVerifier
 import com.resilientgeo.mesh.report.CrowdChunkCodec
 import com.resilientgeo.mesh.report.CrowdReportFactory
 import com.resilientgeo.mesh.report.CrowdReportInput
+import com.resilientgeo.mesh.report.RescueAction
+import com.resilientgeo.mesh.report.RescueRequestFactory
 import com.resilientgeo.mesh.trust.DeviceSigningKey
 import com.resilientgeo.mesh.trust.KeystoreWrappedStorage
+import com.resilientgeo.mesh.trust.RescueContract
+import com.resilientgeo.mesh.trust.RescueRequestInput
 import com.resilientgeo.mesh.trust.TrustedKeyStore
 import com.resilientgeo.mesh.trust.EventVerifier
 import com.resilientgeo.mesh.trust.VerificationResult
@@ -352,7 +356,7 @@ class MeshRepository(
                     return@withContext ChunkIngestResult.Rejected("unsupported_official_event_source")
                 }
                 inventoryLock.withLock {
-                    if (chunk.optString("dataset_id") == CrowdChunkCodec.DATASET_ID) {
+                    if (chunk.optString("dataset_id") in CrowdChunkCodec.DATASET_IDS) {
                         val incoming = verified.events.single()
                         val stored = store.find(incoming.getString("namespace"), incoming.getString("event_id"))
                         if (stored != null && stored.eventVersion > incoming.getInt("event_version")) {
@@ -368,7 +372,7 @@ class MeshRepository(
                             EventIngestor.ingest(store, event, trustStore, now)
                         }
                     }
-                    if (chunk.optString("dataset_id") == CrowdChunkCodec.DATASET_ID) pruneCrowdInventory(now)
+                    if (chunk.optString("dataset_id") in CrowdChunkCodec.DATASET_IDS) pruneCrowdInventory(now)
                     ChunkIngestResult.Applied(results)
                 }
             }
@@ -686,6 +690,101 @@ class MeshRepository(
         }
     }
 
+    suspend fun ownDeviceKeyId(): String? = withContext(Dispatchers.IO) {
+        runCatching { deviceSigningKey(appContext).keyId() }.getOrNull()
+    }
+
+    suspend fun ownRescueRequests(): List<EventEntity> = withContext(Dispatchers.IO) {
+        val keyId = runCatching { deviceSigningKey(appContext).keyId() }.getOrNull() ?: return@withContext emptyList()
+        db.eventDao().forNamespaceSync(RescueContract.NAMESPACE)
+            .filter { JSONObject(it.eventJson).optString("signing_key_id") == keyId }
+    }
+
+    /**
+     * Creates and stores this device's rescue request through the same
+     * EventIngestor path a peer's request takes. At most one ACTIVE request
+     * per device (docs/superpowers/specs/2026-10-12-rescue-request-design.md §4).
+     */
+    suspend fun createRescueRequest(input: RescueRequestInput): RescueResult = withContext(Dispatchers.IO) {
+        val errors = RescueContract.fieldErrors(input)
+        if (errors.isNotEmpty()) return@withContext RescueResult.Invalid(errors)
+        val key = try {
+            deviceSigningKey(appContext)
+        } catch (error: Exception) {
+            return@withContext RescueResult.SigningUnavailable(error.message ?: error.javaClass.simpleName)
+        }
+        inventoryLock.withLock {
+            val now = Instant.now()
+            val own = ownRescueRows(key.keyId())
+            if (own.count { isActiveAt(it, now) } >= MAX_OWN_ACTIVE_RESCUE_REQUESTS) {
+                return@withLock RescueResult.Conflict("rescue_active_exists")
+            }
+            cooldownRemaining(own, now)?.let { return@withLock RescueResult.RateLimited(it) }
+            val event = RescueRequestFactory.create(input, key, now)
+            storeOwnRescue(event, key, now, expectInsert = true)
+        }
+    }
+
+    suspend fun reviseRescueRequest(eventId: String, action: RescueAction, input: RescueRequestInput?): RescueResult =
+        withContext(Dispatchers.IO) {
+            if (input != null) {
+                val errors = RescueContract.fieldErrors(input)
+                if (errors.isNotEmpty()) return@withContext RescueResult.Invalid(errors)
+            }
+            val key = try {
+                deviceSigningKey(appContext)
+            } catch (error: Exception) {
+                return@withContext RescueResult.SigningUnavailable(error.message ?: error.javaClass.simpleName)
+            }
+            inventoryLock.withLock {
+                val now = Instant.now()
+                val own = ownRescueRows(key.keyId())
+                val previous = own.firstOrNull { it.eventId == eventId } ?: return@withLock RescueResult.Conflict("rescue_not_found")
+                cooldownRemaining(own, now)?.let { return@withLock RescueResult.RateLimited(it) }
+                val event = try {
+                    RescueRequestFactory.revise(JSONObject(previous.eventJson), action, input, key, now)
+                } catch (error: IllegalArgumentException) {
+                    val reason = error.message.orEmpty()
+                    return@withLock if (reason.startsWith("rescue_field_invalid") || reason == "rescue_geometry_invalid") {
+                        RescueResult.Invalid(reason.split("; "))
+                    } else {
+                        RescueResult.Conflict(reason)
+                    }
+                }
+                storeOwnRescue(event, key, now, expectInsert = false)
+            }
+        }
+
+    private fun ownRescueRows(keyId: String): List<EventEntity> =
+        db.eventDao().forNamespaceSync(RescueContract.NAMESPACE)
+            .filter { JSONObject(it.eventJson).optString("signing_key_id") == keyId }
+
+    private fun isActiveAt(entity: EventEntity, now: Instant): Boolean =
+        ApplyState.at(entity.namespace, entity.expiresAt, now) != ApplyState.EXPIRED &&
+            JSONObject(entity.eventJson).getJSONObject("attributes").optString("status") == "ACTIVE"
+
+    /** Seconds left before this device may sign another rescue version, or null when it may now. */
+    private fun cooldownRemaining(own: List<EventEntity>, now: Instant): Long? {
+        val latest = own.mapNotNull { runCatching { Instant.parse(JSONObject(it.eventJson).getString("issued_at")) }.getOrNull() }
+            .maxOrNull() ?: return null
+        val elapsed = java.time.Duration.between(latest, now).seconds
+        return (RESCUE_REVISION_COOLDOWN_SECONDS - elapsed).takeIf { it > 0 }
+    }
+
+    private fun storeOwnRescue(event: JSONObject, key: DeviceSigningKey, now: Instant, expectInsert: Boolean): RescueResult = try {
+        val chunk = CrowdChunkCodec.build(event, key)
+        val result = commitChunk(chunk, now) { EventIngestor.ingest(store, event, trustStore, now) }
+        val stored = db.eventDao().findSync(RescueContract.NAMESPACE, event.getString("event_id"))
+        when {
+            stored != null && expectInsert && result is IngestResult.Inserted -> RescueResult.Saved(stored)
+            stored != null && !expectInsert && result is IngestResult.Updated -> RescueResult.Saved(stored)
+            result is IngestResult.RejectedTransition -> RescueResult.Conflict(result.reason)
+            else -> RescueResult.StorageUnavailable("rescue request was not stored: $result")
+        }
+    } catch (error: Exception) {
+        RescueResult.StorageUnavailable(error.message ?: error.javaClass.simpleName)
+    }
+
     /**
      * Every crowd report this node holds, own and relayed, as full signed
      * events. Debug-only upstream path (see debug/CrowdDebugReceiver): the
@@ -782,22 +881,45 @@ class MeshRepository(
      * relay inventory first (their event rows stay, shown as EXPIRED), then the
      * oldest reports from other devices are dropped entirely until at most
      * [MAX_OTHER_CROWD_REPORTS] remain. This node's own reports never count
-     * against, or get evicted by, that cap.
+     * against, or get evicted by, that cap. Rescue requests follow the same
+     * expiry-first rule but evict by [rescueEvictionOrder] instead of age alone.
      */
     private fun pruneCrowdInventory(now: Instant) {
         val ownKeyId = runCatching { deviceSigningKey(appContext).keyId() }.getOrNull()
-        val live = mutableListOf<Pair<ChunkEntity, String?>>()
-        for (chunk in chunkDao.forDatasetSync(CrowdChunkCodec.DATASET_ID, CrowdChunkCodec.NAMESPACE)) {
+        pruneDataset(CrowdChunkCodec.DATASET_ID, CrowdChunkCodec.NAMESPACE, ownKeyId, now) { live ->
+            live.sortedBy { it.first.receivedAtEpochMillis }.take((live.size - MAX_OTHER_CROWD_REPORTS).coerceAtLeast(0))
+        }
+        pruneDataset(RescueContract.DATASET_ID, RescueContract.NAMESPACE, ownKeyId, now) { live ->
+            val byChunk = live.associateBy { it.first.chunkId }
+            rescueEvictionOrder(
+                live.map { (chunk, event) ->
+                    RescueCandidate(chunk.chunkId, event.getJSONObject("attributes").optString("status"), event.optString("severity"), chunk.receivedAtEpochMillis)
+                },
+                MAX_OTHER_RESCUE_REQUESTS,
+            ).mapNotNull { byChunk[it.chunkId] }
+        }
+    }
+
+    /** Expired chunks leave relay inventory (their event rows stay); then [evict] picks other devices' chunks to drop entirely. */
+    private fun pruneDataset(
+        datasetId: String,
+        namespace: String,
+        ownKeyId: String?,
+        now: Instant,
+        evict: (List<Pair<ChunkEntity, JSONObject>>) -> List<Pair<ChunkEntity, JSONObject>>,
+    ) {
+        val others = mutableListOf<Pair<ChunkEntity, JSONObject>>()
+        for (chunk in chunkDao.forDatasetSync(datasetId, namespace)) {
             val eventId = CrowdChunkCodec.eventIdFor(chunk.chunkId)
-            val event = eventId?.let { db.eventDao().findSync(chunk.namespace, it) }
-            if (event == null || ApplyState.at(event.namespace, event.expiresAt, now) == ApplyState.EXPIRED) {
+            val entity = eventId?.let { db.eventDao().findSync(chunk.namespace, it) }
+            if (entity == null || ApplyState.at(entity.namespace, entity.expiresAt, now) == ApplyState.EXPIRED) {
                 dropChunk(chunk)
                 continue
             }
-            live += chunk to JSONObject(event.eventJson).optString("signing_key_id")
+            val event = JSONObject(entity.eventJson)
+            if (event.optString("signing_key_id") != ownKeyId) others += chunk to event
         }
-        val others = live.filter { (_, signer) -> signer != ownKeyId }.sortedBy { it.first.receivedAtEpochMillis }
-        others.take((others.size - MAX_OTHER_CROWD_REPORTS).coerceAtLeast(0)).forEach { (chunk, _) ->
+        evict(others).forEach { (chunk, _) ->
             dropChunk(chunk)
             CrowdChunkCodec.eventIdFor(chunk.chunkId)?.let { db.eventDao().deleteSync(chunk.namespace, it) }
         }
@@ -834,6 +956,12 @@ class MeshRepository(
 
         /** Reports from other devices this node keeps and relays. */
         const val MAX_OTHER_CROWD_REPORTS = 200
+
+        /** One ACTIVE rescue request per device (product decision 2026-10-12). */
+        const val MAX_OWN_ACTIVE_RESCUE_REQUESTS = 1
+        const val RESCUE_REVISION_COOLDOWN_SECONDS = 30L
+        /** Rescue requests from other devices this node keeps and relays. */
+        const val MAX_OTHER_RESCUE_REQUESTS = 300
 
         @Volatile
         private var sharedDeviceKey: DeviceSigningKey? = null
@@ -887,6 +1015,12 @@ class MeshRepository(
                 fallbackManifestId = CrowdChunkCodec.MANIFEST_ID,
                 fallbackDatasetVersion = CrowdChunkCodec.DATASET_VERSION,
             ),
+            KnownDataset(
+                datasetId = RescueContract.DATASET_ID,
+                namespace = RescueContract.NAMESPACE,
+                fallbackManifestId = RescueContract.MANIFEST_ID,
+                fallbackDatasetVersion = 1,
+            ),
         )
 
         private const val FIXTURE_ASSET = "fixtures/signed-events.json"
@@ -917,3 +1051,33 @@ sealed class ChunkIngestResult {
     data class Applied(val eventResults: List<IngestResult>) : ChunkIngestResult()
     data class Rejected(val reason: String) : ChunkIngestResult()
 }
+
+sealed class RescueResult {
+    data class Saved(val event: EventEntity) : RescueResult()
+    data class Invalid(val errors: List<String>) : RescueResult()
+    data class Conflict(val reason: String) : RescueResult()
+    data class RateLimited(val retryAfterSeconds: Long) : RescueResult()
+    data class SigningUnavailable(val message: String) : RescueResult()
+    data class StorageUnavailable(val message: String) : RescueResult()
+}
+
+internal data class RescueCandidate(
+    val chunkId: String,
+    val status: String,
+    val severity: String,
+    val receivedAtEpochMillis: Long,
+)
+
+private val RESCUE_SEVERITY_RANK = mapOf("MEDIUM" to 0, "HIGH" to 1, "CRITICAL" to 2)
+
+/** Which relayed rescue requests to drop so at most [keep] remain: terminal first, then least urgent, then oldest. */
+internal fun rescueEvictionOrder(candidates: List<RescueCandidate>, keep: Int): List<RescueCandidate> =
+    candidates
+        .sortedWith(
+            compareBy<RescueCandidate>(
+                { if (RescueContract.isTerminal(it.status)) 0 else 1 },
+                { RESCUE_SEVERITY_RANK[it.severity] ?: 0 },
+                { it.receivedAtEpochMillis },
+            ),
+        )
+        .take((candidates.size - keep).coerceAtLeast(0))

@@ -8,7 +8,7 @@ sealed class VerificationResult {
 
     data class Invalid(val stage: Stage, val errors: List<String>) : VerificationResult()
 
-    enum class Stage { SCHEMA, TRUST, INTEGRITY, SIGNATURE }
+    enum class Stage { SCHEMA, TRUST, INTEGRITY, SIGNATURE, CONTRACT }
 
     val isValid: Boolean get() = this is Valid
 }
