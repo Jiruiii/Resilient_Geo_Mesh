@@ -34,7 +34,7 @@ object GovernmentWarningFactory {
     const val TITLE_MAX_CODE_POINTS = 120
     const val CONTENT_MAX_CODE_POINTS = 8000
     private val MAX_LIFETIME = Duration.ofDays(90)
-    private val categories = setOf("SAFETY", "WEATHER", "ROAD", "SHELTER", "OTHER")
+    private val categories = setOf("SAFETY", "WEATHER", "ROAD", "SHELTER", "SUPPLY_STATION", "OTHER")
     private val severities = setOf("LOW", "MEDIUM", "HIGH", "CRITICAL", "UNKNOWN")
     private val taiwanBounds = doubleArrayOf(116.5, 20.5, 122.5, 26.8)
 
@@ -50,6 +50,9 @@ object GovernmentWarningFactory {
         }
         if (input.category !in categories) errors += "announcement category is invalid"
         if (input.severity !in severities) errors += "announcement severity is invalid"
+        if (input.category == "SUPPLY_STATION" && input.location == null) {
+            errors += "supply station location is required"
+        }
         val issued = issuedAt.truncatedTo(ChronoUnit.SECONDS)
         val expiry = input.expiresAt.truncatedTo(ChronoUnit.SECONDS)
         if (!expiry.isAfter(issued) || Duration.between(issued, expiry) > MAX_LIFETIME) {
@@ -142,7 +145,8 @@ object GovernmentWarningFactory {
         val content = attributes.optString("content").trim()
         if (title.isEmpty() || title.codePointCount(0, title.length) > TITLE_MAX_CODE_POINTS) errors += "announcement title is invalid"
         if (content.isEmpty() || content.codePointCount(0, content.length) > CONTENT_MAX_CODE_POINTS) errors += "announcement content is invalid"
-        if (attributes.optString("category") !in categories || event.optString("severity") !in severities ||
+        val category = attributes.optString("category")
+        if (category !in categories || event.optString("severity") !in severities ||
             attributes.optString("area_id") != AREA_ID || attributes.optString("theme") != THEME
         ) errors += "government warning category or scope is invalid"
         val issued = parseInstant(event.optString("issued_at"))
@@ -152,6 +156,9 @@ object GovernmentWarningFactory {
         }
         val hasLocation = attributes.optBoolean("has_map_location", false)
         val geometry = event.optJSONObject("geometry")
+        if (category == "SUPPLY_STATION" && geometry?.optString("type") != "Point") {
+            errors += "supply station location is required"
+        }
         if (geometry?.optString("type") == "Point") {
             val coordinates = geometry.optJSONArray("coordinates")
             if (!hasLocation || coordinates == null || coordinates.length() != 2 ||

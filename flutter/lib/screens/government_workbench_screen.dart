@@ -503,7 +503,12 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen> {
     var expiry = _existingExpiry(existing?['expires_at']);
     var location = _existingLocation(existing?['location']);
     var category = existing?['category'] as String? ?? 'SAFETY';
-    var severity = existing?['severity'] as String? ?? 'MEDIUM';
+    var severity =
+        category == 'SUPPLY_STATION'
+            ? 'LOW'
+            : existing?['severity'] as String? ?? 'MEDIUM';
+    String? titleError;
+    String? contentError;
     final accepted = await showDialog<bool>(
       context: context,
       builder:
@@ -534,6 +539,8 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen> {
               final expiryValid =
                   expiry.isAfter(now) &&
                   !expiry.isAfter(now.add(const Duration(days: 90)));
+              final locationValid =
+                  category != 'SUPPLY_STATION' || location != null;
               return AlertDialog(
                 title: Text(existing == null ? '新增官方公告' : '修訂官方公告'),
                 content: SizedBox(
@@ -545,13 +552,30 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen> {
                         TextField(
                           controller: title,
                           maxLength: 120,
-                          decoration: const InputDecoration(labelText: '標題'),
+                          decoration: InputDecoration(
+                            labelText: '標題',
+                            errorText: titleError,
+                          ),
+                          onChanged: (value) {
+                            if (titleError != null && value.trim().isNotEmpty) {
+                              setDialogState(() => titleError = null);
+                            }
+                          },
                         ),
                         TextField(
                           controller: content,
                           maxLines: 4,
                           maxLength: 8000,
-                          decoration: const InputDecoration(labelText: '內容'),
+                          decoration: InputDecoration(
+                            labelText: '內容',
+                            errorText: contentError,
+                          ),
+                          onChanged: (value) {
+                            if (contentError != null &&
+                                value.trim().isNotEmpty) {
+                              setDialogState(() => contentError = null);
+                            }
+                          },
                         ),
                         const Align(
                           alignment: Alignment.centerLeft,
@@ -577,6 +601,10 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen> {
                               value: 'SHELTER',
                               child: Text('避難收容'),
                             ),
+                            DropdownMenuItem(
+                              value: 'SUPPLY_STATION',
+                              child: Text('物資站'),
+                            ),
                             DropdownMenuItem(value: 'OTHER', child: Text('其他')),
                           ],
                           onChanged: (value) {
@@ -585,28 +613,34 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen> {
                             }
                           },
                         ),
-                        DropdownButtonFormField<String>(
-                          value: severity,
-                          decoration: const InputDecoration(labelText: '嚴重程度'),
-                          items: const <DropdownMenuItem<String>>[
-                            DropdownMenuItem(value: 'LOW', child: Text('低')),
-                            DropdownMenuItem(value: 'MEDIUM', child: Text('中')),
-                            DropdownMenuItem(value: 'HIGH', child: Text('高')),
-                            DropdownMenuItem(
-                              value: 'CRITICAL',
-                              child: Text('緊急'),
+                        if (category != 'SUPPLY_STATION')
+                          DropdownButtonFormField<String>(
+                            value: severity,
+                            decoration: const InputDecoration(
+                              labelText: '嚴重程度',
                             ),
-                            DropdownMenuItem(
-                              value: 'UNKNOWN',
-                              child: Text('未分類'),
-                            ),
-                          ],
-                          onChanged: (value) {
-                            if (value != null) {
-                              setDialogState(() => severity = value);
-                            }
-                          },
-                        ),
+                            items: const <DropdownMenuItem<String>>[
+                              DropdownMenuItem(value: 'LOW', child: Text('低')),
+                              DropdownMenuItem(
+                                value: 'MEDIUM',
+                                child: Text('中'),
+                              ),
+                              DropdownMenuItem(value: 'HIGH', child: Text('高')),
+                              DropdownMenuItem(
+                                value: 'CRITICAL',
+                                child: Text('緊急'),
+                              ),
+                              DropdownMenuItem(
+                                value: 'UNKNOWN',
+                                child: Text('未分類'),
+                              ),
+                            ],
+                            onChanged: (value) {
+                              if (value != null) {
+                                setDialogState(() => severity = value);
+                              }
+                            },
+                          ),
                         InkWell(
                           key: const ValueKey('announcement-expiry-picker'),
                           onTap: pickExpiry,
@@ -634,9 +668,22 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen> {
                           ),
                         const SizedBox(height: 8),
                         Text(
-                          '公告範圍為全台灣；地圖位置選填，未指定時只顯示在通知中。',
+                          category == 'SUPPLY_STATION'
+                              ? '物資站需設定地圖位置，發布後會同時顯示在地圖與通知中。'
+                              : '公告範圍為全台灣；地圖位置選填，未指定時只顯示在通知中。',
                           style: Theme.of(context).textTheme.bodySmall,
                         ),
+                        if (!locationValid)
+                          const Align(
+                            alignment: Alignment.centerLeft,
+                            child: Padding(
+                              padding: EdgeInsets.only(top: 6),
+                              child: Text(
+                                '物資站必須設定地圖位置。',
+                                style: TextStyle(color: Colors.red),
+                              ),
+                            ),
+                          ),
                         Align(
                           alignment: Alignment.centerLeft,
                           child: TextButton.icon(
@@ -672,8 +719,24 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen> {
                   ),
                   FilledButton(
                     onPressed:
-                        expiryValid
-                            ? () => Navigator.pop(dialogContext, true)
+                        expiryValid && locationValid
+                            ? () {
+                              final nextTitleError =
+                                  title.text.trim().isEmpty ? 'required' : null;
+                              final nextContentError =
+                                  content.text.trim().isEmpty
+                                      ? 'required'
+                                      : null;
+                              if (nextTitleError != null ||
+                                  nextContentError != null) {
+                                setDialogState(() {
+                                  titleError = nextTitleError;
+                                  contentError = nextContentError;
+                                });
+                                return;
+                              }
+                              Navigator.pop(dialogContext, true);
+                            }
                             : null,
                     child: Text(existing == null ? '建立並發布' : '修訂並發布'),
                   ),
@@ -688,7 +751,7 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen> {
       'title': title.text,
       'content': content.text,
       'category': category,
-      'severity': severity,
+      'severity': category == 'SUPPLY_STATION' ? 'LOW' : severity,
       'expires_at': expiry.toUtc().toIso8601String(),
       if (location != null) ...<String, Object?>{
         'longitude': location!.longitude,

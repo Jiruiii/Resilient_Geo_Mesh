@@ -17,6 +17,7 @@ typedef MapClusterSelection =
 
 const Color shelterMarkerColor = Color(0xFF0F766E);
 const Color medicalMarkerColor = Color(0xFF4F46E5);
+const Color supplyStationMarkerColor = Color(0xFFF57C00);
 
 enum MapMarkerKind { facility, event, currentLocation, cluster }
 
@@ -30,7 +31,28 @@ class MapIconCatalog {
   static const IconData shelter = LucideIcons.house;
   static const IconData shelterRecommendation = LucideIcons.mapPinHouse;
   static const IconData medical = LucideIcons.hospital;
+  static const IconData supplyStation = LucideIcons.packageOpen;
+
+  static IconData forEvent(MeshEvent event) =>
+      isSupplyStationEvent(event) ? supplyStation : disaster;
 }
+
+bool isSupplyStationEvent(MeshEvent event) =>
+    event.namespace == 'official.announcement' &&
+    event.source == 'GOVERNMENT' &&
+    event.attributes?['category'] == 'SUPPLY_STATION';
+
+String governmentAnnouncementCategoryLabel(Object? category) =>
+    switch (category) {
+      'SAFETY' => '安全提醒',
+      'WEATHER' => '天氣',
+      'ROAD' => '道路',
+      'SHELTER' => '避難收容',
+      'SUPPLY_STATION' => '物資站',
+      'OTHER' => '其他',
+      String value => value,
+      _ => '未分類',
+    };
 
 class MapMarkerData {
   const MapMarkerData({
@@ -714,7 +736,7 @@ class MapLayers {
                 icon:
                     event.isExpired
                         ? MapIconCatalog.expiredEvent
-                        : MapIconCatalog.disaster,
+                        : MapIconCatalog.forEvent(event),
                 color: eventColor(event),
                 shape:
                     event.isExpired
@@ -1086,6 +1108,9 @@ const confirmedCrowdEventColor = Color(0xFF0F766E);
 
 Color eventColor(MeshEvent event) {
   if (event.isExpired) return const Color(0xFF64748B);
+  if (isSupplyStationEvent(event)) {
+    return supplyStationMarkerColor;
+  }
   if (event.verification == CrowdVerification.confirmed) {
     return confirmedCrowdEventColor;
   }

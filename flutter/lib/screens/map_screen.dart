@@ -49,6 +49,8 @@ class MapScreen extends StatefulWidget {
     this.animationEnabled = true,
     this.active = true,
     this.routeClock,
+    this.notificationFocusEvent,
+    this.notificationFocusRequestId = 0,
   });
 
   /// Optional deterministic inputs keep widget tests independent of channels.
@@ -71,6 +73,8 @@ class MapScreen extends StatefulWidget {
 
   /// Deterministic expiry clock for widget tests.
   final DateTime Function()? routeClock;
+  final MeshEvent? notificationFocusEvent;
+  final int notificationFocusRequestId;
 
   @override
   State<MapScreen> createState() => _MapScreenState();
@@ -173,6 +177,21 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   void didUpdateWidget(covariant MapScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.active != widget.active) _refreshRouteVisibility();
+    if (oldWidget.notificationFocusRequestId !=
+        widget.notificationFocusRequestId) {
+      final event = widget.notificationFocusEvent;
+      final point = event == null ? null : meshEventFocusPoint(event);
+      if (event != null && point != null) {
+        _selectedFeature = null;
+        _selectedEvent = event;
+        _searchSelection = null;
+        _searchText = '';
+        _searchController.clear();
+        _mapSearchResults = const <MapSearchResult>[];
+        _focusPoint = point;
+        _focusRequestId += 1;
+      }
+    }
     final nextFeatures = widget.staticFeatures;
     if (nextFeatures != null &&
         !identical(oldWidget.staticFeatures, nextFeatures)) {

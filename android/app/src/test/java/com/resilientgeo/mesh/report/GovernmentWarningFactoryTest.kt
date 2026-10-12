@@ -48,6 +48,34 @@ class GovernmentWarningFactoryTest {
     }
 
     @Test
+    fun `supply station warning accepts its category and requires a map point`() {
+        val locatedStation = input(
+            title = "三重物資站",
+            content = "提供飲水與乾糧",
+            category = "SUPPLY_STATION",
+            severity = "LOW",
+            location = GovernmentWarningInput.Location(121.48, 25.06),
+        )
+        assertTrue(GovernmentWarningFactory.validate(locatedStation, issuedAt).isEmpty())
+        assertFalse(
+            GovernmentWarningFactory.validate(
+                locatedStation.copy(location = null),
+                issuedAt,
+            ).isEmpty(),
+        )
+
+        val event = GovernmentWarningFactory.create(
+            locatedStation,
+            keys.device,
+            keys.certificate,
+            issuedAt,
+            "announcement:device:supply-station",
+        )
+        assertEquals("SUPPLY_STATION", event.getJSONObject("attributes").getString("category"))
+        assertEquals("Point", event.getJSONObject("geometry").getString("type"))
+    }
+
+    @Test
     fun `rejects expiry beyond ninety days and out of bounds locations`() {
         assertFalse(GovernmentWarningFactory.validate(
             input(expiresAt = issuedAt.plusSeconds(90 * 24 * 60 * 60L + 1)), issuedAt,

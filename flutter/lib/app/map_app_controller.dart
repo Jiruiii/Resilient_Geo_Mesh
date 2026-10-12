@@ -45,6 +45,8 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
   static const _themePreference = 'map.theme_mode';
   static const _animationPreference = 'map.animation_enabled';
   static const _readEventKeysPreference = 'map.read_event_keys';
+  static const _deletedNotificationKeysPreference =
+      'map.deleted_notification_keys';
   final MapBridge bridge;
   final GovernmentAuthController governmentAuth;
   final DemoEventLoader _demoEventLoader;
@@ -62,6 +64,7 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
   Object? eventUpdateError;
   bool retryingEvents = false;
   final Set<String> _readEventKeys = <String>{};
+  final Set<String> _deletedNotificationKeys = <String>{};
   StaticFeatureCollection? staticFeatures;
   List<MeshEvent> persistedEvents = const <MeshEvent>[];
   MapInitialState initialState = const MapInitialState(
@@ -94,9 +97,20 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   /// Attestations are surfaced through the crowd report they verify, so they
-  /// never count as a notification of their own.
-  List<MeshEvent> get unreadEvents => events
+  /// never appear as notifications of their own. Dismissal only filters this
+  /// local list; the verified event stream remains intact for the map/cache.
+  List<MeshEvent> get notificationEvents => events
       .where((event) => !isAttestationEvent(event))
+      .where(
+        (event) => !_deletedNotificationKeys.contains(meshEventIdentity(event)),
+      )
+      .toList(growable: false);
+
+  /// Read status belongs to this app install/browser and is keyed by event
+  /// version, matching notification dismissal and map marker identity.
+  Set<String> get readEventKeys => Set<String>.unmodifiable(_readEventKeys);
+
+  List<MeshEvent> get unreadEvents => notificationEvents
       .where((event) => !_readEventKeys.contains(meshEventIdentity(event)))
       .toList(growable: false);
 
@@ -256,6 +270,12 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
       ..addAll(
         preferences.getStringList(_readEventKeysPreference) ?? const <String>[],
       );
+    _deletedNotificationKeys
+      ..clear()
+      ..addAll(
+        preferences.getStringList(_deletedNotificationKeysPreference) ??
+            const <String>[],
+      );
   }
 
   void _listenToNativeEvents() {
@@ -408,9 +428,55 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
     final key = meshEventIdentity(event);
     if (!_readEventKeys.add(key)) return;
     _notifyIfAlive();
+    await _persistNotificationKeys(_readEventKeysPreference, _readEventKeys);
+  }
+
+  Future<void> markAllNotificationsRead() async {
+    var changed = false;
+    for (final event in notificationEvents) {
+      changed = _readEventKeys.add(meshEventIdentity(event)) || changed;
+    }
+    if (!changed) return;
+    _notifyIfAlive();
+    await _persistNotificationKeys(_readEventKeysPreference, _readEventKeys);
+  }
+
+  Future<void> deleteNotification(MeshEvent event) async {
+    if (!_deletedNotificationKeys.add(meshEventIdentity(event))) return;
+    _notifyIfAlive();
+    await _persistNotificationKeys(
+      _deletedNotificationKeysPreference,
+      _deletedNotificationKeys,
+    );
+  }
+
+  Future<void> deleteAllNotifications() async {
+    var changed = false;
+    for (final event in notificationEvents) {
+      changed =
+          _deletedNotificationKeys.add(meshEventIdentity(event)) || changed;
+    }
+    if (!changed) return;
+    _notifyIfAlive();
+    await _persistNotificationKeys(
+      _deletedNotificationKeysPreference,
+      _deletedNotificationKeys,
+    );
+  }
+
+  Future<void> restoreNotification(MeshEvent event) async {
+    if (!_deletedNotificationKeys.remove(meshEventIdentity(event))) return;
+    _notifyIfAlive();
+    await _persistNotificationKeys(
+      _deletedNotificationKeysPreference,
+      _deletedNotificationKeys,
+    );
+  }
+
+  Future<void> _persistNotificationKeys(String key, Set<String> values) async {
     final preferences = await SharedPreferences.getInstance();
-    final sortedKeys = _readEventKeys.toList()..sort();
-    await preferences.setStringList(_readEventKeysPreference, sortedKeys);
+    final sortedKeys = values.toList()..sort();
+    await preferences.setStringList(key, sortedKeys);
   }
 
   Future<void> setThemeMode(ThemeMode value) async {

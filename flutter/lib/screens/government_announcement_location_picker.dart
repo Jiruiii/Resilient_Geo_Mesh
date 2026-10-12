@@ -51,11 +51,18 @@ class _GovernmentAnnouncementLocationPickerState
   bool _searchLoading = false;
   bool _resultsLoading = false;
   String? _searchError;
+  late MapRuntimeState _runtimeState;
 
   @override
   void initState() {
     super.initState();
     _selectedPoint = widget.initialLocation ?? MapCanvas.taiwanOverviewCenter;
+    _runtimeState = MapRuntimeState(
+      themeMode: ThemeMode.light,
+      zoomPercentage: 70,
+      currentLocation: widget.initialLocation,
+      animationEnabled: false,
+    );
     _searchLoading = widget.searchPlaces == null;
     if (widget.searchPlaces == null) unawaited(_loadSearchIndex());
   }
@@ -173,6 +180,16 @@ class _GovernmentAnnouncementLocationPickerState
     setState(() => _selectedPoint = point);
   }
 
+  void _onZoomPercentageChanged(int percentage) {
+    if (!mounted) return;
+    setState(
+      () =>
+          _runtimeState = _runtimeState.copyWith(
+            zoomPercentage: percentage.clamp(0, 100).toInt(),
+          ),
+    );
+  }
+
   String get _coordinateLabel =>
       '${_selectedPoint.latitude.toStringAsFixed(6)}, '
       '${_selectedPoint.longitude.toStringAsFixed(6)}';
@@ -192,12 +209,7 @@ class _GovernmentAnnouncementLocationPickerState
         fit: StackFit.expand,
         children: <Widget>[
           MapCanvas(
-            runtimeState: MapRuntimeState(
-              themeMode: ThemeMode.light,
-              zoomPercentage: 70,
-              currentLocation: widget.initialLocation,
-              animationEnabled: false,
-            ),
+            runtimeState: _runtimeState,
             staticFeatures: const <StaticFeature>[],
             visibleEvents: const <MeshEvent>[],
             showShelters: false,
@@ -205,7 +217,7 @@ class _GovernmentAnnouncementLocationPickerState
             showEvents: false,
             onStaticFeatureSelected: (_) {},
             onEventSelected: (_) {},
-            onZoomPercentageChanged: (_) {},
+            onZoomPercentageChanged: _onZoomPercentageChanged,
             onOpenLayerSettings: () {},
             onRequestLocation: () {},
             onMapTap: () {},

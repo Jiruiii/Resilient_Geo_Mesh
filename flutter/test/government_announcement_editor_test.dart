@@ -83,6 +83,97 @@ void main() {
     },
   );
 
+  testWidgets('supply station category requires a selected map location', (
+    tester,
+  ) async {
+    final api = _FakeGovernmentApi();
+    final auth =
+        GovernmentAuthController(api: api, androidDeviceMode: false)
+          ..user = const GovernmentUser(
+            id: 'staff',
+            account: 'staff',
+            displayName: '值班人員',
+            agency: '試辦機關',
+            role: 'GOVERNMENT',
+            status: 'ACTIVE',
+          )
+          ..loading = false;
+    addTearDown(auth.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(home: GovernmentWorkbenchScreen(auth: auth)),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.tap(find.text('官方公告'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('新增公告'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('安全提醒'));
+    await tester.pumpAndSettle();
+    expect(find.text('物資站'), findsOneWidget);
+    await tester.tap(find.text('物資站').last);
+    await tester.pumpAndSettle();
+
+    expect(find.text('物資站必須設定地圖位置。'), findsOneWidget);
+    expect(find.text('嚴重程度'), findsNothing);
+    final publishButton = tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, '建立並發布'),
+    );
+    expect(publishButton.onPressed, isNull);
+
+    Finder field(String label) => find.byWidgetPredicate(
+      (widget) => widget is TextField && widget.decoration?.labelText == label,
+    );
+    await tester.enterText(field('標題'), '三重物資站');
+    await tester.enterText(field('內容'), '提供飲水與乾糧');
+    await tester.ensureVisible(find.text('選擇地圖位置'));
+    await tester.tap(find.text('選擇地圖位置'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('確認位置'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('建立並發布'));
+    await tester.pumpAndSettle();
+
+    expect(api.createdAnnouncement?['category'], 'SUPPLY_STATION');
+    expect(api.createdAnnouncement?['severity'], 'LOW');
+    expect(api.createdAnnouncement?['longitude'], isA<double>());
+    expect(api.createdAnnouncement?['latitude'], isA<double>());
+  });
+
+  testWidgets('announcement title and content display required when empty', (
+    tester,
+  ) async {
+    final api = _FakeGovernmentApi();
+    final auth =
+        GovernmentAuthController(api: api, androidDeviceMode: false)
+          ..user = const GovernmentUser(
+            id: 'staff',
+            account: 'staff',
+            displayName: '值班人員',
+            agency: '試辦機關',
+            role: 'GOVERNMENT',
+            status: 'ACTIVE',
+          )
+          ..loading = false;
+    addTearDown(auth.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(home: GovernmentWorkbenchScreen(auth: auth)),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.tap(find.text('官方公告'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('新增公告'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('建立並發布'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('required'), findsNWidgets(2));
+    expect(api.createdAnnouncement, isNull);
+  });
+
   testWidgets('government account form requires 12 password characters', (
     tester,
   ) async {

@@ -77,6 +77,10 @@ void main() {
         'event_id': 'announcement:2',
         'event_type': 'GOVERNMENT_ANNOUNCEMENT',
         'source': 'GOVERNMENT',
+        'geometry': <String, dynamic>{
+          'type': 'Point',
+          'coordinates': <double>[121.5, 25.0],
+        },
         'attributes': <String, dynamic>{'has_map_location': true},
       });
       final attestation = MeshEvent.fromJson(<String, dynamic>{
@@ -96,6 +100,61 @@ void main() {
           attestation,
         ]),
         <MeshEvent>[noticeWithLocation],
+      );
+    },
+  );
+
+  test('maps every geolocated government announcement category', () {
+    final events = <MeshEvent>[
+      for (final category in <String>['SAFETY', 'ROAD', 'SUPPLY_STATION'])
+        MeshEvent(
+          namespace: 'official.announcement',
+          eventId: 'announcement:$category',
+          eventVersion: 1,
+          eventType: 'GOVERNMENT_ANNOUNCEMENT',
+          severity: 'MEDIUM',
+          source: 'GOVERNMENT',
+          issuedAt: '2026-10-12T00:00:00Z',
+          expiresAt: '2099-01-01T00:00:00Z',
+          applyState: null,
+          geometry: const PointGeometry(
+            GeoPoint(longitude: 121.5, latitude: 25.0),
+          ),
+          attributes: <String, dynamic>{
+            'category': category,
+            'has_map_location': true,
+          },
+        ),
+    ];
+
+    expect(filterMapEvents(events), events);
+  });
+
+  test(
+    'does not map government announcements with invalid or absent points',
+    () {
+      MeshEvent announcement(MapGeometry? geometry) => MeshEvent(
+        namespace: 'official.announcement',
+        eventId: 'announcement:invalid',
+        eventVersion: 1,
+        eventType: 'GOVERNMENT_ANNOUNCEMENT',
+        severity: 'MEDIUM',
+        source: 'GOVERNMENT',
+        issuedAt: '2026-10-12T00:00:00Z',
+        expiresAt: '2099-01-01T00:00:00Z',
+        applyState: null,
+        geometry: geometry,
+        attributes: const <String, dynamic>{'has_map_location': true},
+      );
+
+      expect(
+        filterMapEvents(<MeshEvent>[
+          announcement(
+            const PointGeometry(GeoPoint(longitude: 130, latitude: 25)),
+          ),
+          announcement(null),
+        ]),
+        isEmpty,
       );
     },
   );

@@ -218,6 +218,35 @@ test('announcement creation, revision and retraction queue incrementing signed f
   } finally { await app.close(); }
 });
 
+test('supply station announcements require and retain a valid map location', async () => {
+  const store = await memoryStore();
+  const app = buildGovernmentApp({ store, now: () => now });
+  try {
+    const token = await login(app);
+    const headers = { authorization: `Bearer ${token}` };
+    const base = {
+      title: '三重物資站', content: '提供飲水與乾糧。', category: 'SUPPLY_STATION',
+      expires_at: '2026-11-01T00:00:00Z',
+    };
+    const missingLocation = await app.inject({
+      method: 'POST', url: '/api/v1/government/announcements', headers,
+      payload: { ...base, severity: 'LOW' },
+    });
+    assert.equal(missingLocation.statusCode, 400);
+    assert.equal(missingLocation.json().error, 'announcement_location_invalid');
+
+    const created = await app.inject({
+      method: 'POST', url: '/api/v1/government/announcements', headers,
+      payload: { ...base, longitude: 121.48, latitude: 25.06 },
+    });
+    assert.equal(created.statusCode, 202);
+    const [saved] = await store.listAnnouncements();
+    assert.equal(saved.category, 'SUPPLY_STATION');
+    assert.equal(saved.severity, 'LOW');
+    assert.deepEqual(saved.location, { longitude: 121.48, latitude: 25.06 });
+  } finally { await app.close(); }
+});
+
 test('browser mutations require same-origin cookies and a matching CSRF token', async () => {
   const app = buildGovernmentApp({ store: await memoryStore(), now: () => now });
   const headers = { origin: 'http://localhost', host: 'localhost' };

@@ -23,7 +23,15 @@ bool isAppSupportedEvent(MeshEvent event) =>
 bool isMapVisibleEvent(MeshEvent event) {
   if (event.namespace?.startsWith('crowd.') == true) return true;
   if (event.namespace == 'official.announcement') {
-    return event.attributes?['has_map_location'] == true;
+    if (event.attributes?['has_map_location'] != true ||
+        event.geometry is! PointGeometry) {
+      return false;
+    }
+    final point = (event.geometry! as PointGeometry).point;
+    return point.longitude >= 116.5 &&
+        point.longitude <= 122.5 &&
+        point.latitude >= 20.5 &&
+        point.latitude <= 26.8;
   }
   if (event.namespace == 'official.verified') {
     return false;
