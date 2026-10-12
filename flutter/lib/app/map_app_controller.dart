@@ -13,6 +13,7 @@ import '../data/ncdr_demo_events.dart';
 import '../data/ncdr_map_filter.dart';
 import '../data/offline_government_feed.dart';
 import '../data/offline_map_web_static_layers.dart';
+import '../data/rescue_service.dart';
 
 /// App-level presentation coordinator.
 ///
@@ -30,12 +31,14 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
     bool? isWeb,
     WebStaticLayerLoader? webStaticLayerLoader,
     WebGovernmentFeedLoader? webGovernmentFeedLoader,
+    RescueService? rescueService,
   }) : bridge = bridge ?? MapBridge(),
        _demoEventLoader = demoEventLoader ?? _loadBundledNcdrDemoEvents,
        _isWeb = isWeb ?? kIsWeb,
        _webStaticLayerLoader = webStaticLayerLoader ?? loadWebNLSCStaticLayers,
        _webGovernmentFeedLoader =
-           webGovernmentFeedLoader ?? loadWebGovernmentFeed {
+           webGovernmentFeedLoader ?? loadWebGovernmentFeed,
+       _rescueServiceOverride = rescueService {
     WidgetsBinding.instance.addObserver(this);
   }
 
@@ -47,6 +50,14 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
   final bool _isWeb;
   final WebStaticLayerLoader _webStaticLayerLoader;
   final WebGovernmentFeedLoader _webGovernmentFeedLoader;
+  final RescueService? _rescueServiceOverride;
+  late final RescueService rescueService =
+      _rescueServiceOverride ?? RescueService.forPlatform(bridge: bridge, isWeb: _isWeb);
+  List<MeshEvent> _rescueNearby = const <MeshEvent>[];
+  GeoPoint? _rescueCenter;
+  DateTime? _rescueFetchedAt;
+  Timer? _rescueTimer;
+  bool _rescueFetching = false;
   final StreamController<List<MeshEvent>> _eventUpdates =
       StreamController<List<MeshEvent>>.broadcast();
 
@@ -82,7 +93,7 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
 
   List<MeshEvent> get events {
     final byId = <String, MeshEvent>{};
-    for (final event in _withoutExpiredEvents(persistedEvents)) {
+    for (final event in _withoutExpiredEvents(_publishedEvents)) {
       byId[meshEventIdentity(event)] = event;
     }
     return byId.values.toList(growable: false);
@@ -250,7 +261,7 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
         final verifiedEvents = _withoutUnsupportedEvents(events);
         persistedEvents = verifiedEvents;
         eventUpdateError = null;
-        _eventUpdates.add(List<MeshEvent>.unmodifiable(verifiedEvents));
+        _eventUpdates.add(List<MeshEvent>.unmodifiable(_publishedEvents));
         _scheduleExpiryRefresh();
         _notifyIfAlive();
       },
@@ -278,7 +289,7 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
       if (_disposed) return;
       persistedEvents = _withoutUnsupportedEvents(state.events);
       eventUpdateError = null;
-      _eventUpdates.add(List<MeshEvent>.unmodifiable(persistedEvents));
+      _eventUpdates.add(List<MeshEvent>.unmodifiable(_publishedEvents));
       _listenToNativeEvents();
       _scheduleExpiryRefresh();
     } on Object catch (error) {
@@ -310,7 +321,7 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
       );
       eventUpdateError =
           snapshot.warning == null ? null : StateError(snapshot.warning!);
-      _eventUpdates.add(persistedEvents);
+      _eventUpdates.add(List<MeshEvent>.unmodifiable(_publishedEvents));
       _scheduleExpiryRefresh();
     } on Object catch (error) {
       if (_disposed) return;
@@ -347,7 +358,7 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
     _expiryTimer = Timer(next.difference(now), () {
       if (_disposed) return;
       persistedEvents = _withoutExpiredEvents(persistedEvents);
-      _eventUpdates.add(List<MeshEvent>.unmodifiable(persistedEvents));
+      _eventUpdates.add(List<MeshEvent>.unmodifiable(_publishedEvents));
       _notifyIfAlive();
       _scheduleExpiryRefresh();
     });
@@ -366,11 +377,56 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
         .toList(growable: false);
   }
 
+  /// Map centre after the camera settles. Fetches rescue points around it at
+  /// most once per 60 s unless the centre moved more than ~1 km.
+  void setRescueViewport(GeoPoint center) {
+    final previous = _rescueCenter;
+    _rescueCenter = center;
+    final moved = previous == null ||
+        (previous.longitude - center.longitude).abs() > 0.01 ||
+        (previous.latitude - center.latitude).abs() > 0.01;
+    final stale = _rescueFetchedAt == null || DateTime.now().difference(_rescueFetchedAt!) >= const Duration(seconds: 60);
+    if (moved || stale) unawaited(_refreshRescueNearby());
+    _rescueTimer ??= Timer.periodic(const Duration(seconds: 60), (_) => unawaited(_refreshRescueNearby()));
+  }
+
+  Future<void> _refreshRescueNearby() async {
+    final center = _rescueCenter;
+    if (_disposed || center == null || _rescueFetching) return;
+    _rescueFetching = true;
+    try {
+      _rescueNearby = List<MeshEvent>.unmodifiable(await rescueService.nearby(RescueBounds.around(center)));
+      _rescueFetchedAt = DateTime.now();
+      _publishEvents();
+    } on RescueFailure {
+      // Offline or server not configured: keep what we have; the map never
+      // shows unverified server data in its place.
+    } finally {
+      _rescueFetching = false;
+    }
+  }
+
+  /// Persisted (Room or signed government feed) plus verified server rescue points.
+  List<MeshEvent> get _publishedEvents {
+    final byId = <String, MeshEvent>{};
+    for (final event in <MeshEvent>[...persistedEvents, ..._rescueNearby]) {
+      final key = meshEventIdentity(event);
+      final existing = byId[key];
+      if (existing == null || (event.eventVersion ?? 0) > (existing.eventVersion ?? 0)) byId[key] = event;
+    }
+    return byId.values.toList(growable: false);
+  }
+
+  void _publishEvents() {
+    _eventUpdates.add(List<MeshEvent>.unmodifiable(_publishedEvents));
+    _notifyIfAlive();
+  }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state != AppLifecycleState.resumed || _disposed) return;
     persistedEvents = _withoutExpiredEvents(persistedEvents);
-    _eventUpdates.add(List<MeshEvent>.unmodifiable(persistedEvents));
+    _eventUpdates.add(List<MeshEvent>.unmodifiable(_publishedEvents));
     _scheduleExpiryRefresh();
     _notifyIfAlive();
     if (_isWeb && !nativeBridgeAvailable) {
@@ -409,6 +465,7 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _expiryTimer?.cancel();
     _webFeedRefreshTimer?.cancel();
+    _rescueTimer?.cancel();
     _eventSubscription?.cancel();
     _eventUpdates.close();
     super.dispose();

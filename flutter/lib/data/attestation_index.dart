@@ -66,6 +66,15 @@ class AttestationIndex {
     return attestation;
   }
 
+  /// True when an attestation targets this request id but a different
+  /// version, e.g. the reporter updated it after the government confirmed it.
+  bool confirmedOtherVersion(MeshEvent report) {
+    final attestation = _byTarget[_key(report.namespace ?? '', report.eventId ?? '')];
+    return attestation != null &&
+        _verdict(attestation) == CrowdVerification.confirmed &&
+        attestation.attributes?['target_payload_hash'] != report.payloadHash;
+  }
+
   CrowdVerification verificationOf(MeshEvent report) => switch (attestationFor(
     report,
   )) {

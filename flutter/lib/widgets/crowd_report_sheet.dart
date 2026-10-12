@@ -85,6 +85,9 @@ class CrowdReportSheet extends StatelessWidget {
           (category) => RadioListTile<CrowdReportCategory>(
             contentPadding: EdgeInsets.zero,
             title: Text(category.label),
+            subtitle: category == CrowdReportCategory.trappedInjured
+                ? const Text('若是你或現場有人需要救援，請改用「需要救援」')
+                : null,
             value: category,
             groupValue: draft.category,
             onChanged: (value) {
@@ -310,56 +313,79 @@ class CrowdReportMapPickerBar extends StatelessWidget {
   final VoidCallback onConfirm;
 
   @override
-  Widget build(BuildContext context) {
-    final point = draft.location;
-    return Material(
-      color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.96),
-      elevation: 10,
-      borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-      child: SafeArea(
-        top: false,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 14, 20, 18),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              Text(
-                '拖動地圖調整警示位置',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-              const SizedBox(height: 4),
-              Text(
-                draft.locationHint == null
-                    ? '將中心圖釘放在警示發生的位置'
-                    : '已定位到「${draft.locationHint!.label}」，請拖動地圖微調',
-              ),
-              const SizedBox(height: 6),
-              Text(
-                point == null
-                    ? '尚未取得地圖中心位置'
-                    : '地圖中心：${point.latitude.toStringAsFixed(6)}, ${point.longitude.toStringAsFixed(6)}',
-              ),
-              const SizedBox(height: 10),
-              Row(
-                children: <Widget>[
-                  TextButton(
-                    key: const ValueKey<String>('report-location-back'),
-                    onPressed: onBackToForm,
-                    child: const Text('返回表單'),
-                  ),
-                  const Spacer(),
-                  ElevatedButton(
-                    key: const ValueKey<String>('report-location-confirm'),
-                    onPressed: point == null ? null : onConfirm,
-                    child: const Text('確認此位置'),
-                  ),
-                ],
-              ),
-            ],
-          ),
+  Widget build(BuildContext context) => MapLocationPickerBar(
+    title: '拖動地圖調整警示位置',
+    instruction: draft.locationHint == null ? '將中心圖釘放在警示發生的位置' : '已定位到「${draft.locationHint!.label}」，請拖動地圖微調',
+    point: draft.location,
+    onBack: onBackToForm,
+    onConfirm: onConfirm,
+  );
+}
+
+class MapLocationPickerBar extends StatelessWidget {
+  const MapLocationPickerBar({
+    super.key,
+    required this.title,
+    required this.instruction,
+    required this.point,
+    required this.onBack,
+    required this.onConfirm,
+    this.backKey = const ValueKey<String>('report-location-back'),
+    this.confirmKey = const ValueKey<String>('report-location-confirm'),
+  });
+
+  final String title;
+  final String instruction;
+  final GeoPoint? point;
+  final VoidCallback onBack;
+  final VoidCallback onConfirm;
+  final Key backKey;
+  final Key confirmKey;
+
+  @override
+  Widget build(BuildContext context) => Material(
+    color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.96),
+    elevation: 10,
+    borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+    child: SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 14, 20, 18),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text(
+              title,
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 4),
+            Text(instruction),
+            const SizedBox(height: 6),
+            Text(
+              point == null
+                  ? '尚未取得地圖中心位置'
+                  : '地圖中心：${point!.latitude.toStringAsFixed(6)}, ${point!.longitude.toStringAsFixed(6)}',
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: <Widget>[
+                TextButton(
+                  key: backKey,
+                  onPressed: onBack,
+                  child: const Text('返回表單'),
+                ),
+                const Spacer(),
+                ElevatedButton(
+                  key: confirmKey,
+                  onPressed: point == null ? null : onConfirm,
+                  child: const Text('確認此位置'),
+                ),
+              ],
+            ),
+          ],
         ),
       ),
-    );
-  }
+    ),
+  );
 }

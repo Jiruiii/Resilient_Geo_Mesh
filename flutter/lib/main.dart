@@ -141,6 +141,8 @@ class _MapAppHomeState extends State<_MapAppHome> {
                   themeMode: controller.themeMode,
                   animationEnabled: controller.animationEnabled,
                   active: _selectedIndex == 0,
+                  rescueService: controller.rescueService,
+                  onViewportSettled: controller.setRescueViewport,
                 ),
                 NotificationsScreen(
                   events: controller.unreadEvents,

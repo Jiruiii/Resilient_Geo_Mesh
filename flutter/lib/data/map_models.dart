@@ -231,10 +231,16 @@ class MeshEvent {
     return issued == null || !issued.isAfter(reference);
   }
 
+  /// A rescue request whose latest version is RESOLVED or CANCELLED. It stays
+  /// in storage until expiry so relays learn it ended, but is never drawn.
+  bool get isEndedRescueRequest =>
+      namespace == 'crowd.rescue' && attributes?['status'] != 'ACTIVE';
+
   /// Whether the map should draw this event now: current official data, plus
   /// live UNVERIFIED crowd reports, which are shown (marked as unverified)
   /// rather than hidden. Expired events are never drawn.
   bool isShownAt([DateTime? now]) {
+    if (isEndedRescueRequest) return false;
     if (applyState != 'UNVERIFIED') return isCurrentAt(now);
     final expires = _parseEventTime(expiresAt);
     return expires != null && expires.isAfter((now ?? DateTime.now()).toUtc());

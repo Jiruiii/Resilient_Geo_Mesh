@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../data/attestation_index.dart';
 import '../data/map_models.dart';
+import '../data/rescue_request_models.dart';
 import '../widgets/map_layers.dart';
 
 class NotificationsScreen extends StatelessWidget {
@@ -64,6 +65,7 @@ class _EventCard extends StatelessWidget {
         event.namespace?.startsWith('demo') == true ||
         event.source?.toLowerCase() == 'demo';
     final title = eventName(event);
+    final rescue = RescueRequestView.fromEvent(event);
     return Card(
       child: ListTile(
         onTap: onTap,
@@ -79,7 +81,9 @@ class _EventCard extends StatelessWidget {
             child: Icon(
               event.isExpired
                   ? MapIconCatalog.expiredEvent
-                  : MapIconCatalog.disaster,
+                  : rescue != null
+                      ? MapIconCatalog.rescueRequest(rescue.type)
+                      : MapIconCatalog.disaster,
               color: Theme.of(context).colorScheme.onSurfaceVariant,
             ),
           ),
@@ -90,9 +94,15 @@ class _EventCard extends StatelessWidget {
           child: Text(
             [
               if (demo) '模擬事件，非即時官方災情',
-              '事件類型：${event.eventType ?? '無資料'}',
-              '來源：${event.source ?? '無資料'}',
-              '嚴重度：${event.severity ?? '無資料'}',
+              if (rescue != null) ...<String>[
+                '求救狀態：${rescue.status.label}',
+                '急迫程度：${rescue.urgency.label}',
+                '人數：${rescue.peopleCount} 人',
+              ] else ...<String>[
+                '事件類型：${event.eventType ?? '無資料'}',
+                '來源：${event.source ?? '無資料'}',
+                '嚴重度：${event.severity ?? '無資料'}',
+              ],
               isCrowdEvent(event) && !event.isExpired
                   ? '狀態：${crowdVerificationLabel(event.verification ?? CrowdVerification.unverified)}'
                   : '狀態：${_applyStateLabel(event.effectiveApplyState)}',

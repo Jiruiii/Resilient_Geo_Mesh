@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:pointer_interceptor/pointer_interceptor.dart';
 
+import '../app/rescue_flow_controller.dart';
 import '../data/map_bridge.dart';
 import '../data/offline_search_worker.dart';
 import '../data/app_performance.dart';
@@ -26,12 +27,16 @@ import '../data/map_search_asset.dart';
 import '../data/ncdr_map_filter.dart';
 import '../data/offline_address_pack_store.dart';
 import '../data/offline_map_asset_store.dart';
+import '../data/rescue_request_models.dart';
+import '../data/rescue_service.dart';
 import '../widgets/feature_details_sheet.dart';
 import '../widgets/crowd_report_sheet.dart';
 import '../widgets/evacuation_route_sheet.dart';
 import '../widgets/layer_filter_panel.dart';
 import '../widgets/map_canvas.dart';
 import '../widgets/map_layers.dart' show MapIconCatalog, featureName;
+import '../widgets/rescue_request_sheet.dart';
+import '../widgets/rescue_status_card.dart';
 import 'sync_status_screen.dart';
 
 class MapScreen extends StatefulWidget {
@@ -48,6 +53,9 @@ class MapScreen extends StatefulWidget {
     this.animationEnabled = true,
     this.active = true,
     this.routeClock,
+    this.rescueService,
+    this.onViewportSettled,
+    this.sirenPanelBuilder,
   });
 
   /// Optional deterministic inputs keep widget tests independent of channels.
@@ -71,13 +79,27 @@ class MapScreen extends StatefulWidget {
   /// Deterministic expiry clock for widget tests.
   final DateTime Function()? routeClock;
 
+  /// Defaults to [RescueService.forPlatform] when omitted.
+  final RescueService? rescueService;
+
+  /// Called when the camera settles on a new centre, for the rescue "nearby" query.
+  final ValueChanged<GeoPoint>? onViewportSettled;
+
+  /// Built by 06 Task 26; null hides the locator-siren entry point.
+  final Widget Function(BuildContext, RescueFlowController)? sirenPanelBuilder;
+
   @override
   State<MapScreen> createState() => _MapScreenState();
 }
 
+enum _PickTarget { report, rescue }
+
 class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   late final MapBridge _bridge;
   late final LocationController _locationController;
+  late final RescueFlowController _rescue;
+  _PickTarget _pickTarget = _PickTarget.report;
+  bool _rescueSheetHidden = false;
   final OfflineAddressPackStore _addressPackStore = OfflineAddressPackStore();
   final TextEditingController _searchController = TextEditingController();
   final TextEditingController _reportAddressController =
@@ -153,6 +175,10 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
         WidgetsBinding.instance.lifecycleState == null ||
         WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
     _bridge = widget.bridge ?? MapBridge();
+    _rescue = RescueFlowController(
+      service: widget.rescueService ?? RescueService.forPlatform(bridge: _bridge),
+    )..addListener(_onRescueChanged);
+    unawaited(_rescue.load());
     _locationController = widget.locationController ?? LocationController();
     _locationSubscription = _locationController.locations.listen((location) {
       if (!mounted) return;
@@ -197,6 +223,8 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _rescue.removeListener(_onRescueChanged);
+    _rescue.dispose();
     _routeRefreshTimer?.cancel();
     _routeExpiryTimer?.cancel();
     _searchWorker?.close();
@@ -761,6 +789,16 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     for (final event in _persistedEvents) {
       byId[meshEventIdentity(event)] = event;
     }
+    // A Web request not yet uploaded only lives in the outbox; merge it so it
+    // still shows on the map. Android's own copy already matches Room's.
+    for (final session in _rescue.sessions) {
+      final event = session.request.event;
+      final key = meshEventIdentity(event);
+      final existing = byId[key];
+      if (existing == null || (event.eventVersion ?? 0) > (existing.eventVersion ?? 0)) {
+        byId[key] = event;
+      }
+    }
     final now = DateTime.now().toUtc();
     return AttestationIndex.fromEvents(byId.values, now: now)
         .mapDisplayEvents(byId.values)
@@ -1262,6 +1300,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     setState(() {
       _reportSheetVisible = false;
       _reportPicking = true;
+      _pickTarget = _PickTarget.report;
       _selectedFeature = null;
       _selectedEvent = null;
     });
@@ -1288,8 +1327,18 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   }
 
   void _onReportCameraSettled(GeoPoint point) {
+    if (!mounted) return;
+    if (_pickTarget == _PickTarget.rescue) {
+      final draft = _rescue.draft;
+      if (draft == null) return;
+      _rescue.updateDraft(draft.copyWith(
+        location: point,
+        locationSource: CrowdReportLocationSource.mapPick,
+      ));
+      return;
+    }
     final draft = _reportDraft;
-    if (!mounted || draft == null) return;
+    if (draft == null) return;
     setState(() {
       _reportDraft = draft.copyWith(
         location: point,
@@ -1297,6 +1346,113 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
       );
     });
   }
+
+  void _onRescueChanged() {
+    if (!mounted) return;
+    setState(() {});
+    final notice = _rescue.consumeNotice();
+    if (notice != null) _showMessage(notice);
+  }
+
+  void _openRescueRequest() {
+    _reportAddressSearchDebounce?.cancel();
+    _reportAddressController.clear();
+    setState(() {
+      _selectedFeature = null;
+      _selectedEvent = null;
+      _reportSheetVisible = false;
+      _reportPicking = false;
+      _pickTarget = _PickTarget.rescue;
+      _rescueSheetHidden = false;
+    });
+    _rescue.startNew();
+  }
+
+  Future<void> _setRescueCurrentLocation() async {
+    final location = await _locationController.requestCurrentLocation();
+    if (!mounted) return;
+    if (location == null) {
+      _showMessage('無法取得目前位置，請開啟瀏覽器或裝置定位權限');
+      return;
+    }
+    final draft = _rescue.draft;
+    if (draft == null) return;
+    setState(() {
+      _runtimeState = _runtimeState.copyWith(currentLocation: location);
+    });
+    _rescue.updateDraft(draft.copyWith(
+      location: location,
+      locationSource: CrowdReportLocationSource.currentLocation,
+      locationHint: null,
+    ));
+  }
+
+  void _beginRescueMapPick() {
+    if (_rescue.draft == null) return;
+    setState(() {
+      _pickTarget = _PickTarget.rescue;
+      _rescueSheetHidden = true;
+      _reportPicking = true;
+      _selectedFeature = null;
+      _selectedEvent = null;
+    });
+  }
+
+  void _returnToRescueForm() {
+    if (_rescue.draft == null) return;
+    setState(() {
+      _reportPicking = false;
+      _rescueSheetHidden = false;
+    });
+  }
+
+  void _confirmRescueMapLocation() {
+    final draft = _rescue.draft;
+    if (draft == null || draft.location == null) {
+      _showMessage('請先讓中心圖釘取得地圖位置');
+      return;
+    }
+    setState(() {
+      _reportPicking = false;
+      _rescueSheetHidden = false;
+    });
+  }
+
+  void _onRescueAddressSelected(MapSearchResult result) {
+    _reportSearchGeneration++;
+    final draft = _rescue.draft;
+    if (draft == null) return;
+    final coordinate = result.coordinate;
+    if (coordinate == null) {
+      _showMessage('這筆院所資料尚未定位，請改用已定位地址或在地圖上選點');
+      return;
+    }
+    _reportAddressSearchDebounce?.cancel();
+    final query = _reportAddressController.text.trim();
+    final hint = _locationHintFor(result, query);
+    _reportAddressController.text = result.displayTitle;
+    _reportAddressController.selection = TextSelection.collapsed(
+      offset: _reportAddressController.text.length,
+    );
+    setState(() {
+      _focusPoint = coordinate;
+      _focusRequestId += 1;
+      _searchSelection = result;
+      _pickTarget = _PickTarget.rescue;
+      _rescueSheetHidden = true;
+      _reportPicking = true;
+      _selectedFeature = null;
+      _selectedEvent = null;
+    });
+    _rescue.updateDraft(draft.copyWith(
+      location: coordinate,
+      locationSource: CrowdReportLocationSource.mapPick,
+      locationHint: hint,
+    ));
+  }
+
+  // TODO(06 Task 26): replace with the real locator-siren entry point.
+  void _openSirenOnly() => _showMessage('定位警報聲尚未啟用');
 
   void _onReportAddressChanged(String value) {
     _reportSearchGeneration++;
@@ -1339,6 +1495,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
       _searchSelection = result;
       _reportSheetVisible = false;
       _reportPicking = true;
+      _pickTarget = _PickTarget.report;
       _selectedFeature = null;
       _selectedEvent = null;
     });
@@ -1554,7 +1711,8 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
             : 0;
     final searchResults = _mapSearchResults;
     final reportAddressQuery =
-        _reportSheetVisible && _reportStep == CrowdReportSheetStep.edit
+        (_reportSheetVisible && _reportStep == CrowdReportSheetStep.edit) ||
+                (_rescue.step == RescueSheetStep.edit && !_rescueSheetHidden)
             ? _reportAddressController.text
             : '';
     final reportAddressResults =
@@ -1579,6 +1737,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
             onRequestLocation: _focusCurrentLocation,
             onMapTap: _closeDetails,
             onReportCameraIdle: _reportPicking ? _onReportCameraSettled : null,
+            onCameraSettled: widget.onViewportSettled,
             showReportLocationPicker: _reportPicking,
             route: _routeStale ? null : _routeResult,
             searchSelection: _searchSelection,
@@ -1622,16 +1781,25 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                       ),
                       const Spacer(),
                       _MapQuickActions(
+                        onRescue:
+                            _reportSheetVisible ||
+                                    _reportPicking ||
+                                    _routeSheetVisible ||
+                                    _rescue.step != null
+                                ? null
+                                : _openRescueRequest,
                         onReport:
                             _reportSheetVisible ||
                                     _reportPicking ||
-                                    _routeSheetVisible
+                                    _routeSheetVisible ||
+                                    _rescue.step != null
                                 ? null
                                 : _openCrowdReport,
                         onRecommend:
                             _reportSheetVisible ||
                                     _reportPicking ||
-                                    _routeSheetVisible
+                                    _routeSheetVisible ||
+                                    _rescue.step != null
                                 ? null
                                 : _recommendNearestShelter,
                       ),
@@ -1645,6 +1813,45 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                         child: Padding(
                           padding: EdgeInsets.all(10),
                           child: Text('請拖動地圖，讓中心圖釘對準警示位置'),
+                        ),
+                      ),
+                    ),
+                  if (_rescue.activeSession != null && _rescue.step == null && !_reportPicking)
+                    PointerInterceptor(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 520),
+                        child: RescueStatusCard(
+                          session: _rescue.activeSession!,
+                          now: _rescue.now,
+                          reminderDue: _rescue.expiryReminderDue,
+                          busy: _rescue.busy,
+                          sirenPanel: _rescue.showsSirenShortcut
+                              ? widget.sirenPanelBuilder?.call(context, _rescue)
+                              : null,
+                          onUpdate: _rescue.startUpdate,
+                          onExtend: _rescue.extend,
+                          onResolve: _rescue.resolve,
+                          onCancel: _rescue.cancelRequest,
+                        ),
+                      ),
+                    )
+                  else if (_rescue.expiredSession != null && _rescue.step == null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Card(
+                        key: const ValueKey<String>('rescue-expired-banner'),
+                        child: Padding(
+                          padding: const EdgeInsets.all(10),
+                          child: Row(
+                            children: <Widget>[
+                              const Expanded(child: Text('你的求救已到期，已不再顯示給其他人')),
+                              TextButton(
+                                key: const ValueKey<String>('rescue-recreate'),
+                                onPressed: _rescue.startRecreate,
+                                child: const Text('以原內容重新建立'),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     ),
@@ -1682,6 +1889,48 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                 event: _selectedEvent!,
                 corroboration: _corroborationOf(_selectedEvent!),
                 onClose: _closeDetails,
+                confirmedEarlierVersion: AttestationIndex.fromEvents(_persistedEvents)
+                    .confirmedOtherVersion(_selectedEvent!),
+              ),
+            ),
+          if (_rescue.step != null && !_rescueSheetHidden)
+            Align(
+              alignment: Alignment.bottomCenter,
+              child: RescueRequestSheet(
+                draft: _rescue.draft!,
+                step: _rescue.step!,
+                submitting: _rescue.busy,
+                isUpdate: _rescue.editingEventId != null,
+                capabilities: _rescue.capabilities,
+                errorMessage: _rescue.errorMessage,
+                onDraftChanged: _rescue.updateDraft,
+                onRequestCurrentLocation: _setRescueCurrentLocation,
+                onRequestMapPick: _beginRescueMapPick,
+                addressController: _reportAddressController,
+                addressResults:
+                    _reportAddressController.text.trim().isEmpty
+                        ? const <MapSearchResult>[]
+                        : reportAddressResults,
+                onAddressChanged: _onReportAddressChanged,
+                onAddressSelected: _onRescueAddressSelected,
+                onShowConfirmation: _rescue.showConfirmation,
+                onBackToEdit: _rescue.backToEdit,
+                onSubmit: _rescue.submit,
+                onCancel: _rescue.closeSheet,
+                onOpenSirenOnly: _openSirenOnly,
+              ),
+            ),
+          if (_reportPicking && _pickTarget == _PickTarget.rescue && _rescue.draft != null)
+            Align(
+              alignment: Alignment.bottomCenter,
+              child: MapLocationPickerBar(
+                title: '拖動地圖調整求救位置',
+                instruction: '將中心圖釘放在需要救援的位置',
+                point: _rescue.draft?.location,
+                backKey: const ValueKey<String>('rescue-location-back'),
+                confirmKey: const ValueKey<String>('rescue-location-confirm'),
+                onBack: _returnToRescueForm,
+                onConfirm: _confirmRescueMapLocation,
               ),
             ),
           if (_reportSheetVisible && _reportDraft != null)
@@ -1709,7 +1958,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                 onCancel: _closeCrowdReport,
               ),
             ),
-          if (_reportPicking && _reportDraft != null)
+          if (_reportPicking && _pickTarget == _PickTarget.report && _reportDraft != null)
             Align(
               alignment: Alignment.bottomCenter,
               child: CrowdReportMapPickerBar(
@@ -1814,8 +2063,9 @@ class _StatusOverlay extends StatelessWidget {
 }
 
 class _MapQuickActions extends StatelessWidget {
-  const _MapQuickActions({this.onReport, this.onRecommend});
+  const _MapQuickActions({this.onRescue, this.onReport, this.onRecommend});
 
+  final VoidCallback? onRescue;
   final VoidCallback? onReport;
   final VoidCallback? onRecommend;
 
@@ -1823,6 +2073,14 @@ class _MapQuickActions extends StatelessWidget {
   Widget build(BuildContext context) => Row(
     mainAxisSize: MainAxisSize.min,
     children: <Widget>[
+      _QuickActionButton(
+        key: const ValueKey<String>('open-rescue-request-action'),
+        label: '需要救援',
+        icon: MapIconCatalog.rescueEntry,
+        onPressed: onRescue,
+        buttonKey: const ValueKey<String>('open-rescue-request'),
+      ),
+      const SizedBox(width: 8),
       _QuickActionButton(
         key: const ValueKey<String>('open-crowd-report-action'),
         label: '回報警示',
