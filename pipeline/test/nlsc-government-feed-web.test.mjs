@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
-import { webcrypto } from 'node:crypto';
+import { createPublicKey, webcrypto } from 'node:crypto';
 
 import { generateEd25519KeyPair } from '../lib/crypto.mjs';
 import { buildGovernmentFeed } from '../lib/government-feed.mjs';
@@ -12,6 +12,9 @@ const feedScript = await readFile(
   new URL('../../flutter/web/nlsc_government_feed.js', import.meta.url),
 ).catch(() => '');
 const now = new Date('2026-10-04T00:00:00.000Z');
+const sharedDeviceFixture = JSON.parse(await readFile(
+  new URL('../fixtures/government-device-warning.json', import.meta.url), 'utf8',
+));
 
 function buildRelease({ retracted = false, events = true, severity = 'HIGH' } = {}) {
   const keys = generateEd25519KeyPair();
@@ -218,6 +221,90 @@ test('browser verifies the Server-signed release and returns active alerts', asy
   assert.equal(release.revision, 1);
   assert.equal(release.events.length, 1);
   assert.equal(release.events[0].event_id, 'ncdr:web-test');
+});
+
+test('browser verifies a shared device-signed government warning and hides revocation metadata', async () => {
+  const issuerKey = createPublicKey({
+    key: Buffer.from(sharedDeviceFixture.issuer_public_key_spki_base64, 'base64'),
+    format: 'der',
+    type: 'spki',
+  });
+  const context = browserContext(issuerKey, {}, { now: Date.parse(sharedDeviceFixture.now) });
+  const release = await context.ResilientGeoGovernmentFeed.verifyGovernmentFeedRelease(
+    sharedDeviceFixture.release.feed,
+    sharedDeviceFixture.release.documents,
+    { now: new Date(sharedDeviceFixture.now) },
+  );
+
+  assert.equal(release.events.length, 1);
+  assert.equal(release.events[0].event_id, sharedDeviceFixture.event.event_id);
+  assert.equal(release.events[0].attributes.area_id, 'tw.national');
+  assert.equal(release.events[0].attributes.title, '離線政府警告測試');
+  assert.equal(release.cacheEvents.some((event) => event.namespace === 'official.device-revocation'), true);
+  assert.equal(release.events.some((event) => event.namespace === 'official.device-revocation'), false);
+});
+
+test('browser keeps signed revocation records in the verified offline cache but never returns them as alerts', async () => {
+  const issuerKey = createPublicKey({
+    key: Buffer.from(sharedDeviceFixture.issuer_public_key_spki_base64, 'base64'),
+    format: 'der',
+    type: 'spki',
+  });
+  const responses = { '/feed.json': sharedDeviceFixture.release.feed };
+  for (const document of sharedDeviceFixture.release.documents) {
+    responses[`/${document.path}`] = document.chunk;
+  }
+  const storage = memoryIndexedDB();
+  const onlineContext = browserContext(issuerKey, responses, {
+    indexedDB: storage,
+    now: Date.parse(sharedDeviceFixture.now),
+  });
+  const online = JSON.parse(await onlineContext.loadNLSCGovernmentFeed());
+  const cached = storage.snapshot('resilientgeo-government-feed-v1', 'releases', 'current');
+
+  assert.equal(online.events.length, 1);
+  assert.equal(cached.events.some((event) => event.namespace === 'official.device-revocation'), true);
+
+  const offlineContext = browserContext(issuerKey, {}, {
+    indexedDB: storage,
+    now: Date.parse(sharedDeviceFixture.now),
+  });
+  const offline = JSON.parse(await offlineContext.loadNLSCGovernmentFeed());
+  assert.equal(offline.stale, true);
+  assert.equal(offline.events.length, 1);
+  assert.equal(offline.events.some((event) => event.namespace === 'official.device-revocation'), false);
+});
+
+test('browser rejects device warning certificate tampering, issue-time expiry and known revocation', async () => {
+  const issuerKey = createPublicKey({
+    key: Buffer.from(sharedDeviceFixture.issuer_public_key_spki_base64, 'base64'),
+    format: 'der',
+    type: 'spki',
+  });
+  const context = browserContext(issuerKey, {}, { now: Date.parse(sharedDeviceFixture.now) });
+  const verifyEvent = context.ResilientGeoGovernmentFeed.verifyGovernmentEvent;
+  assert.equal(typeof verifyEvent, 'function');
+
+  const invalidCertificate = structuredClone(sharedDeviceFixture.event);
+  invalidCertificate.attributes.government_device_certificate.signature = 'AAAA';
+  await assert.rejects(
+    verifyEvent(invalidCertificate, 'central-server-2026', { now: new Date(sharedDeviceFixture.now) }),
+  );
+
+  const issuedAfterExpiry = structuredClone(sharedDeviceFixture.event);
+  issuedAfterExpiry.issued_at = sharedDeviceFixture.certificate.expires_at;
+  await assert.rejects(
+    verifyEvent(issuedAfterExpiry, 'central-server-2026', { now: new Date(sharedDeviceFixture.now) }),
+  );
+
+  await assert.rejects(
+    verifyEvent(sharedDeviceFixture.event, 'central-server-2026', {
+      now: new Date(sharedDeviceFixture.now),
+      revokedAtByCertificateId: {
+        [sharedDeviceFixture.certificate.certificate_id]: sharedDeviceFixture.event.issued_at,
+      },
+    }),
+  );
 });
 
 test('browser accepts MEDIUM severity from the signed event-v0 contract', async () => {

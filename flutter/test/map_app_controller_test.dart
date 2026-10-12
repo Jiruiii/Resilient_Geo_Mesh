@@ -43,6 +43,63 @@ void main() {
     },
   );
 
+  test(
+    'notification read and deletion state persists without deleting map events',
+    () async {
+      final firstVersion = _governmentAnnouncement('station:1', 1);
+      final secondNotice = _governmentAnnouncement('notice:2', 1);
+      final controller = MapAppController(
+        bridge: _InitialEventsBridge(<MeshEvent>[firstVersion, secondNotice]),
+      );
+      addTearDown(controller.dispose);
+
+      await controller.load();
+
+      expect(
+        controller.notificationEvents,
+        containsAll(<MeshEvent>[firstVersion, secondNotice]),
+      );
+      await controller.markEventRead(firstVersion);
+      expect(controller.notificationEvents, contains(firstVersion));
+      expect(controller.notificationCount, 1);
+      await controller.markAllNotificationsRead();
+      expect(controller.notificationCount, 0);
+      expect(
+        controller.notificationEvents,
+        containsAll(<MeshEvent>[firstVersion, secondNotice]),
+      );
+
+      await controller.deleteNotification(firstVersion);
+      expect(controller.notificationEvents, <MeshEvent>[secondNotice]);
+      expect(controller.events, contains(firstVersion));
+      await controller.restoreNotification(firstVersion);
+      expect(controller.notificationEvents, contains(firstVersion));
+
+      await controller.deleteAllNotifications();
+      expect(controller.notificationEvents, isEmpty);
+      expect(
+        controller.events,
+        containsAll(<MeshEvent>[firstVersion, secondNotice]),
+      );
+
+      final revisedVersion = _governmentAnnouncement('station:1', 2);
+      final restarted = MapAppController(
+        bridge: _InitialEventsBridge(<MeshEvent>[firstVersion, revisedVersion]),
+      );
+      addTearDown(restarted.dispose);
+      await restarted.load();
+
+      expect(restarted.notificationEvents, <MeshEvent>[revisedVersion]);
+      expect(restarted.notificationCount, 1);
+      expect(
+        restarted.events,
+        containsAll(<MeshEvent>[firstVersion, revisedVersion]),
+      );
+      await restarted.deleteNotification(firstVersion);
+      expect(restarted.notificationEvents, contains(revisedVersion));
+    },
+  );
+
   test('expired alerts leave active app state at their expiry time', () async {
     final expiresAt = DateTime.now().toUtc().add(
       const Duration(milliseconds: 150),
@@ -372,6 +429,37 @@ class _InitialEventBridge extends _EmptyVerifiedBridge {
     staticFeatures: const <StaticFeature>[],
   );
 }
+
+class _InitialEventsBridge extends _EmptyVerifiedBridge {
+  _InitialEventsBridge(this.initialEvents);
+
+  final List<MeshEvent> initialEvents;
+
+  @override
+  Future<MapInitialState> getInitialState() async => MapInitialState(
+    events: initialEvents,
+    emergencyModeEnabled: false,
+    staticFeatures: const <StaticFeature>[],
+  );
+}
+
+MeshEvent _governmentAnnouncement(String eventId, int version) => MeshEvent(
+  namespace: 'official.announcement',
+  eventId: eventId,
+  eventVersion: version,
+  eventType: 'GOVERNMENT_ANNOUNCEMENT',
+  severity: 'MEDIUM',
+  source: 'GOVERNMENT',
+  issuedAt: '2026-10-12T00:00:00Z',
+  expiresAt: '2099-01-01T00:00:00Z',
+  applyState: null,
+  geometry: const PointGeometry(GeoPoint(longitude: 121.5, latitude: 25)),
+  attributes: const <String, dynamic>{
+    'title': '測試公告',
+    'category': 'SUPPLY_STATION',
+    'has_map_location': true,
+  },
+);
 
 class _RecoverableBridge extends _EmptyVerifiedBridge {
   final updates = StreamController<List<MeshEvent>>.broadcast();

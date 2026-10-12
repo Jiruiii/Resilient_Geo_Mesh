@@ -80,8 +80,13 @@ class DeviceSigningKey internal constructor(private val privateKey: Ed25519Priva
  * AES-256-GCM key that never leaves Android Keystore. File layout:
  * 12-byte IV followed by the GCM ciphertext.
  */
-class KeystoreWrappedStorage(context: Context) : DeviceSigningKey.Storage {
-    private val file = File(context.applicationContext.noBackupFilesDir, "device-key/ed25519.seed")
+class KeystoreWrappedStorage(
+    context: Context,
+    directoryName: String = "device-key",
+    private val keyAlias: String = "resilientgeo-device-key-wrap",
+    storageRoot: File = context.applicationContext.noBackupFilesDir,
+) : DeviceSigningKey.Storage {
+    private val file = File(storageRoot, "$directoryName/ed25519.seed")
 
     override fun read(): ByteArray? {
         if (!file.isFile) return null
@@ -107,10 +112,10 @@ class KeystoreWrappedStorage(context: Context) : DeviceSigningKey.Storage {
 
     private fun wrappingKey(): SecretKey {
         val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
-        (keyStore.getKey(KEY_ALIAS, null) as? SecretKey)?.let { return it }
+        (keyStore.getKey(keyAlias, null) as? SecretKey)?.let { return it }
         val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
         generator.init(
-            KeyGenParameterSpec.Builder(KEY_ALIAS, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
+            KeyGenParameterSpec.Builder(keyAlias, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
                 .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
                 .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
                 .setKeySize(256)
@@ -121,7 +126,6 @@ class KeystoreWrappedStorage(context: Context) : DeviceSigningKey.Storage {
 
     private companion object {
         const val ANDROID_KEYSTORE = "AndroidKeyStore"
-        const val KEY_ALIAS = "resilientgeo-device-key-wrap"
         const val TRANSFORMATION = "AES/GCM/NoPadding"
         const val IV_BYTES = 12
         const val TAG_BITS = 128

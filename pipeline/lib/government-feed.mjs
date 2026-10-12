@@ -1,7 +1,8 @@
 import { signCanonical, verifyCanonical } from './crypto.mjs';
 import { sha256Canonical, eventPayload } from './canonical.mjs';
-import { signEvent, verifyBundle } from './contract.mjs';
+import { signEvent, verifyBundle, verifyEvent } from './contract.mjs';
 import { buildBundle } from './bundle.mjs';
+import { isDeviceKeyId } from './device-key.mjs';
 
 export const FEED_KEY_ID = 'government-feed-2026';
 function distributable(event, now) {
@@ -78,7 +79,10 @@ export function buildGovernmentFeed({ previous, previousEvents = {}, results, pr
     const current = new Map((previousEvents[id] ?? [])
       .filter(event => isPublicEvent(result, event) && distributable(event, now))
       .map(event => [event.event_id, event]));
-    const namespace = `official.live.${id}`;
+    const namespace = result.namespace ?? `official.live.${id}`;
+    if (typeof namespace !== 'string' || !/^[a-z][a-z0-9._-]+$/u.test(namespace)) {
+      throw new Error('Invalid government event namespace');
+    }
     if (result.events) {
       for (const eventId of result.cancelledEventIds ?? []) {
         const existing = current.get(eventId);
@@ -87,6 +91,10 @@ export function buildGovernmentFeed({ previous, previousEvents = {}, results, pr
         retraction.expires_at = createdAt;
         retraction.attributes.publication_retracted = true;
         retraction.attributes.retraction_issued_at = createdAt;
+        retraction.signing_key_id = signingKeyId;
+        delete retraction.signer_public_key;
+        retraction.provenance = { original_source: id, received_at: createdAt,
+          transport_source: { kind: 'server', node_id: 'government-collector' } };
         retraction.event_version++;
         if (retraction.event_version > 2147483647) throw new Error('Event version exhausted');
         const identity = `${namespace}/${eventId}`;
@@ -96,6 +104,38 @@ export function buildGovernmentFeed({ previous, previousEvents = {}, results, pr
       }
       for (const input of result.events.filter((event) => isPublicEvent(result, event))) {
         if (result.cancelledEventIds?.includes(input.event_id)) continue;
+        if (isDeviceKeyId(input.signing_key_id)) {
+          const allowedSource = id === 'government-announcements' && namespace === 'official.announcement';
+          const verification = allowedSource && input.namespace === 'official.announcement'
+            ? verifyEvent(input, publicKey, { trustedKeyIds: [signingKeyId], issuerKeyId: signingKeyId, now })
+            : { valid: false, errors: ['device warning source or namespace is not allowed'] };
+          if (!verification.valid || input.source !== 'GOVERNMENT') {
+            throw new Error(`Invalid device-signed government warning: ${verification.errors?.[0] ?? 'source is not GOVERNMENT'}`);
+          }
+          const event = structuredClone(input);
+          const identity = `${event.namespace}/${event.event_id}`;
+          const payload = eventPayload(event);
+          delete payload.event_version;
+          const fingerprint = sha256Canonical(payload);
+          const old = ledger[identity];
+          const existing = current.get(event.event_id);
+          if (old) {
+            if (event.event_version < old.version) continue;
+            if (event.event_version !== old.version || old.fingerprint !== fingerprint) {
+              throw new Error('Conflicting device-signed government warning version');
+            }
+            if (!existing) current.set(event.event_id, event);
+            continue;
+          }
+          if (event.event_version !== 1) throw new Error('Device-signed government warnings must start at event version 1');
+          ledger[identity] = { version: event.event_version, fingerprint };
+          // Provenance is outside the device signature, so replace untrusted
+          // transport metadata while leaving every signed field untouched.
+          event.provenance = { original_source: 'government-device', received_at: createdAt,
+            transport_source: { kind: 'server', node_id: 'government-collector' } };
+          current.set(event.event_id, event);
+          continue;
+        }
         const event = structuredClone(input);
         if (Date.parse(event.expires_at) <= now.getTime()) {
           const existing = current.get(event.event_id);

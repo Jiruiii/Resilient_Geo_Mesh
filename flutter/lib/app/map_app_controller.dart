@@ -11,6 +11,7 @@ import '../data/map_bridge.dart';
 import '../data/map_models.dart';
 import '../data/ncdr_demo_events.dart';
 import '../data/ncdr_map_filter.dart';
+import '../data/government_api.dart';
 import '../data/offline_government_feed.dart';
 import '../data/offline_map_web_static_layers.dart';
 
@@ -30,7 +31,9 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
     bool? isWeb,
     WebStaticLayerLoader? webStaticLayerLoader,
     WebGovernmentFeedLoader? webGovernmentFeedLoader,
+    GovernmentAuthController? governmentAuthController,
   }) : bridge = bridge ?? MapBridge(),
+       governmentAuth = governmentAuthController ?? GovernmentAuthController(),
        _demoEventLoader = demoEventLoader ?? _loadBundledNcdrDemoEvents,
        _isWeb = isWeb ?? kIsWeb,
        _webStaticLayerLoader = webStaticLayerLoader ?? loadWebNLSCStaticLayers,
@@ -42,7 +45,10 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
   static const _themePreference = 'map.theme_mode';
   static const _animationPreference = 'map.animation_enabled';
   static const _readEventKeysPreference = 'map.read_event_keys';
+  static const _deletedNotificationKeysPreference =
+      'map.deleted_notification_keys';
   final MapBridge bridge;
+  final GovernmentAuthController governmentAuth;
   final DemoEventLoader _demoEventLoader;
   final bool _isWeb;
   final WebStaticLayerLoader _webStaticLayerLoader;
@@ -53,10 +59,12 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
   StreamSubscription<List<MeshEvent>>? _eventSubscription;
   Timer? _expiryTimer;
   Timer? _webFeedRefreshTimer;
+  Timer? _crowdUploadRetryTimer;
   bool _webFeedRefreshing = false;
   Object? eventUpdateError;
   bool retryingEvents = false;
   final Set<String> _readEventKeys = <String>{};
+  final Set<String> _deletedNotificationKeys = <String>{};
   StaticFeatureCollection? staticFeatures;
   List<MeshEvent> persistedEvents = const <MeshEvent>[];
   MapInitialState initialState = const MapInitialState(
@@ -89,9 +97,20 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   /// Attestations are surfaced through the crowd report they verify, so they
-  /// never count as a notification of their own.
-  List<MeshEvent> get unreadEvents => events
+  /// never appear as notifications of their own. Dismissal only filters this
+  /// local list; the verified event stream remains intact for the map/cache.
+  List<MeshEvent> get notificationEvents => events
       .where((event) => !isAttestationEvent(event))
+      .where(
+        (event) => !_deletedNotificationKeys.contains(meshEventIdentity(event)),
+      )
+      .toList(growable: false);
+
+  /// Read status belongs to this app install/browser and is keyed by event
+  /// version, matching notification dismissal and map marker identity.
+  Set<String> get readEventKeys => Set<String>.unmodifiable(_readEventKeys);
+
+  List<MeshEvent> get unreadEvents => notificationEvents
       .where((event) => !_readEventKeys.contains(meshEventIdentity(event)))
       .toList(growable: false);
 
@@ -174,7 +193,17 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
       if (_disposed) return;
       await _loadPreferences();
       if (_disposed) return;
-      if (nativeBridgeAvailable) _listenToNativeEvents();
+      unawaited(governmentAuth.restore());
+      if (nativeBridgeAvailable) {
+        _listenToNativeEvents();
+        unawaited(_syncQueuedCrowdReports());
+        _crowdUploadRetryTimer?.cancel();
+        _crowdUploadRetryTimer = Timer.periodic(const Duration(seconds: 30), (
+          _,
+        ) {
+          if (!_disposed) unawaited(_syncQueuedCrowdReports());
+        });
+      }
       _scheduleExpiryRefresh();
     } on Object catch (error) {
       loadError = error;
@@ -240,6 +269,12 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
       ..clear()
       ..addAll(
         preferences.getStringList(_readEventKeysPreference) ?? const <String>[],
+      );
+    _deletedNotificationKeys
+      ..clear()
+      ..addAll(
+        preferences.getStringList(_deletedNotificationKeysPreference) ??
+            const <String>[],
       );
   }
 
@@ -373,6 +408,7 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
     _eventUpdates.add(List<MeshEvent>.unmodifiable(persistedEvents));
     _scheduleExpiryRefresh();
     _notifyIfAlive();
+    if (nativeBridgeAvailable) unawaited(_syncQueuedCrowdReports());
     if (_isWeb && !nativeBridgeAvailable) {
       unawaited(_refreshWebGovernmentFeed());
     } else if (eventUpdateError != null) {
@@ -380,13 +416,67 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
+  Future<void> _syncQueuedCrowdReports() async {
+    try {
+      await bridge.syncPendingCrowdReports();
+    } on Object {
+      // The queue remains local and will retry at the next interval or resume.
+    }
+  }
+
   Future<void> markEventRead(MeshEvent event) async {
     final key = meshEventIdentity(event);
     if (!_readEventKeys.add(key)) return;
     _notifyIfAlive();
+    await _persistNotificationKeys(_readEventKeysPreference, _readEventKeys);
+  }
+
+  Future<void> markAllNotificationsRead() async {
+    var changed = false;
+    for (final event in notificationEvents) {
+      changed = _readEventKeys.add(meshEventIdentity(event)) || changed;
+    }
+    if (!changed) return;
+    _notifyIfAlive();
+    await _persistNotificationKeys(_readEventKeysPreference, _readEventKeys);
+  }
+
+  Future<void> deleteNotification(MeshEvent event) async {
+    if (!_deletedNotificationKeys.add(meshEventIdentity(event))) return;
+    _notifyIfAlive();
+    await _persistNotificationKeys(
+      _deletedNotificationKeysPreference,
+      _deletedNotificationKeys,
+    );
+  }
+
+  Future<void> deleteAllNotifications() async {
+    var changed = false;
+    for (final event in notificationEvents) {
+      changed =
+          _deletedNotificationKeys.add(meshEventIdentity(event)) || changed;
+    }
+    if (!changed) return;
+    _notifyIfAlive();
+    await _persistNotificationKeys(
+      _deletedNotificationKeysPreference,
+      _deletedNotificationKeys,
+    );
+  }
+
+  Future<void> restoreNotification(MeshEvent event) async {
+    if (!_deletedNotificationKeys.remove(meshEventIdentity(event))) return;
+    _notifyIfAlive();
+    await _persistNotificationKeys(
+      _deletedNotificationKeysPreference,
+      _deletedNotificationKeys,
+    );
+  }
+
+  Future<void> _persistNotificationKeys(String key, Set<String> values) async {
     final preferences = await SharedPreferences.getInstance();
-    final sortedKeys = _readEventKeys.toList()..sort();
-    await preferences.setStringList(_readEventKeysPreference, sortedKeys);
+    final sortedKeys = values.toList()..sort();
+    await preferences.setStringList(key, sortedKeys);
   }
 
   Future<void> setThemeMode(ThemeMode value) async {
@@ -409,8 +499,10 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _expiryTimer?.cancel();
     _webFeedRefreshTimer?.cancel();
+    _crowdUploadRetryTimer?.cancel();
     _eventSubscription?.cancel();
     _eventUpdates.close();
+    governmentAuth.dispose();
     super.dispose();
   }
 

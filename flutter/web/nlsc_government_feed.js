@@ -7,6 +7,7 @@
   const feedKeyIds = new Set(['government-feed-2026', 'central-server-2026']);
   const supportedDatasetIds = new Set([
     'ncdr', 'cwa-earthquake', 'cwa-warning', 'cwa-typhoon',
+    'government-announcements', 'government-attestations', 'government-device-revocations',
   ]);
   const eventPayloadFields = [
     'namespace', 'event_id', 'event_type', 'geometry', 'severity', 'source',
@@ -49,11 +50,14 @@
   }
 
   function isSupportedEvent(event) {
-    return isNcdrEvent(event) || isCwaEvent(event);
+    return isNcdrEvent(event) || isCwaEvent(event) ||
+      event?.namespace === 'official.announcement' && event.source === 'GOVERNMENT' ||
+      event?.namespace === 'official.device-revocation' && event.source === 'GOVERNMENT' ||
+      event?.namespace === 'official.verified' && event.source === 'GOV_ATTEST' && event.event_type === 'ATTESTATION';
   }
 
   function isSafeChunkPath(path) {
-    return /^releases\/\d+\/(?:ncdr|cwa-earthquake|cwa-warning|cwa-typhoon)\/\d+\.json$/u.test(path);
+    return /^releases\/\d+\/(?:ncdr|cwa-earthquake|cwa-warning|cwa-typhoon|government-announcements|government-attestations|government-device-revocations)\/\d+\.json$/u.test(path);
   }
 
   function timestamp(value, field) {
@@ -70,7 +74,7 @@
     if (!feed || typeof feed !== 'object' || Array.isArray(feed) ||
         feed.schema_version !== 'government-feed-v1' || !Number.isSafeInteger(feed.revision) ||
         feed.revision < 1 || !Array.isArray(feed.sources) || !Array.isArray(feed.datasets) ||
-        feed.datasets.length > 6 || !feed.event_versions || typeof feed.event_versions !== 'object' ||
+        feed.datasets.length > 8 || !feed.event_versions || typeof feed.event_versions !== 'object' ||
         Array.isArray(feed.event_versions) || feed.signature_algorithm !== 'Ed25519' ||
         typeof feed.signature !== 'string' || !feedKeyIds.has(feed.signing_key_id)) {
       throw new Error('告警 feed 契約不符');
@@ -98,9 +102,14 @@
       // their manifests/chunks. NCDR and all three CWA event feeds are shown.
       if (!supportedDatasetIds.has(source)) continue;
       const manifest = dataset.manifest;
+      const expectedNamespace = source === 'government-announcements'
+        ? 'official.announcement'
+        : source === 'government-attestations' ? 'official.verified'
+          : source === 'government-device-revocations' ? 'official.device-revocation'
+            : `official.live.${source}`;
       if (!manifest || manifest.schema_version !== 'manifest-v0' ||
           manifest.dataset_id !== `government-${source}` ||
-          manifest.namespace !== `official.live.${source}` ||
+          manifest.namespace !== expectedNamespace ||
           !Number.isSafeInteger(manifest.dataset_version) || manifest.dataset_version < 1 ||
           manifest.dataset_version > feed.revision || manifest.signing_key_id !== feed.signing_key_id ||
           manifest.signature_algorithm !== 'Ed25519' || !Array.isArray(manifest.chunks) ||
@@ -129,14 +138,67 @@
     return { manifests, hash: await helper().sha256(helper().canonicalize(feed)) };
   }
 
-  async function verifyEvent(event, namespace, signingKeyId) {
+  function valueAt(map, key) {
+    return map instanceof Map ? map.get(key) : map?.[key];
+  }
+
+  async function verifyDeviceCertificateForEvent(event, revokedAtByCertificateId = {}) {
+    const certificate = event.attributes?.government_device_certificate;
+    if (!certificate || typeof certificate !== 'object' || Array.isArray(certificate)) {
+      throw new Error('政府警告缺少設備憑證');
+    }
+    for (const field of [
+      'schema_version', 'certificate_id', 'device_id', 'subject_id',
+      'signing_key_id', 'signer_public_key', 'agency', 'issuer_key_id',
+      'issued_at', 'expires_at', 'signature_algorithm', 'signature',
+    ]) {
+      requiredText(certificate[field], `government_device_certificate.${field}`);
+    }
+    if (certificate.schema_version !== 'government-device-certificate-v1' ||
+        certificate.signature_algorithm !== 'Ed25519' ||
+        !Array.isArray(certificate.permissions) ||
+        !certificate.permissions.includes('official.announcement.publish') ||
+        !feedKeyIds.has(certificate.issuer_key_id)) {
+      throw new Error('政府設備憑證格式或權限不符');
+    }
+    const certificateIssuedAt = timestamp(certificate.issued_at, 'certificate.issued_at');
+    const certificateExpiresAt = timestamp(certificate.expires_at, 'certificate.expires_at');
+    if (certificateExpiresAt - certificateIssuedAt !== 7 * 24 * 60 * 60 * 1000) {
+      throw new Error('政府設備憑證效期不是七天');
+    }
+    const issuedAt = timestamp(event.issued_at, 'issued_at');
+    if (issuedAt < certificateIssuedAt || issuedAt >= certificateExpiresAt) {
+      throw new Error('政府設備憑證在警告發布時間無效');
+    }
+    if (certificate.signing_key_id !== event.signing_key_id ||
+        certificate.signer_public_key !== event.signer_public_key ||
+        await helper().deviceKeyIdFromSpkiBase64(certificate.signer_public_key) !== certificate.signing_key_id) {
+      throw new Error('政府警告簽章金鑰與設備憑證不符');
+    }
+    if (!await helper().verifySigned(omit(certificate, ['signature']), certificate.issuer_key_id, certificate.signature)) {
+      throw new Error('政府設備憑證簽章驗證失敗');
+    }
+    const revokedAt = valueAt(revokedAtByCertificateId, certificate.certificate_id);
+    const revokedAtMs = typeof revokedAt === 'number'
+      ? revokedAt
+      : revokedAt === undefined ? undefined : timestamp(revokedAt, 'certificate.revoked_at');
+    if (revokedAtMs !== undefined && issuedAt >= revokedAtMs) {
+      throw new Error('政府設備憑證在警告發布時間已撤銷');
+    }
+    return certificate.signer_public_key;
+  }
+
+  async function verifyEvent(event, namespace, signingKeyId, options = {}) {
     if (!event || typeof event !== 'object' || Array.isArray(event) || event.schema_version !== 'event-v0') {
       throw new Error('告警事件格式不符');
     }
     for (const field of ['namespace', 'event_id', 'event_type', 'source', 'source_version', 'signing_key_id']) {
       requiredText(event[field], field);
     }
-    if (event.namespace !== namespace || event.signing_key_id !== signingKeyId ||
+    const deviceSignedGovernmentWarning = event.signing_key_id.startsWith('device:') &&
+      event.namespace === 'official.announcement' && event.source === 'GOVERNMENT';
+    if (event.namespace !== namespace ||
+        event.signing_key_id !== signingKeyId && !deviceSignedGovernmentWarning ||
         !['LOW', 'MEDIUM', 'HIGH', 'CRITICAL', 'UNKNOWN'].includes(event.severity) ||
         !Number.isSafeInteger(event.event_version) || event.event_version < 1 ||
         !event.geometry || typeof event.geometry !== 'object' || typeof event.geometry.type !== 'string' ||
@@ -156,12 +218,65 @@
     timestamp(event.provenance.received_at, 'provenance.received_at');
     if (expiresAt < issuedAt) throw new Error('告警事件期限不正確');
 
+    let eventPublicKeySpki = null;
+    if (deviceSignedGovernmentWarning) {
+      eventPublicKeySpki = await verifyDeviceCertificateForEvent(
+        event,
+        options.revokedAtByCertificateId,
+      );
+    } else if (!feedKeyIds.has(event.signing_key_id) || event.signing_key_id !== signingKeyId) {
+      throw new Error('告警事件簽章金鑰不受信任');
+    }
+
     const payload = select(event, eventPayloadFields);
     if (await helper().sha256(helper().canonicalize(payload)) !== event.payload_hash) {
       throw new Error('告警事件雜湊驗證失敗');
     }
-    await assertSignature({ ...payload, payload_hash: event.payload_hash }, event.signing_key_id, event.signature, '告警事件');
+    const signatureInput = { ...payload, payload_hash: event.payload_hash };
+    const validSignature = eventPublicKeySpki
+      ? await helper().verifyEd25519WithSpki(signatureInput, eventPublicKeySpki, event.signature)
+      : await helper().verifySigned(signatureInput, event.signing_key_id, event.signature);
+    if (!validSignature) throw new Error('告警事件簽章驗證失敗');
     return payload;
+  }
+
+  async function collectRevocations(events, signingKeyId, options = {}) {
+    const revokedAtByCertificateId = new Map();
+    for (const event of events) {
+      if (event.namespace !== 'official.device-revocation') continue;
+      if (event.source !== 'GOVERNMENT' || event.event_type !== 'GOVERNMENT_DEVICE_REVOKED') {
+        throw new Error('設備撤銷資料來源不符');
+      }
+      await verifyEvent(event, 'official.device-revocation', signingKeyId, options);
+      const certificateId = event.attributes?.certificate_id;
+      const revokedAt = event.attributes?.revoked_at;
+      requiredText(certificateId, 'certificate_id');
+      const revokedAtMs = timestamp(revokedAt, 'revoked_at');
+      if (timestamp(event.issued_at, 'issued_at') !== revokedAtMs) {
+        throw new Error('設備撤銷時間與事件時間不符');
+      }
+      const prior = revokedAtByCertificateId.get(certificateId);
+      if (prior === undefined || revokedAtMs < prior) {
+        revokedAtByCertificateId.set(certificateId, revokedAtMs);
+      }
+    }
+    for (const [certificateId, externalTime] of Object.entries(options.revokedAtByCertificateId ?? {})) {
+      const externalMs = timestamp(externalTime, 'certificate.revoked_at');
+      const prior = revokedAtByCertificateId.get(certificateId);
+      if (prior === undefined || externalMs < prior) revokedAtByCertificateId.set(certificateId, externalMs);
+    }
+    if (options.revokedAtByCertificateId instanceof Map) {
+      for (const [certificateId, externalTime] of options.revokedAtByCertificateId) {
+        const externalMs = timestamp(externalTime, 'certificate.revoked_at');
+        const prior = revokedAtByCertificateId.get(certificateId);
+        if (prior === undefined || externalMs < prior) revokedAtByCertificateId.set(certificateId, externalMs);
+      }
+    }
+    return revokedAtByCertificateId;
+  }
+
+  async function verifyGovernmentEvent(event, signingKeyId, options = {}) {
+    return verifyEvent(event, event?.namespace, signingKeyId, options);
   }
 
   async function verifyGovernmentFeedRelease(feed, documents, options = {}) {
@@ -173,7 +288,7 @@
       throw new Error('告警分塊數量不符');
     }
 
-    const events = [];
+    const eventRecords = [];
     for (const { source, manifest, paths } of metadata.manifests) {
       let datasetBytes = 0;
       for (let index = 0; index < paths.length; index += 1) {
@@ -202,19 +317,39 @@
         for (let eventIndex = 0; eventIndex < chunk.events.length; eventIndex += 1) {
           const event = chunk.events[eventIndex];
           if (event.event_id !== expected.event_ids[eventIndex]) throw new Error('告警事件 ID 與清單不一致');
-          await verifyEvent(event, manifest.namespace, manifest.signing_key_id);
-          const expectedSource = source === 'ncdr' ? 'NCDR' : 'CWA';
+          const expectedSource = source === 'ncdr' ? 'NCDR' :
+            source === 'government-announcements' || source === 'government-device-revocations'
+              ? 'GOVERNMENT' : source === 'government-attestations' ? 'GOV_ATTEST' : 'CWA';
           if (event.source !== expectedSource) throw new Error('官方告警來源不一致');
-          events.push(event);
+          eventRecords.push({ event, namespace: manifest.namespace, source });
         }
         datasetBytes += chunk.byte_length;
       }
       if (datasetBytes !== manifest.total_size_bytes) throw new Error('告警資料總大小不一致');
     }
+    const revokedAtByCertificateId = await collectRevocations(
+      eventRecords.map(({ event }) => event),
+      feed.signing_key_id,
+      options,
+    );
+    const verificationOptions = { ...options, revokedAtByCertificateId };
+    const events = [];
+    for (const { event, namespace } of eventRecords) {
+      await verifyEvent(event, namespace, feed.signing_key_id, verificationOptions);
+      events.push(event);
+    }
     const now = options.now === undefined ? Date.now() : new Date(options.now).getTime();
-    const currentEvents = events.filter((event) => event.attributes.publication_retracted !== true &&
+    const cacheEvents = events.filter((event) => event.attributes.publication_retracted !== true &&
       timestamp(event.expires_at, 'expires_at') > now);
-    return { revision: feed.revision, hash: metadata.hash, feed, documents, events: currentEvents, allEvents: events };
+    return {
+      revision: feed.revision,
+      hash: metadata.hash,
+      feed,
+      documents,
+      events: cacheEvents.filter((event) => event.namespace !== 'official.device-revocation'),
+      cacheEvents,
+      allEvents: events,
+    };
   }
 
   async function verifyCachedRelease(stored) {
@@ -231,8 +366,12 @@
       }
     }
     const now = Date.now();
-    const events = [];
+    const cacheEvents = [];
     const seen = new Set();
+    const revokedAtByCertificateId = await collectRevocations(
+      stored.events,
+      stored.feed.signing_key_id,
+    );
     for (const event of stored.events) {
       // Drop unsupported records from older browser caches while preserving
       // valid NCDR and CWA events for offline use.
@@ -241,7 +380,9 @@
       const namespace = knownEvents.get(identity);
       if (!namespace || seen.has(identity)) throw new Error('告警快取內容與簽章清單不符');
       seen.add(identity);
-      const payload = await verifyEvent(event, namespace, stored.feed.signing_key_id);
+      const payload = await verifyEvent(event, namespace, stored.feed.signing_key_id, {
+        revokedAtByCertificateId,
+      });
       const version = stored.feed.event_versions[identity];
       const fingerprintPayload = { ...payload };
       delete fingerprintPayload.event_version;
@@ -250,10 +391,16 @@
         throw new Error('告警快取版本記錄不符');
       }
       if (event.attributes.publication_retracted !== true && timestamp(event.expires_at, 'expires_at') > now) {
-        events.push(event);
+        cacheEvents.push(event);
       }
     }
-    return { revision: stored.revision, hash: stored.hash, feed: stored.feed, events };
+    return {
+      revision: stored.revision,
+      hash: stored.hash,
+      feed: stored.feed,
+      cacheEvents,
+      events: cacheEvents.filter((event) => event.namespace !== 'official.device-revocation'),
+    };
   }
 
   function requestJson(path, maximumBytes) {
@@ -330,15 +477,15 @@
       const stored = await readCachedRelease();
       if (!stored) return;
       const verified = await verifyCachedRelease(stored);
-      if (verified.events.length !== stored.events.length) {
+      if (verified.cacheEvents.length !== stored.events.length) {
         await writeCachedRelease({
           revision: verified.revision,
           hash: verified.hash,
           feed: verified.feed,
-          events: verified.events,
+          events: verified.cacheEvents,
         });
       }
-      scheduleCachePrune(verified.events);
+      scheduleCachePrune(verified.cacheEvents);
     } catch (_) {
       try { await clearCachedRelease(); } catch (_) { /* Storage may be unavailable. */ }
     }
@@ -379,12 +526,12 @@
       if (stored) {
         const verified = await verifyCachedRelease(stored);
         cached = verified;
-        if (verified.events.length !== stored.events.length) {
+        if (verified.cacheEvents.length !== stored.events.length) {
           await writeCachedRelease({
             revision: verified.revision,
             hash: verified.hash,
             feed: verified.feed,
-            events: verified.events,
+            events: verified.cacheEvents,
           });
         }
       }
@@ -405,16 +552,16 @@
           revision: release.revision,
           hash: release.hash,
           feed: release.feed,
-          events: release.events,
+          events: release.cacheEvents,
         });
       } catch (_) {
         // Verified online alerts remain usable when browser storage is full or disabled.
       }
-      scheduleCachePrune(release.events);
+      scheduleCachePrune(release.cacheEvents);
       return JSON.stringify({ revision: release.revision, stale: false, warning: null, events: release.events });
     } catch (_) {
       if (cached) {
-        scheduleCachePrune(cached.events);
+        scheduleCachePrune(cached.cacheEvents);
         return JSON.stringify({
           revision: cached.revision,
           stale: true,
@@ -429,6 +576,7 @@
   global.ResilientGeoGovernmentFeed = {
     verifyFeedMetadata,
     verifyGovernmentFeedRelease,
+    verifyGovernmentEvent,
   };
   global.loadNLSCGovernmentFeed = loadNLSCGovernmentFeed;
 })(globalThis);

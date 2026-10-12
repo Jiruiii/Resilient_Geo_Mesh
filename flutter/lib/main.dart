@@ -6,6 +6,8 @@ import 'package:maplibre_gl/maplibre_gl.dart';
 
 import 'app/map_app_controller.dart';
 import 'data/app_performance.dart';
+import 'data/map_models.dart';
+import 'data/ncdr_map_filter.dart';
 import 'data/offline_map_web_protocol.dart';
 import 'data/maplibre_web_runtime.dart';
 import 'debug/route_validation_app.dart';
@@ -85,6 +87,24 @@ class _MapAppHome extends StatefulWidget {
 
 class _MapAppHomeState extends State<_MapAppHome> {
   int _selectedIndex = 0;
+  MeshEvent? _notificationFocusEvent;
+  int _notificationFocusRequestId = 0;
+
+  void _openNotificationOnMap(MeshEvent event) {
+    unawaited(widget.controller.markEventRead(event));
+    final point = meshEventFocusPoint(event);
+    if (!isMapVisibleEvent(event) || point == null) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(const SnackBar(content: Text('此通知沒有地圖位置')));
+      return;
+    }
+    setState(() {
+      _selectedIndex = 0;
+      _notificationFocusEvent = event;
+      _notificationFocusRequestId += 1;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -141,13 +161,22 @@ class _MapAppHomeState extends State<_MapAppHome> {
                   themeMode: controller.themeMode,
                   animationEnabled: controller.animationEnabled,
                   active: _selectedIndex == 0,
+                  notificationFocusEvent: _notificationFocusEvent,
+                  notificationFocusRequestId: _notificationFocusRequestId,
                 ),
                 NotificationsScreen(
-                  events: controller.unreadEvents,
+                  events: controller.notificationEvents,
+                  readEventKeys: controller.readEventKeys,
                   attestationSource: controller.events,
                   onEventRead: controller.markEventRead,
+                  onEventMapRequested: _openNotificationOnMap,
+                  onMarkAllRead: controller.markAllNotificationsRead,
+                  onEventDeleted: controller.deleteNotification,
+                  onDeleteAll: controller.deleteAllNotifications,
+                  onUndoDelete: controller.restoreNotification,
                 ),
                 ProfileScreen(
+                  governmentAuth: controller.governmentAuth,
                   bridge: controller.bridge,
                   themeMode: controller.themeMode,
                   animationEnabled: controller.animationEnabled,

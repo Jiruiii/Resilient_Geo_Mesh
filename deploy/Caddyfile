@@ -11,6 +11,11 @@
         reverse_proxy api:8787
     }
 
+    @government_api path /api/v1/*
+    handle @government_api {
+        reverse_proxy government-api:8788
+    }
+
     @address_catalog path /address-packs/catalog.json
     handle @address_catalog {
         root * /srv/address-packs

@@ -9,10 +9,16 @@ import com.resilientgeo.mesh.protocol.LayerBundleVerifier
 import com.resilientgeo.mesh.report.CrowdChunkCodec
 import com.resilientgeo.mesh.report.CrowdReportFactory
 import com.resilientgeo.mesh.report.CrowdReportInput
+import com.resilientgeo.mesh.report.GovernmentWarningChunkCodec
+import com.resilientgeo.mesh.report.GovernmentWarningFactory
+import com.resilientgeo.mesh.report.GovernmentWarningInput
 import com.resilientgeo.mesh.trust.DeviceSigningKey
+import com.resilientgeo.mesh.trust.GovernmentDeviceCertificate
+import com.resilientgeo.mesh.trust.GovernmentDeviceKeyStore
 import com.resilientgeo.mesh.trust.KeystoreWrappedStorage
 import com.resilientgeo.mesh.trust.TrustedKeyStore
 import com.resilientgeo.mesh.trust.EventVerifier
+import com.resilientgeo.mesh.trust.EventShapeValidator
 import com.resilientgeo.mesh.trust.VerificationResult
 import com.resilientgeo.mesh.trust.Canonical
 import kotlinx.coroutines.Dispatchers
@@ -42,10 +48,14 @@ class MeshRepository(
     private val db: AppDatabase = AppDatabase.get(context.applicationContext),
     private val cacheDirectory: File = File(context.applicationContext.filesDir, "chunk-cache"),
     private val cacheCapBytes: Long = CHUNK_CACHE_CAP_BYTES,
+    private val governmentDeviceKeyStore: GovernmentDeviceKeyStore = GovernmentDeviceKeyStore(context.applicationContext),
+    private val trustedKeyStoreOverride: TrustedKeyStore? = null,
 ) {
     private val appContext = context.applicationContext
     private val store = RoomEventStore(db.eventDao())
     private val chunkDao = db.chunkDao()
+    private val governmentWarningUploadDao = db.governmentWarningUploadDao()
+    private val governmentDeviceRevocationDao = db.governmentDeviceRevocationDao()
     @Volatile private var unsupportedOfficialEventsPurged = false
 
     /**
@@ -65,14 +75,14 @@ class MeshRepository(
         appContext.assets.open(TRUSTED_KEYS_ASSET).bufferedReader().use { it.readText() }
     }
 
-    private val trustStore: TrustedKeyStore by lazy { TrustedKeyStore.fromJson(trustStoreText) }
+    private val trustStore: TrustedKeyStore by lazy { trustedKeyStoreOverride ?: TrustedKeyStore.fromJson(trustStoreText) }
 
     private val verifiedLayerCache: VerifiedLayerCache by lazy {
         VerifiedLayerCache(File(appContext.noBackupFilesDir, "verified-layers"))
     }
 
     fun observeEvents(): Flow<List<EventEntity>> = db.eventDao().observeAll()
-        .map { events -> events.filterNot(::isUnsupportedOfficialEventEntity) }
+        .map { events -> events.filterNot { isUnsupportedOfficialEventEntity(it) || isInternalOfficialEventEntity(it) } }
 
     /**
      * Loads optional nationwide static layers only after manifest, chunk and
@@ -339,17 +349,26 @@ class MeshRepository(
      */
     suspend fun ingestChunk(chunk: JSONObject): ChunkIngestResult = withContext(Dispatchers.IO) {
         val now = Instant.now()
-        when (val verified = ChunkVerifier.verify(chunk, trustStore, now)) {
+        val knownRevocations = governmentDeviceRevocationsSnapshot()
+        when (val verified = ChunkVerifier.verify(chunk, trustStore, now, knownRevocations)) {
             is ChunkVerifier.Result.Invalid -> ChunkIngestResult.Rejected(verified.reason)
             is ChunkVerifier.Result.Valid -> {
                 for (event in verified.events) {
-                    val result = EventVerifier.verify(event, trustStore, now)
+                    val result = EventVerifier.verify(event, trustStore, now, knownRevocations)
                     if (result is VerificationResult.Invalid) {
                         return@withContext ChunkIngestResult.Rejected("event verification failed: ${result.errors}")
                     }
                 }
                 if (verified.events.any(::isUnsupportedOfficialEventJson)) {
                     return@withContext ChunkIngestResult.Rejected("unsupported_official_event_source")
+                }
+                val revocations = try {
+                    verified.events.mapNotNull(::governmentDeviceRevocationFromEvent)
+                } catch (error: IllegalArgumentException) {
+                    return@withContext ChunkIngestResult.Rejected(error.message ?: "invalid_device_revocation")
+                }
+                if (verified.events.count { it.optString("namespace") == DEVICE_REVOCATION_NAMESPACE } != revocations.size) {
+                    return@withContext ChunkIngestResult.Rejected("invalid_device_revocation")
                 }
                 inventoryLock.withLock {
                     if (chunk.optString("dataset_id") == CrowdChunkCodec.DATASET_ID) {
@@ -363,10 +382,37 @@ class MeshRepository(
                             return@withLock ChunkIngestResult.Rejected("same_version_conflict")
                         }
                     }
-                    val results = commitChunk(chunk, now) {
-                        verified.events.map { event ->
-                            EventIngestor.ingest(store, event, trustStore, now)
+                    if (chunk.optString("dataset_id") == GovernmentWarningChunkCodec.DATASET_ID) {
+                        val incoming = verified.events.single()
+                        val stored = store.find(incoming.getString("namespace"), incoming.getString("event_id"))
+                        val storedJson = stored?.let { runCatching { JSONObject(it.eventJson) }.getOrNull() }
+                        when (GovernmentWarningChunkCodec.classifyReplay(storedJson, incoming)) {
+                            GovernmentWarningChunkCodec.ReplayDecision.CONFLICT ->
+                                return@withLock ChunkIngestResult.Rejected("same_version_conflict")
+                            GovernmentWarningChunkCodec.ReplayDecision.IDENTICAL -> {
+                                val applied = commitChunk(chunk, now) { emptyList<IngestResult>() }
+                                return@withLock ChunkIngestResult.Applied(applied)
+                            }
+                            GovernmentWarningChunkCodec.ReplayDecision.NEW -> Unit
                         }
+                    }
+                    val results = commitChunk(chunk, now) {
+                        val applied = verified.events.map { event ->
+                            val applied = EventIngestor.ingest(store, event, trustStore, now)
+                            if (chunk.optString("dataset_id") == GovernmentWarningChunkCodec.DATASET_ID) {
+                                require(applied is IngestResult.Inserted) { "government warning could not be applied: $applied" }
+                            }
+                            applied
+                        }
+                        revocations.forEach { revocation ->
+                            governmentDeviceRevocationDao.upsertSync(
+                                revocation.certificateId,
+                                revocation.revokedAtEpochMillis,
+                                revocation.eventId,
+                                revocation.eventVersion,
+                            )
+                        }
+                        applied
                     }
                     if (chunk.optString("dataset_id") == CrowdChunkCodec.DATASET_ID) pruneCrowdInventory(now)
                     ChunkIngestResult.Applied(results)
@@ -509,7 +555,11 @@ class MeshRepository(
                     JSONObject(file.readText()).takeIf {
                         it.getString("dataset_id") == datasetId && it.getString("namespace") == namespace &&
                             it.getString("chunk_id") == chunkId &&
-                            ChunkVerifier.verify(it, trustStore) is ChunkVerifier.Result.Valid
+                            ChunkVerifier.verify(
+                                it,
+                                trustStore,
+                                revokedAtByCertificateId = governmentDeviceRevocationsSnapshot(),
+                            ) is ChunkVerifier.Result.Valid
                     }
                 }.getOrNull()
                 if (chunk == null) {
@@ -676,7 +726,7 @@ class MeshRepository(
                 val chunk = CrowdChunkCodec.build(event, key)
                 when (val result = commitChunk(chunk, now) { EventIngestor.ingest(store, event, trustStore, now) }) {
                     is IngestResult.Inserted -> {
-                        CrowdReportResult.Created(event.getString("event_id"), result.state)
+                        CrowdReportResult.Created(event.getString("event_id"), result.state, event.toString())
                     }
                     else -> CrowdReportResult.StorageUnavailable("report was not stored: $result")
                 }
@@ -685,6 +735,160 @@ class MeshRepository(
             }
         }
     }
+
+    /** Public half only; Flutter sends it to the authenticated enrollment API. */
+    suspend fun governmentDevicePublicKey(): JSONObject = withContext(Dispatchers.IO) {
+        val key = governmentDeviceKeyStore.loadOrCreateSigningKey()
+        JSONObject()
+            .put("signing_key_id", key.keyId())
+            .put("signer_public_key", key.publicKeySpkiBase64())
+    }
+
+    /** Verifies the central certificate before persisting it for offline use. */
+    suspend fun storeGovernmentDeviceCertificate(certificate: JSONObject): JSONObject = withContext(Dispatchers.IO) {
+        val key = governmentDeviceKeyStore.loadOrCreateSigningKey()
+        require(certificate.optString("signing_key_id") == key.keyId() &&
+            certificate.optString("signer_public_key") == key.publicKeySpkiBase64()
+        ) { "government device certificate does not match this phone" }
+        require(!governmentDeviceRevocationsSnapshot().containsKey(certificate.optString("certificate_id"))) {
+            "government device certificate has been revoked"
+        }
+        val verified = GovernmentDeviceCertificate.verify(certificate, trustStore, Instant.now())
+        require(verified.valid) { "government device certificate is invalid: ${verified.errors.joinToString("; ")}" }
+        governmentDeviceKeyStore.storeCertificate(certificate)
+        governmentDeviceAuthorizationJson(key, certificate, "AUTHORIZED")
+    }
+
+    /** Returns locally cached device authorization so a government user can work offline. */
+    suspend fun governmentDeviceAuthorization(): JSONObject = withContext(Dispatchers.IO) {
+        val key = governmentDeviceKeyStore.loadOrCreateSigningKey()
+        val certificate = governmentDeviceKeyStore.readCertificate()
+        val status = when {
+            certificate == null -> "NOT_ENROLLED"
+            certificate.optString("signing_key_id") != key.keyId() ||
+                certificate.optString("signer_public_key") != key.publicKeySpkiBase64() -> "CERTIFICATE_INVALID"
+            governmentDeviceRevocationsSnapshot().containsKey(certificate.optString("certificate_id")) -> "REVOKED"
+            GovernmentDeviceCertificate.verify(certificate, trustStore, Instant.now()).valid -> "AUTHORIZED"
+            else -> "CERTIFICATE_EXPIRED_OR_INVALID"
+        }
+        governmentDeviceAuthorizationJson(key, certificate, status)
+    }
+
+    private fun governmentDeviceAuthorizationJson(
+        key: DeviceSigningKey,
+        certificate: JSONObject?,
+        status: String,
+    ) = JSONObject()
+        .put("status", status)
+        .put("signing_key_id", key.keyId())
+        .put("signer_public_key", key.publicKeySpkiBase64())
+        .put("certificate_json", certificate?.toString() ?: JSONObject.NULL)
+        .put("certificate_expires_at", certificate?.optString("expires_at") ?: JSONObject.NULL)
+
+    /** Signs locally, then commits the event, relayed chunk and upload row as one Room transaction. */
+    suspend fun createGovernmentWarning(input: GovernmentWarningInput, eventId: String): GovernmentWarningResult =
+        withContext(Dispatchers.IO) {
+            val validation = GovernmentWarningFactory.validate(input)
+            if (validation.isNotEmpty()) return@withContext GovernmentWarningResult.Invalid(validation)
+            val key = try {
+                governmentDeviceKeyStore.loadOrCreateSigningKey()
+            } catch (error: Exception) {
+                return@withContext GovernmentWarningResult.SigningUnavailable(error.message ?: error.javaClass.simpleName)
+            }
+            val certificate = governmentDeviceKeyStore.readCertificate()
+                ?: return@withContext GovernmentWarningResult.Unauthorized("government device certificate is not installed")
+            val now = Instant.now()
+            val certificateVerification = GovernmentDeviceCertificate.verify(certificate, trustStore, now)
+            if (!certificateVerification.valid || certificate.optString("signing_key_id") != key.keyId() ||
+                certificate.optString("signer_public_key") != key.publicKeySpkiBase64() ||
+                governmentDeviceRevocationsSnapshot().containsKey(certificate.optString("certificate_id"))
+            ) return@withContext GovernmentWarningResult.Unauthorized("government device certificate is not currently valid")
+
+            val event = try {
+                GovernmentWarningFactory.create(input, key, certificate, now, eventId)
+            } catch (error: IllegalArgumentException) {
+                return@withContext GovernmentWarningResult.Invalid(listOf(error.message ?: "government warning is invalid"))
+            } catch (error: Exception) {
+                return@withContext GovernmentWarningResult.StorageUnavailable(error.message ?: error.javaClass.simpleName)
+            }
+            if (EventVerifier.verify(event, trustStore, now, governmentDeviceRevocationsSnapshot()) is VerificationResult.Invalid) {
+                return@withContext GovernmentWarningResult.Unauthorized("signed government warning failed local verification")
+            }
+            val chunk = try { GovernmentWarningChunkCodec.build(event, key) } catch (error: Exception) {
+                return@withContext GovernmentWarningResult.Invalid(listOf(error.message ?: "government warning chunk is invalid"))
+            }
+            if (ChunkVerifier.verify(chunk, trustStore, now, governmentDeviceRevocationsSnapshot()) !is ChunkVerifier.Result.Valid) {
+                return@withContext GovernmentWarningResult.StorageUnavailable("signed government warning chunk failed local verification")
+            }
+
+            inventoryLock.withLock {
+                val existing = store.find(GovernmentWarningFactory.NAMESPACE, eventId)
+                val existingJson = existing?.let { runCatching { JSONObject(it.eventJson) }.getOrNull() }
+                val replay = GovernmentWarningChunkCodec.classifyReplay(existingJson, event)
+                if (replay == GovernmentWarningChunkCodec.ReplayDecision.CONFLICT) {
+                    return@withLock GovernmentWarningResult.Invalid(listOf("government warning event id already has a different payload"))
+                }
+                try {
+                    val applied = commitChunk(chunk, now) {
+                        if (replay == GovernmentWarningChunkCodec.ReplayDecision.NEW) {
+                            val ingest = EventIngestor.ingest(store, event, trustStore, now)
+                            require(ingest is IngestResult.Inserted) { "government warning could not be applied: $ingest" }
+                        }
+                        val candidate = GovernmentWarningUploadEntity(
+                            eventId = eventId,
+                            payloadHash = event.getString("payload_hash"),
+                            eventJson = event.toString(),
+                            createdAtEpochMillis = now.toEpochMilli(),
+                            uploadStatus = "PENDING",
+                            uploadedAtEpochMillis = null,
+                        )
+                        governmentWarningUploadDao.insertIgnoreSync(candidate)
+                        val storedUpload = governmentWarningUploadDao.findSync(eventId)
+                        require(storedUpload?.payloadHash == candidate.payloadHash) {
+                            "government warning upload id already has a different payload"
+                        }
+                    }
+                    GovernmentWarningResult.Created(eventId, event.getString("payload_hash"), event.toString(),
+                        replay == GovernmentWarningChunkCodec.ReplayDecision.IDENTICAL)
+                } catch (error: Exception) {
+                    GovernmentWarningResult.StorageUnavailable(error.message ?: error.javaClass.simpleName)
+                }
+            }
+        }
+
+    suspend fun pendingGovernmentWarningUploads(limit: Int = 100): List<GovernmentWarningUploadEntity> =
+        withContext(Dispatchers.IO) { governmentWarningUploadDao.pendingSync(limit.coerceIn(1, 500)) }
+
+    suspend fun governmentWarningUploadStatuses(limit: Int = 100): List<GovernmentWarningUploadEntity> =
+        withContext(Dispatchers.IO) { governmentWarningUploadDao.statusesSync(limit.coerceIn(1, 500)) }
+
+    /** Signed revocation knowledge retained locally for offline verification and ordered feed sync. */
+    suspend fun governmentDeviceRevocations(): Map<String, Instant> = withContext(Dispatchers.IO) {
+        governmentDeviceRevocationsSnapshot()
+    }
+
+    private fun governmentDeviceRevocationsSnapshot(): Map<String, Instant> =
+        governmentDeviceRevocationDao.allSync().associate { row ->
+            row.certificateId to Instant.ofEpochMilli(row.revokedAtEpochMillis)
+        }
+
+    suspend fun markGovernmentWarningUploaded(eventId: String, payloadHash: String): Boolean =
+        withContext(Dispatchers.IO) {
+            val updated = governmentWarningUploadDao.markUploadedSync(eventId, payloadHash, Instant.now().toEpochMilli()) == 1
+            updated || governmentWarningUploadDao.findSync(eventId)?.let {
+                it.payloadHash == payloadHash && it.uploadStatus == "PUBLISHED"
+            } == true
+        }
+
+    suspend fun markGovernmentWarningPublished(eventId: String, payloadHash: String): Boolean =
+        withContext(Dispatchers.IO) {
+            governmentWarningUploadDao.markPublishedSync(eventId, payloadHash, Instant.now().toEpochMilli()) == 1
+        }
+
+    suspend fun markGovernmentWarningExpired(eventId: String, payloadHash: String): Boolean =
+        withContext(Dispatchers.IO) {
+            governmentWarningUploadDao.markExpiredSync(eventId, payloadHash) == 1
+        }
 
     /**
      * Every crowd report this node holds, own and relayed, as full signed
@@ -706,7 +910,7 @@ class MeshRepository(
     suspend fun allEventsSnapshot(): List<EventEntity> = withContext(Dispatchers.IO) {
         purgeUnsupportedOfficialEventData()
         purgeExpiredOfficialEvents(Instant.now())
-        db.eventDao().allSync().filterNot(::isUnsupportedOfficialEventEntity)
+        db.eventDao().allSync().filterNot { isUnsupportedOfficialEventEntity(it) || isInternalOfficialEventEntity(it) }
     }
 
     /** Remove old non-NCDR official events and relay chunks from existing installs. */
@@ -740,6 +944,34 @@ class MeshRepository(
                 val payload = JSONObject(event.eventJson)
                 event.namespace != payload.optString("namespace") || isUnsupportedOfficialEventJson(payload)
             }.getOrDefault(true)
+
+    private fun isInternalOfficialEventEntity(event: EventEntity): Boolean =
+        runCatching {
+            val payload = JSONObject(event.eventJson)
+            isInternalOfficialMetadata(event.namespace, payload.optJSONObject("attributes"))
+        }.getOrDefault(false)
+
+    private fun governmentDeviceRevocationFromEvent(event: JSONObject): GovernmentDeviceRevocationEntity? {
+        if (event.optString("namespace") != DEVICE_REVOCATION_NAMESPACE) return null
+        val attributes = event.optJSONObject("attributes")
+            ?: throw IllegalArgumentException("device revocation attributes are missing")
+        val certificateId = attributes.optString("certificate_id").takeIf { it.startsWith("gov-cert:") }
+            ?: throw IllegalArgumentException("device revocation certificate id is invalid")
+        val revokedAt = EventShapeValidator.parseTimeOrNull(attributes.optString("revoked_at"))
+            ?: throw IllegalArgumentException("device revocation time is invalid")
+        val issuedAt = EventShapeValidator.parseTimeOrNull(event.optString("issued_at"))
+            ?: throw IllegalArgumentException("device revocation issue time is invalid")
+        require(attributes.optBoolean("internal_only") && event.optString("source").equals("GOVERNMENT", ignoreCase = true) &&
+            event.optString("event_type") == "GOVERNMENT_DEVICE_REVOKED" &&
+            event.optString("event_id") == "device-revocation:$certificateId" &&
+            issuedAt == revokedAt) { "device revocation record is invalid" }
+        return GovernmentDeviceRevocationEntity(
+            certificateId = certificateId,
+            revokedAtEpochMillis = revokedAt.toEpochMilli(),
+            eventId = event.getString("event_id"),
+            eventVersion = event.getInt("event_version"),
+        )
+    }
 
     private fun isUnsupportedOfficialEventJson(event: JSONObject): Boolean {
         val namespace = event.optString("namespace")
@@ -887,10 +1119,23 @@ class MeshRepository(
                 fallbackManifestId = CrowdChunkCodec.MANIFEST_ID,
                 fallbackDatasetVersion = CrowdChunkCodec.DATASET_VERSION,
             ),
+            KnownDataset(
+                datasetId = GovernmentWarningChunkCodec.DATASET_ID,
+                namespace = GovernmentWarningChunkCodec.NAMESPACE,
+                fallbackManifestId = GovernmentWarningChunkCodec.MANIFEST_ID,
+                fallbackDatasetVersion = GovernmentWarningChunkCodec.DATASET_VERSION,
+            ),
+            KnownDataset(
+                datasetId = "government-government-device-revocations",
+                namespace = DEVICE_REVOCATION_NAMESPACE,
+                fallbackManifestId = "government-government-device-revocations:manifest:1",
+                fallbackDatasetVersion = 1,
+            ),
         )
 
         private const val FIXTURE_ASSET = "fixtures/signed-events.json"
         private const val TRUSTED_KEYS_ASSET = "trust/trusted-keys.json"
+        private const val DEVICE_REVOCATION_NAMESPACE = "official.device-revocation"
         private val STATIC_LAYER_IDS = listOf("taiwan-shelter", "taiwan-medical", "taiwan-medical-directory", "osm-poi", "osm-road")
         private val SERVER_STATIC_LAYER_IDS = setOf("taiwan-shelter", "taiwan-medical", "taiwan-medical-directory")
         private const val MEDICAL_DIRECTORY_LAYER_ID = "taiwan-medical-directory"
@@ -907,10 +1152,18 @@ private data class KnownDataset(
 )
 
 sealed class CrowdReportResult {
-    data class Created(val eventId: String, val applyState: ApplyState) : CrowdReportResult()
+    data class Created(val eventId: String, val applyState: ApplyState, val eventJson: String) : CrowdReportResult()
     data class Invalid(val errors: List<String>) : CrowdReportResult()
     data class SigningUnavailable(val message: String) : CrowdReportResult()
     data class StorageUnavailable(val message: String) : CrowdReportResult()
+}
+
+sealed class GovernmentWarningResult {
+    data class Created(val eventId: String, val payloadHash: String, val eventJson: String, val duplicate: Boolean) : GovernmentWarningResult()
+    data class Invalid(val errors: List<String>) : GovernmentWarningResult()
+    data class Unauthorized(val message: String) : GovernmentWarningResult()
+    data class SigningUnavailable(val message: String) : GovernmentWarningResult()
+    data class StorageUnavailable(val message: String) : GovernmentWarningResult()
 }
 
 sealed class ChunkIngestResult {

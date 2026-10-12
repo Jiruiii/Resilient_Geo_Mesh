@@ -3,6 +3,7 @@ package com.resilientgeo.mesh.online
 import com.resilientgeo.mesh.data.supportsOfficialFeedDataset
 import com.resilientgeo.mesh.trust.Canonical
 import com.resilientgeo.mesh.trust.TrustedKeyStore
+import com.resilientgeo.mesh.trust.DeviceKeys
 import org.json.JSONObject
 import java.net.URI
 import java.net.HttpURLConnection
@@ -22,11 +23,14 @@ class GovernmentFeedSync(
     private val ingest: suspend (JSONObject) -> Boolean,
     private val now: () -> Instant = { Instant.now() },
     private val includeArea: (String) -> Boolean = { true },
+    private val revokedAtByCertificateId: suspend () -> Map<String, Instant> = { emptyMap() },
+    private val onVerifiedGovernmentWarning: suspend (JSONObject) -> Unit = {},
 ) {
     suspend fun sync(baseUrl: String, cursor: FeedCursor, allowLocal: Boolean = false): FeedSyncResult {
         val base = validateBase(baseUrl, allowLocal)
         val feed = fetchWithRetry(base.resolve("feed.json").toString())
-        GovernmentFeedVerifier.verify(feed, trust, now())
+        val syncTime = now()
+        GovernmentFeedVerifier.verify(feed, trust, syncTime)
         val revision = feed.getLong("revision")
         val hash = Canonical.sha256Canonical(feed)
         require(revision >= cursor.revision && (revision != cursor.revision || cursor.hash.isEmpty() || hash == cursor.hash)) {
@@ -34,22 +38,36 @@ class GovernmentFeedSync(
         }
         var downloaded = 0
         val datasets = feed.getJSONArray("datasets")
-        for (i in 0 until datasets.length()) {
-            val dataset = datasets.getJSONObject(i)
+        val orderedDatasets = orderSourcesForIngestion((0 until datasets.length()).map { datasets.getJSONObject(it).getString("source_id") })
+            .map { source -> (0 until datasets.length()).first { datasets.getJSONObject(it).getString("source_id") == source }
+                .let(datasets::getJSONObject) }
+        for (dataset in orderedDatasets) {
             // NCDR and CWA event feeds are supported. Ignore signed datasets
             // outside the App's explicit official-event source allowlist.
-            if (!supportsOfficialFeedDataset(dataset.optString("source_id"))) continue
+            val sourceId = dataset.optString("source_id")
+            if (!supportsOfficialFeedDataset(sourceId)) continue
             val manifest = dataset.getJSONObject("manifest")
             val entries = manifest.getJSONArray("chunks")
             val paths = dataset.getJSONArray("chunk_paths")
             for (j in 0 until entries.length()) {
                 val entry = entries.getJSONObject(j)
-                if (!includeArea(entry.getString("area_id"))) continue
+                if (!includesArea(sourceId, entry.getString("area_id"), includeArea)) continue
                 val existing = cached(manifest.getString("dataset_id"), manifest.getString("namespace"), entry.getString("chunk_id"))
                 val chunk = if (existing?.optString("chunk_hash") == entry.getString("chunk_hash")) existing
                     else fetchWithRetry(base.resolve(paths.getString(j)).toString()).also { downloaded++ }
-                GovernmentFeedVerifier.verifyChunk(chunk, manifest, j, trust)
+                GovernmentFeedVerifier.verifyChunk(chunk, manifest, j, trust, syncTime, revokedAtByCertificateId())
                 require(ingest(chunk)) { "Government chunk could not be stored" }
+                if (sourceId in WARNING_SOURCES) {
+                    val events = chunk.getJSONArray("events")
+                    for (eventIndex in 0 until events.length()) {
+                        val event = events.getJSONObject(eventIndex)
+                        if (event.optString("namespace") == "official.announcement" &&
+                            event.optString("source").equals("GOVERNMENT", ignoreCase = true) &&
+                            DeviceKeys.isDeviceKeyId(event.optString("signing_key_id"))) {
+                            onVerifiedGovernmentWarning(event)
+                        }
+                    }
+                }
             }
         }
         return FeedSyncResult(FeedCursor(revision, hash), downloaded, feed)
@@ -67,6 +85,14 @@ class GovernmentFeedSync(
     }
 
     companion object {
+        internal fun orderSourcesForIngestion(sourceIds: List<String>): List<String> =
+            sourceIds.withIndex().sortedWith(compareBy<IndexedValue<String>> {
+                if (it.value == REVOCATION_SOURCE) 0 else 1
+            }.thenBy { it.index }).map { it.value }
+
+        internal fun includesArea(sourceId: String, areaId: String, includeArea: (String) -> Boolean): Boolean =
+            sourceId in NATIONWIDE_SOURCES || includeArea(areaId)
+
         fun validateBase(url: String, allowLocal: Boolean = false): URI {
             val uri = URI(url.trim().let { if (it.endsWith('/')) it else "$it/" })
             require(uri.host != null && uri.rawUserInfo == null && uri.rawQuery == null && uri.rawFragment == null) { "Invalid feed address" }
@@ -101,5 +127,10 @@ class GovernmentFeedSync(
             } finally { connection.disconnect() }
         }
         private const val MAX_BYTES = 8 * 1024 * 1024
+        private const val REVOCATION_SOURCE = "government-device-revocations"
+        private val NATIONWIDE_SOURCES = setOf(
+            "government-announcements", "government-device-announcements", REVOCATION_SOURCE,
+        )
+        private val WARNING_SOURCES = setOf("government-announcements", "government-device-announcements")
     }
 }

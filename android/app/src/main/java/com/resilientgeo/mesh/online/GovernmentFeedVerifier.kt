@@ -1,11 +1,14 @@
 package com.resilientgeo.mesh.online
 
 import com.resilientgeo.mesh.data.supportsOfficialFeedDataset
+import com.resilientgeo.mesh.data.officialFeedNamespace
+import com.resilientgeo.mesh.data.supportsOfficialEvent
 import com.resilientgeo.mesh.trust.Canonical
 import com.resilientgeo.mesh.trust.Ed25519Verifier
 import com.resilientgeo.mesh.trust.TrustedKeyStore
 import com.resilientgeo.mesh.trust.EventVerifier
 import com.resilientgeo.mesh.trust.VerificationResult
+import com.resilientgeo.mesh.trust.DeviceKeys
 import com.resilientgeo.mesh.protocol.ChunkVerifier
 import org.json.JSONObject
 import java.time.Instant
@@ -27,7 +30,7 @@ object GovernmentFeedVerifier {
         require(created <= now.plusSeconds(300) && expires > now && expires > created &&
             expires <= created.plusSeconds(86400)) { "Feed expired or clock incorrect" }
         val datasets = feed.getJSONArray("datasets")
-        require(datasets.length() <= 6) { "Too many government datasets" }
+        require(datasets.length() <= 8) { "Too many government datasets" }
         val ids = mutableSetOf<String>()
         var total = 0
         var totalBytes = 0L
@@ -45,7 +48,7 @@ object GovernmentFeedVerifier {
             require(Canonical.sha256Canonical(hashInput) == manifest.getString("manifest_hash")) { "Manifest hash mismatch" }
             require(manifest.getString("schema_version") == "manifest-v0" &&
                 manifest.getString("dataset_id") == "government-$source" &&
-                manifest.getString("namespace") == "official.live.$source" &&
+                manifest.getString("namespace") == officialFeedNamespace(source) &&
                 manifest.getString("signing_key_id") == signingKeyId &&
                 manifest.getLong("dataset_version") in 1..feed.getLong("revision")) { "Manifest binding mismatch" }
             val chunks = manifest.getJSONArray("chunks")
@@ -61,7 +64,14 @@ object GovernmentFeedVerifier {
         }
     }
 
-    fun verifyChunk(chunk: JSONObject, manifest: JSONObject, index: Int, trust: TrustedKeyStore) {
+    fun verifyChunk(
+        chunk: JSONObject,
+        manifest: JSONObject,
+        index: Int,
+        trust: TrustedKeyStore,
+        now: Instant = Instant.now(),
+        revokedAtByCertificateId: Map<String, Instant> = emptyMap(),
+    ) {
         val expected = manifest.getJSONArray("chunks").getJSONObject(index)
         val signingKeyId = manifest.getString("signing_key_id")
         require(signingKeyId in ALLOWED_KEY_IDS) { "Government chunk signing key is not allowed" }
@@ -80,9 +90,17 @@ object GovernmentFeedVerifier {
         require(eventIds.length() == events.length())
         for (i in 0 until events.length()) {
             val event = events.getJSONObject(i)
+            val eventKeyId = event.getString("signing_key_id")
+            val certifiedGovernmentDeviceEvent = event.getString("namespace") == "official.announcement" &&
+                event.optString("source").equals("GOVERNMENT", ignoreCase = true) &&
+                DeviceKeys.isDeviceKeyId(eventKeyId)
             require(event.getString("namespace") == manifest.getString("namespace") &&
-                event.getString("signing_key_id") == signingKeyId && event.getString("event_id") == eventIds.getString(i))
-            require(EventVerifier.verify(event, trust) is VerificationResult.Valid) { "Invalid government event" }
+                (eventKeyId == signingKeyId || certifiedGovernmentDeviceEvent) &&
+                event.getString("event_id") == eventIds.getString(i))
+            require(supportsOfficialEvent(event.getString("namespace"), event.getString("source"))) { "Unsupported official source" }
+            require(EventVerifier.verify(event, trust, now, revokedAtByCertificateId) is VerificationResult.Valid) {
+                "Invalid government event"
+            }
         }
     }
 

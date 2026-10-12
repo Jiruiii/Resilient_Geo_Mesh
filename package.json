@@ -4,6 +4,9 @@
   "type": "module",
   "scripts": {
     "server:start": "node server/src/api-entrypoint.mjs",
+    "government:api": "node server/src/government/entrypoint.mjs",
+    "government:publisher": "node server/src/government/publisher-entrypoint.mjs",
+    "government:bootstrap-admin": "node server/src/government/bootstrap-admin.mjs",
     "collector:start": "node server/src/collector-entrypoint.mjs",
     "server:health": "node server/src/ops/health-check.mjs",
     "server:backup": "node server/src/ops/maintenance-cli.mjs backup",
@@ -21,6 +24,7 @@
     "generate:android-fixture": "node pipeline/tools/generate-android-fixture.mjs"
   },
   "dependencies": {
-    "fastify": "^5.0.0"
+    "fastify": "^5.0.0",
+    "pg": "^8.16.3"
   }
 }

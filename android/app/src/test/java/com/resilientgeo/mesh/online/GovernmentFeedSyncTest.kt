@@ -2,6 +2,10 @@ package com.resilientgeo.mesh.online
 
 import com.resilientgeo.mesh.trust.TrustedKeyStore
 import com.resilientgeo.mesh.trust.Canonical
+import com.resilientgeo.mesh.protocol.ChunkVerifier
+import com.resilientgeo.mesh.report.GovernmentWarningFactory
+import com.resilientgeo.mesh.report.GovernmentWarningInput
+import com.resilientgeo.mesh.report.governmentWarningTestKeys
 import kotlinx.coroutines.test.runTest
 import org.json.JSONObject
 import org.junit.Assert.*
@@ -11,6 +15,7 @@ import java.nio.charset.StandardCharsets
 import java.security.KeyPairGenerator
 import java.security.Signature
 import java.util.Base64
+import java.time.temporal.ChronoUnit
 
 class GovernmentFeedSyncTest {
     private fun resource(name: String) = javaClass.classLoader!!.getResource(name)!!.readText()
@@ -23,6 +28,115 @@ class GovernmentFeedSyncTest {
     private fun feed() = JSONObject(resource("government/feed.json"))
     private fun chunk() = JSONObject(resource("government/chunk.json"))
     private val fixtureTime = Instant.parse("2026-09-27T12:00:00Z")
+
+    @Test fun revocationDatasetsAreProcessedBeforeWarningDatasets() {
+        val sources = listOf("government-announcements", "government-device-revocations", "cwa-warning")
+        assertEquals(
+            listOf("government-device-revocations", "government-announcements", "cwa-warning"),
+            GovernmentFeedSync.orderSourcesForIngestion(sources),
+        )
+    }
+
+    @Test fun nationwideAnnouncementsAndRevocationsIgnoreTheLocalMapAreaFilter() {
+        assertTrue(GovernmentFeedSync.includesArea("government-announcements", "tw.national") { false })
+        assertTrue(GovernmentFeedSync.includesArea("government-device-revocations", "tw.national") { false })
+        assertFalse(GovernmentFeedSync.includesArea("cwa-warning", "tw.63000") { false })
+    }
+
+    @Test fun certifiedDeviceWarningIsAcceptedAndRevocationUsesIssueTime() {
+        val deviceKeys = governmentWarningTestKeys()
+        val issuedAt = Instant.parse("2026-10-12T12:00:00Z")
+        val warning = GovernmentWarningFactory.create(
+            GovernmentWarningInput(
+                title = "Offline alert",
+                content = "Signed by an enrolled government device.",
+                category = "SAFETY",
+                severity = "HIGH",
+                expiresAt = issuedAt.plus(1, ChronoUnit.DAYS),
+            ),
+            deviceKeys.device,
+            deviceKeys.certificate,
+            issuedAt,
+            "announcement:device:feed-test",
+        )
+        val centralPair = KeyPairGenerator.getInstance("Ed25519").generateKeyPair()
+        val centralKeyId = "central-server-2026"
+        val trust = TrustedKeyStore(mapOf(
+            deviceKeys.certificate.getString("issuer_key_id") to deviceKeys.issuer.publicKeySpkiBase64(),
+            centralKeyId to Base64.getEncoder().encodeToString(centralPair.public.encoded),
+        ))
+        val (chunk, manifest) = centralSignedWarningChunk(warning, centralPair.private, centralKeyId)
+        val certificateId = deviceKeys.certificate.getString("certificate_id")
+
+        GovernmentFeedVerifier.verifyChunk(chunk, manifest, 0, trust, issuedAt)
+        assertThrows(IllegalArgumentException::class.java) {
+            GovernmentFeedVerifier.verifyChunk(chunk, manifest, 0, trust, issuedAt,
+                mapOf(certificateId to issuedAt.minusSeconds(1)))
+        }
+        // A warning created before a cached revocation remains valid and relayable.
+        GovernmentFeedVerifier.verifyChunk(chunk, manifest, 0, trust, issuedAt,
+            mapOf(certificateId to issuedAt.plusSeconds(1)))
+    }
+
+    private fun centralSignedWarningChunk(
+        event: JSONObject,
+        privateKey: java.security.PrivateKey,
+        centralKeyId: String,
+    ): Pair<JSONObject, JSONObject> {
+        val datasetId = "government-government-announcements"
+        val manifestId = "$datasetId:manifest:1"
+        val manifestHash = "sha256:test-manifest"
+        val chunkId = "$datasetId:chunk:1:tw:announcement:000"
+        val bbox = org.json.JSONArray().put(121).put(23.5).put(121).put(23.5)
+        val chunk = JSONObject()
+            .put("schema_version", "chunk-v0")
+            .put("chunk_id", chunkId)
+            .put("manifest_id", manifestId)
+            .put("manifest_hash", manifestHash)
+            .put("dataset_id", datasetId)
+            .put("namespace", "official.announcement")
+            .put("dataset_version", 1)
+            .put("sequence", 0)
+            .put("priority", "HIGH")
+            .put("area_id", "tw.national")
+            .put("theme", "announcement")
+            .put("bbox", bbox)
+            .put("created_at", event.getString("issued_at"))
+            .put("content_type", "application/json")
+            .put("content_encoding", "identity")
+            .put("event_count", 1)
+            .put("events", org.json.JSONArray().put(event))
+            .put("signature_algorithm", "Ed25519")
+            .put("signing_key_id", centralKeyId)
+        val chunkBytes = Canonical.canonicalize(ChunkVerifier.chunkContent(chunk)).toByteArray(StandardCharsets.UTF_8)
+        chunk.put("byte_length", chunkBytes.size)
+            .put("chunk_hash", Canonical.sha256Bytes(chunkBytes))
+        val signer = Signature.getInstance("Ed25519")
+        signer.initSign(privateKey)
+        signer.update(Canonical.canonicalize(ChunkVerifier.chunkSignatureInput(chunk)).toByteArray(StandardCharsets.UTF_8))
+        chunk.put("signature", Base64.getEncoder().encodeToString(signer.sign()))
+
+        val expectedChunk = JSONObject()
+            .put("chunk_id", chunkId)
+            .put("sequence", 0)
+            .put("chunk_hash", chunk.getString("chunk_hash"))
+            .put("size_bytes", chunk.getInt("byte_length"))
+            .put("event_count", 1)
+            .put("priority", "HIGH")
+            .put("area_id", "tw.national")
+            .put("theme", "announcement")
+            .put("event_ids", org.json.JSONArray().put(event.getString("event_id")))
+        val manifest = JSONObject()
+            .put("schema_version", "manifest-v0")
+            .put("manifest_id", manifestId)
+            .put("manifest_hash", manifestHash)
+            .put("dataset_id", datasetId)
+            .put("namespace", "official.announcement")
+            .put("dataset_version", 1)
+            .put("signing_key_id", centralKeyId)
+            .put("chunks", org.json.JSONArray().put(expectedChunk))
+        return chunk to manifest
+    }
 
     @Test fun transientNetworkFailuresRetryWithoutDuplicatingIngest() = runTest {
         var attempts = 0

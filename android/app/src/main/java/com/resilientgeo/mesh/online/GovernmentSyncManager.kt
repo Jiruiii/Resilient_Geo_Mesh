@@ -50,6 +50,7 @@ class GovernmentSyncManager private constructor(context: Context) {
         return mapOf("url" to prefs.getString("url", ""), "enabled" to prefs.getBoolean("enabled", true),
             "syncing" to syncing, "area" to prefs.getString("area", "all"), "last_attempt" to prefs.getString("attempt", null),
             "last_success" to prefs.getString("success", null), "error" to prefs.getString("error", null),
+            "last_revocation_sync_at" to prefs.getString("revocation_sync_at", null),
             "revision" to prefs.getLong("revision", 0), "downloaded" to prefs.getInt("downloaded", 0),
             "sources" to (0 until sources.length()).map { i ->
                 val source = sources.getJSONObject(i)
@@ -77,10 +78,14 @@ class GovernmentSyncManager private constructor(context: Context) {
                     { chunk -> repository.ingestChunk(chunk) is ChunkIngestResult.Applied }, includeArea = { area ->
                         downloadAll || area.startsWith("tw.630") || area.startsWith("tw.650") ||
                             area in setOf("tw", "tw.unknown")
+                    }, revokedAtByCertificateId = { repository.governmentDeviceRevocations() },
+                    onVerifiedGovernmentWarning = { event ->
+                        repository.markGovernmentWarningPublished(event.getString("event_id"), event.getString("payload_hash"))
                     })
                 val result = sync.sync(url, FeedCursor(prefs.getLong("revision", 0), prefs.getString("hash", "").orEmpty()), debug)
+                val successAt = Instant.now().toString()
                 check(prefs.edit().putLong("revision", result.cursor.revision).putString("hash", result.cursor.hash)
-                    .putString("success", Instant.now().toString()).remove("error")
+                    .putString("success", successAt).putString("revocation_sync_at", successAt).remove("error")
                     .putInt("downloaded", result.downloaded).putString("sources", result.feed.getJSONArray("sources").toString()).commit())
             } catch (error: Exception) {
                 if (error is kotlinx.coroutines.CancellationException) throw error

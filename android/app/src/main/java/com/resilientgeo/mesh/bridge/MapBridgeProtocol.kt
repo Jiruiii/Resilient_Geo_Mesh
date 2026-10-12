@@ -2,14 +2,65 @@ package com.resilientgeo.mesh.bridge
 
 import com.resilientgeo.mesh.data.EventEntity
 import com.resilientgeo.mesh.ingest.IngestResult
+import com.resilientgeo.mesh.report.GovernmentWarningInput
 import com.resilientgeo.mesh.report.CrowdReportInput
 import com.resilientgeo.mesh.routing.LonLat
 import com.resilientgeo.mesh.routing.RouteRequest
 import com.resilientgeo.mesh.routing.RouteResult
 import kotlin.math.round
+import java.time.Instant
+import java.util.UUID
+import org.json.JSONObject
 
 /** StandardMessageCodec-safe replies for the approved map MethodChannel contract. */
 object MapBridgeProtocol {
+
+    data class GovernmentWarningRequest(val input: GovernmentWarningInput, val eventId: String)
+
+    fun governmentWarningRequest(arguments: Any?): GovernmentWarningRequest? {
+        val map = arguments as? Map<*, *> ?: return null
+        val title = map["title"] as? String ?: return null
+        val content = map["content"] as? String ?: return null
+        val category = map["category"] as? String ?: return null
+        val severity = map["severity"] as? String ?: return null
+        val expiryText = map["expires_at"] as? String ?: return null
+        val expiresAt = runCatching { Instant.parse(expiryText) }.getOrNull() ?: return null
+        val hasLongitude = map["longitude"] != null
+        val hasLatitude = map["latitude"] != null
+        if (hasLongitude != hasLatitude) return null
+        val location = if (!hasLongitude) null else {
+            val longitude = (map["longitude"] as? Number)?.toDouble() ?: return null
+            val latitude = (map["latitude"] as? Number)?.toDouble() ?: return null
+            GovernmentWarningInput.Location(longitude, latitude)
+        }
+        val eventId = map["event_id"] as? String ?: "announcement:device:${UUID.randomUUID()}"
+        return GovernmentWarningRequest(
+            GovernmentWarningInput(title, content, category, severity, expiresAt, location),
+            eventId,
+        )
+    }
+
+    fun governmentDeviceKeyReply(state: JSONObject): Map<String, Any?> = mapOf(
+        "signing_key_id" to state.getString("signing_key_id"),
+        "signer_public_key" to state.getString("signer_public_key"),
+    )
+
+    fun governmentDeviceAuthorizationReply(state: JSONObject): Map<String, Any?> = mapOf(
+        "status" to state.getString("status"),
+        "signing_key_id" to state.getString("signing_key_id"),
+        "signer_public_key" to state.getString("signer_public_key"),
+        "certificate_json" to state.opt("certificate_json").takeUnless { it === JSONObject.NULL },
+        "certificate_expires_at" to state.opt("certificate_expires_at").takeUnless { it === JSONObject.NULL },
+    )
+
+    fun governmentWarningCreated(eventId: String, payloadHash: String, eventJson: String, duplicate: Boolean) = mapOf(
+        "event_id" to eventId,
+        "payload_hash" to payloadHash,
+        "event_json" to eventJson,
+        "apply_state" to "CURRENT",
+        "upload_state" to "PENDING",
+        "duplicate" to duplicate,
+    )
 
     fun eventSnapshot(events: List<EventEntity>): List<Map<String, Any?>> =
         events.map { EventPayloadMapper.toMessage(it) }
@@ -73,10 +124,11 @@ object MapBridgeProtocol {
     }
 
     /** Success reply; Flutter accepts nothing but UNVERIFIED/PENDING here. */
-    fun crowdReportCreated(eventId: String, applyState: String): Map<String, Any?> = mapOf(
+    fun crowdReportCreated(eventId: String, applyState: String, eventJson: String): Map<String, Any?> = mapOf(
         "event_id" to eventId,
         "apply_state" to applyState,
         "delivery_state" to "PENDING",
+        "event_json" to eventJson,
     )
 
     /** `calculateEvacuationRoute` arguments, or null when they are not the contract's shape. */

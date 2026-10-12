@@ -1,4 +1,80 @@
 services:
+  government-postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: resilientgeo
+      POSTGRES_USER: ${GOVERNMENT_DB_USER:-resilientgeo}
+      POSTGRES_PASSWORD: ${GOVERNMENT_DB_PASSWORD:?set GOVERNMENT_DB_PASSWORD}
+    volumes:
+      - government_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${GOVERNMENT_DB_USER:-resilientgeo} -d resilientgeo"]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+
+  government-api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    command: ["npm", "run", "government:api"]
+    user: node
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8788:8788"
+    depends_on:
+      government-postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 8788
+      DATABASE_URL: postgresql://${GOVERNMENT_DB_USER:-resilientgeo}:${GOVERNMENT_DB_PASSWORD_URLENCODED:?set URL-encoded GOVERNMENT_DB_PASSWORD_URLENCODED}@government-postgres:5432/resilientgeo
+      DATABASE_SSL: disable
+      SIGNING_PUBLIC_KEY_PATH: /run/secrets/signing_public_key
+      SIGNING_KEY_ID: ${SIGNING_KEY_ID:?set SIGNING_KEY_ID}
+    secrets:
+      - signing_public_key
+    read_only: true
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8788/api/v1/healthz').then(r => { if (!r.ok) process.exit(1); }).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  government-publisher:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    command: ["npm", "run", "government:publisher"]
+    user: node
+    restart: unless-stopped
+    depends_on:
+      government-postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${GOVERNMENT_DB_USER:-resilientgeo}:${GOVERNMENT_DB_PASSWORD_URLENCODED:?set URL-encoded GOVERNMENT_DB_PASSWORD_URLENCODED}@government-postgres:5432/resilientgeo
+      DATABASE_SSL: disable
+      PRIVATE_DATA_ROOT: /var/lib/resilientgeo-private
+      PUBLIC_RELEASE_ROOT: /var/lib/resilientgeo-public
+      SIGNING_PRIVATE_KEY_PATH: /run/secrets/signing_private_key
+      SIGNING_PUBLIC_KEY_PATH: /run/secrets/signing_public_key
+      SIGNING_KEY_ID: ${SIGNING_KEY_ID:?set SIGNING_KEY_ID}
+      PUBLISH_POLL_MS: ${PUBLISH_POLL_MS:-5000}
+    secrets:
+      - signing_private_key
+      - signing_public_key
+    volumes:
+      - private_data:/var/lib/resilientgeo-private
+      - public_release:/var/lib/resilientgeo-public
+    read_only: true
+    tmpfs:
+      - /tmp
+
   collector:
     build:
       context: ..
@@ -83,6 +159,8 @@ services:
     depends_on:
       api:
         condition: service_healthy
+      government-api:
+        condition: service_healthy
     ports:
       - "80:80"
       - "443:443"
@@ -98,6 +176,7 @@ services:
 volumes:
   private_data:
   public_release:
+  government_db:
   caddy_data:
   caddy_config:
 

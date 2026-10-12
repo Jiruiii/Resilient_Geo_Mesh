@@ -15,6 +15,7 @@ import '../data/corroboration.dart';
 import '../data/crowd_report_models.dart';
 import '../data/display_time.dart';
 import '../data/evacuation_models.dart';
+import '../data/government_api.dart';
 import '../data/location_controller.dart';
 import '../data/map_administrative.dart';
 import '../data/map_models.dart';
@@ -48,6 +49,8 @@ class MapScreen extends StatefulWidget {
     this.animationEnabled = true,
     this.active = true,
     this.routeClock,
+    this.notificationFocusEvent,
+    this.notificationFocusRequestId = 0,
   });
 
   /// Optional deterministic inputs keep widget tests independent of channels.
@@ -70,6 +73,8 @@ class MapScreen extends StatefulWidget {
 
   /// Deterministic expiry clock for widget tests.
   final DateTime Function()? routeClock;
+  final MeshEvent? notificationFocusEvent;
+  final int notificationFocusRequestId;
 
   @override
   State<MapScreen> createState() => _MapScreenState();
@@ -172,6 +177,21 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   void didUpdateWidget(covariant MapScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.active != widget.active) _refreshRouteVisibility();
+    if (oldWidget.notificationFocusRequestId !=
+        widget.notificationFocusRequestId) {
+      final event = widget.notificationFocusEvent;
+      final point = event == null ? null : meshEventFocusPoint(event);
+      if (event != null && point != null) {
+        _selectedFeature = null;
+        _selectedEvent = event;
+        _searchSelection = null;
+        _searchText = '';
+        _searchController.clear();
+        _mapSearchResults = const <MapSearchResult>[];
+        _focusPoint = point;
+        _focusRequestId += 1;
+      }
+    }
     final nextFeatures = widget.staticFeatures;
     if (nextFeatures != null &&
         !identical(oldWidget.staticFeatures, nextFeatures)) {
@@ -1404,7 +1424,11 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
         _reportSheetVisible = false;
         _reportStep = CrowdReportSheetStep.edit;
       });
-      _showMessage('警示已建立：未驗證／待同步');
+      _showMessage(
+        submission.deliveryState == 'UPLOADED'
+            ? '回報已上傳，尚未經查證，僅供參考'
+            : '回報已保存在本機，未經查證；連線後會重試上傳',
+      );
     } on Object catch (error) {
       if (!mounted) return;
       setState(() => _reportSubmitting = false);
@@ -1413,6 +1437,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   }
 
   String _reportErrorMessage(Object error) => switch (error) {
+    GovernmentApiException(:final message) => '回報已留在本機，但線上上傳未完成：$message',
     BridgeFailure(:final code) => switch (code) {
       BridgeFailureCode.unavailable => '此功能需要 Android App，Chrome 僅供地圖與資料預覽',
       BridgeFailureCode.signingUnavailable => '裝置安全簽署不可用，警示未送出',

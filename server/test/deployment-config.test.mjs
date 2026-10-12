@@ -15,25 +15,43 @@ function serviceBlock(compose, service) {
   return match[1];
 }
 
-test('compose defines isolated collector, api, and proxy services with persistent volumes', async () => {
+test('compose defines separate government data, authoring, signing, public API, collector, and proxy services', async () => {
   const compose = await read('deploy/docker-compose.yml');
   const services = [...compose.matchAll(/^  ([a-z][a-z0-9-]*):$/gmu)].map((match) => match[1]);
-  assert.deepEqual(services, ['collector', 'api', 'proxy']);
+  assert.deepEqual(services, ['government-postgres', 'government-api', 'government-publisher', 'collector', 'api', 'proxy']);
   assert.match(compose, /private_data:/u);
   assert.match(compose, /public_release:/u);
+  assert.match(compose, /government_db:/u);
   assert.match(serviceBlock(compose, 'api'), /public_release:[^\n]*:ro|read_only:\s*true/iu);
   assert.doesNotMatch(serviceBlock(compose, 'api'), /private_data/u);
+  assert.doesNotMatch(serviceBlock(compose, 'government-api'), /SIGNING_PRIVATE_KEY|PUBLIC_RELEASE_ROOT|public_release/u);
+  assert.match(serviceBlock(compose, 'government-api'), /SIGNING_PUBLIC_KEY_PATH/u);
+  assert.match(serviceBlock(compose, 'government-publisher'), /SIGNING_PRIVATE_KEY_PATH/u);
+  assert.match(serviceBlock(compose, 'government-publisher'), /public_release:/u);
 });
 
-test('only collector has write access and upstream/signing secrets stay outside api', async () => {
+test('only collector and publisher can write releases; government API has the public issuer key only', async () => {
   const compose = await read('deploy/docker-compose.yml');
   const collector = serviceBlock(compose, 'collector');
+  const publisher = serviceBlock(compose, 'government-publisher');
+  const governmentApi = serviceBlock(compose, 'government-api');
   const api = serviceBlock(compose, 'api');
   assert.doesNotMatch(collector, /^    ports:/mu);
   assert.match(collector, /private_data:/u);
   assert.match(collector, /public_release:/u);
+  assert.match(publisher, /public_release:/u);
+  assert.match(publisher, /signing_private_key/u);
+  assert.doesNotMatch(governmentApi, /SIGNING_PRIVATE_KEY|PRIVATE_DATA_ROOT|PUBLIC_RELEASE_ROOT/u);
+  assert.match(governmentApi, /signing_public_key/u);
   assert.doesNotMatch(api, /TDX_CLIENT_SECRET|CWA_API_KEY|NCDR_ALERT_API_KEY|SIGNING_PRIVATE_KEY_PATH|PRIVATE_DATA_ROOT/u);
   assert.match(compose, /SIGNING_PRIVATE_KEY_PATH|SIGNING_PRIVATE_KEY_FILE/u);
+});
+
+test('government API has a loopback-only host port for Android emulator account access', async () => {
+  const compose = await read('deploy/docker-compose.yml');
+  assert.match(serviceBlock(compose, 'government-api'), /127\.0\.0\.1:8788:8788/u);
+  const api = serviceBlock(compose, 'api');
+  assert.match(api, /127\.0\.0\.1:8787:8787/u);
 });
 
 test('configured Central Server signer is trusted by Flutter and Android without replacing legacy keys', async () => {
@@ -90,6 +108,7 @@ test('collector passes TDX endpoint pacing and freshness settings', async () => 
 test('Caddy proxies only the documented public server paths', async () => {
   const caddy = await read('deploy/Caddyfile');
   assert.match(caddy, /reverse_proxy\s+api:\d+/u);
+  assert.match(caddy, /reverse_proxy\s+government-api:\d+/u);
   assert.match(caddy, /\/healthz|\/readyz/u);
   assert.match(caddy, /\/feed\.json|\/releases|\/v1/u);
   assert.doesNotMatch(caddy, /\/maps\/|\/srv\/(?:maps|osm)/u);

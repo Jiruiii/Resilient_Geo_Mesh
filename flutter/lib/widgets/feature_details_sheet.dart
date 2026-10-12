@@ -148,8 +148,17 @@ class FeatureDetailsSheet extends StatelessWidget {
       _DetailLine('描述', _text(event.attributes?['description'])),
       if (corroboration != null) _DetailLine('附近回報', corroboration!),
     ],
+    if (event.namespace == 'official.announcement') ...<Widget>[
+      _DetailLine(
+        '公告類別',
+        governmentAnnouncementCategoryLabel(event.attributes?['category']),
+      ),
+      if (event.attributes?['content'] is String)
+        _DetailLine('公告內容', _text(event.attributes?['content'])),
+    ],
     _DetailLine('事件類型', _text(event.eventType)),
-    _DetailLine('嚴重度', _text(event.severity)),
+    if (!isSupplyStationEvent(event))
+      _DetailLine('嚴重度', _text(event.severity)),
     _DetailLine('位置／範圍', _geometryText(event.geometry)),
     _DetailLine('來源', _text(event.source)),
     _DetailLine('發佈時間', _text(event.issuedAt)),
