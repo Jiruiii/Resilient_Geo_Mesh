@@ -61,6 +61,44 @@ void main() {
       expect(filterMapEvents(<MeshEvent>[cwa]), contains(cwa));
     },
   );
+
+  test(
+    'accepts official announcements and attestations while mapping only explicit announcement locations',
+    () {
+      final noticeWithoutLocation = MeshEvent.fromJson(<String, dynamic>{
+        'namespace': 'official.announcement',
+        'event_id': 'announcement:1',
+        'event_type': 'GOVERNMENT_ANNOUNCEMENT',
+        'source': 'GOVERNMENT',
+        'attributes': <String, dynamic>{'has_map_location': false},
+      });
+      final noticeWithLocation = MeshEvent.fromJson(<String, dynamic>{
+        'namespace': 'official.announcement',
+        'event_id': 'announcement:2',
+        'event_type': 'GOVERNMENT_ANNOUNCEMENT',
+        'source': 'GOVERNMENT',
+        'attributes': <String, dynamic>{'has_map_location': true},
+      });
+      final attestation = MeshEvent.fromJson(<String, dynamic>{
+        'namespace': 'official.verified',
+        'event_id': 'attest:report:device:1',
+        'event_type': 'ATTESTATION',
+        'source': 'GOV_ATTEST',
+        'attributes': <String, dynamic>{'verdict': 'REFUTED'},
+      });
+
+      expect(isAppSupportedEvent(noticeWithoutLocation), isTrue);
+      expect(isAppSupportedEvent(attestation), isTrue);
+      expect(
+        filterMapEvents(<MeshEvent>[
+          noticeWithoutLocation,
+          noticeWithLocation,
+          attestation,
+        ]),
+        <MeshEvent>[noticeWithLocation],
+      );
+    },
+  );
 }
 
 MeshEvent _event(

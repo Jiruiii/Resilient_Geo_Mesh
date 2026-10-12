@@ -9,9 +9,11 @@ import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import com.resilientgeo.mesh.bridge.FlutterMapBridge
 import com.resilientgeo.mesh.bridge.OfflineMapAssetBridge
+import com.resilientgeo.mesh.bridge.GovernmentSessionKeyStore
 import com.resilientgeo.mesh.bridge.SharedPreferencesEmergencyModeState
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.MethodChannel
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -32,6 +34,8 @@ class MainActivity : FlutterFragmentActivity() {
     private var mapBridge: FlutterMapBridge? = null
     private var offlineMapAssetBridge: OfflineMapAssetBridge? = null
     private var governmentCheck: Job? = null
+    private var governmentAuthChannel: MethodChannel? = null
+    private val governmentSessionStore by lazy { GovernmentSessionKeyStore(applicationContext) }
 
     override fun onResume() {
         super.onResume()
@@ -88,6 +92,28 @@ class MainActivity : FlutterFragmentActivity() {
             applicationContext,
             flutterEngine.dartExecutor.binaryMessenger,
         )
+        governmentAuthChannel?.setMethodCallHandler(null)
+        governmentAuthChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "com.resilientgeo.mesh/government-auth",
+        ).also { channel ->
+            channel.setMethodCallHandler { call, result ->
+                try {
+                    when (call.method) {
+                        "readSessionToken" -> result.success(governmentSessionStore.read())
+                        "writeSessionToken" -> {
+                            val token = (call.arguments as? Map<*, *>)?.get("token") as? String
+                            if (token == null) result.error("invalid_input", "session token is required", null)
+                            else { governmentSessionStore.write(token); result.success(null) }
+                        }
+                        "clearSessionToken" -> { governmentSessionStore.clear(); result.success(null) }
+                        else -> result.notImplemented()
+                    }
+                } catch (_: Exception) {
+                    result.error("secure_storage_unavailable", "Government session storage is unavailable", null)
+                }
+            }
+        }
     }
 
     override fun onDestroy() {
@@ -95,6 +121,8 @@ class MainActivity : FlutterFragmentActivity() {
         mapBridge = null
         offlineMapAssetBridge?.close()
         offlineMapAssetBridge = null
+        governmentAuthChannel?.setMethodCallHandler(null)
+        governmentAuthChannel = null
         super.onDestroy()
     }
 

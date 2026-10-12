@@ -1,6 +1,8 @@
 package com.resilientgeo.mesh.online
 
 import com.resilientgeo.mesh.data.supportsOfficialFeedDataset
+import com.resilientgeo.mesh.data.officialFeedNamespace
+import com.resilientgeo.mesh.data.supportsOfficialEvent
 import com.resilientgeo.mesh.trust.Canonical
 import com.resilientgeo.mesh.trust.Ed25519Verifier
 import com.resilientgeo.mesh.trust.TrustedKeyStore
@@ -27,7 +29,7 @@ object GovernmentFeedVerifier {
         require(created <= now.plusSeconds(300) && expires > now && expires > created &&
             expires <= created.plusSeconds(86400)) { "Feed expired or clock incorrect" }
         val datasets = feed.getJSONArray("datasets")
-        require(datasets.length() <= 6) { "Too many government datasets" }
+        require(datasets.length() <= 8) { "Too many government datasets" }
         val ids = mutableSetOf<String>()
         var total = 0
         var totalBytes = 0L
@@ -45,7 +47,7 @@ object GovernmentFeedVerifier {
             require(Canonical.sha256Canonical(hashInput) == manifest.getString("manifest_hash")) { "Manifest hash mismatch" }
             require(manifest.getString("schema_version") == "manifest-v0" &&
                 manifest.getString("dataset_id") == "government-$source" &&
-                manifest.getString("namespace") == "official.live.$source" &&
+                manifest.getString("namespace") == officialFeedNamespace(source) &&
                 manifest.getString("signing_key_id") == signingKeyId &&
                 manifest.getLong("dataset_version") in 1..feed.getLong("revision")) { "Manifest binding mismatch" }
             val chunks = manifest.getJSONArray("chunks")
@@ -82,6 +84,7 @@ object GovernmentFeedVerifier {
             val event = events.getJSONObject(i)
             require(event.getString("namespace") == manifest.getString("namespace") &&
                 event.getString("signing_key_id") == signingKeyId && event.getString("event_id") == eventIds.getString(i))
+            require(supportsOfficialEvent(event.getString("namespace"), event.getString("source"))) { "Unsupported official source" }
             require(EventVerifier.verify(event, trust) is VerificationResult.Valid) { "Invalid government event" }
         }
     }

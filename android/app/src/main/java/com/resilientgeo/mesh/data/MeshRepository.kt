@@ -676,7 +676,7 @@ class MeshRepository(
                 val chunk = CrowdChunkCodec.build(event, key)
                 when (val result = commitChunk(chunk, now) { EventIngestor.ingest(store, event, trustStore, now) }) {
                     is IngestResult.Inserted -> {
-                        CrowdReportResult.Created(event.getString("event_id"), result.state)
+                        CrowdReportResult.Created(event.getString("event_id"), result.state, event.toString())
                     }
                     else -> CrowdReportResult.StorageUnavailable("report was not stored: $result")
                 }
@@ -907,7 +907,7 @@ private data class KnownDataset(
 )
 
 sealed class CrowdReportResult {
-    data class Created(val eventId: String, val applyState: ApplyState) : CrowdReportResult()
+    data class Created(val eventId: String, val applyState: ApplyState, val eventJson: String) : CrowdReportResult()
     data class Invalid(val errors: List<String>) : CrowdReportResult()
     data class SigningUnavailable(val message: String) : CrowdReportResult()
     data class StorageUnavailable(val message: String) : CrowdReportResult()

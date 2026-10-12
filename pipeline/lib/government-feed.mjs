@@ -78,7 +78,10 @@ export function buildGovernmentFeed({ previous, previousEvents = {}, results, pr
     const current = new Map((previousEvents[id] ?? [])
       .filter(event => isPublicEvent(result, event) && distributable(event, now))
       .map(event => [event.event_id, event]));
-    const namespace = `official.live.${id}`;
+    const namespace = result.namespace ?? `official.live.${id}`;
+    if (typeof namespace !== 'string' || !/^[a-z][a-z0-9._-]+$/u.test(namespace)) {
+      throw new Error('Invalid government event namespace');
+    }
     if (result.events) {
       for (const eventId of result.cancelledEventIds ?? []) {
         const existing = current.get(eventId);

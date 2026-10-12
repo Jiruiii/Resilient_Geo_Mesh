@@ -4,10 +4,13 @@ import { test } from 'node:test';
 
 const packageJson = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8'));
 
-test('the central collector is the only production collection entrypoint', async () => {
+test('government outbox publisher is separate from central source collection', async () => {
   const scripts = packageJson.scripts ?? {};
   assert.equal(scripts['collector:start'], 'node server/src/collector-entrypoint.mjs');
-  assert.equal(Object.keys(scripts).some((name) => name.startsWith('government:')), false);
+  assert.equal(scripts['government:api'], 'node server/src/government/entrypoint.mjs');
+  assert.equal(scripts['government:publisher'], 'node server/src/government/publisher-entrypoint.mjs');
+  assert.equal(scripts['government:bootstrap-admin'], 'node server/src/government/bootstrap-admin.mjs');
+  assert.equal(scripts['government:collection'], undefined);
   await assert.rejects(access(new URL('../../pipeline/government-publisher.mjs', import.meta.url)));
   await assert.rejects(access(new URL('../../pipeline/government-collector-worker.mjs', import.meta.url)));
   await assert.rejects(access(new URL('../../pipeline/deploy-government.mjs', import.meta.url)));

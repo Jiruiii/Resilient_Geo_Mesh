@@ -7,6 +7,7 @@
   const feedKeyIds = new Set(['government-feed-2026', 'central-server-2026']);
   const supportedDatasetIds = new Set([
     'ncdr', 'cwa-earthquake', 'cwa-warning', 'cwa-typhoon',
+    'government-announcements', 'government-attestations',
   ]);
   const eventPayloadFields = [
     'namespace', 'event_id', 'event_type', 'geometry', 'severity', 'source',
@@ -49,11 +50,13 @@
   }
 
   function isSupportedEvent(event) {
-    return isNcdrEvent(event) || isCwaEvent(event);
+    return isNcdrEvent(event) || isCwaEvent(event) ||
+      event?.namespace === 'official.announcement' && event.source === 'GOVERNMENT' ||
+      event?.namespace === 'official.verified' && event.source === 'GOV_ATTEST' && event.event_type === 'ATTESTATION';
   }
 
   function isSafeChunkPath(path) {
-    return /^releases\/\d+\/(?:ncdr|cwa-earthquake|cwa-warning|cwa-typhoon)\/\d+\.json$/u.test(path);
+    return /^releases\/\d+\/(?:ncdr|cwa-earthquake|cwa-warning|cwa-typhoon|government-announcements|government-attestations)\/\d+\.json$/u.test(path);
   }
 
   function timestamp(value, field) {
@@ -70,7 +73,7 @@
     if (!feed || typeof feed !== 'object' || Array.isArray(feed) ||
         feed.schema_version !== 'government-feed-v1' || !Number.isSafeInteger(feed.revision) ||
         feed.revision < 1 || !Array.isArray(feed.sources) || !Array.isArray(feed.datasets) ||
-        feed.datasets.length > 6 || !feed.event_versions || typeof feed.event_versions !== 'object' ||
+        feed.datasets.length > 8 || !feed.event_versions || typeof feed.event_versions !== 'object' ||
         Array.isArray(feed.event_versions) || feed.signature_algorithm !== 'Ed25519' ||
         typeof feed.signature !== 'string' || !feedKeyIds.has(feed.signing_key_id)) {
       throw new Error('告警 feed 契約不符');
@@ -98,9 +101,12 @@
       // their manifests/chunks. NCDR and all three CWA event feeds are shown.
       if (!supportedDatasetIds.has(source)) continue;
       const manifest = dataset.manifest;
+      const expectedNamespace = source === 'government-announcements'
+        ? 'official.announcement'
+        : source === 'government-attestations' ? 'official.verified' : `official.live.${source}`;
       if (!manifest || manifest.schema_version !== 'manifest-v0' ||
           manifest.dataset_id !== `government-${source}` ||
-          manifest.namespace !== `official.live.${source}` ||
+          manifest.namespace !== expectedNamespace ||
           !Number.isSafeInteger(manifest.dataset_version) || manifest.dataset_version < 1 ||
           manifest.dataset_version > feed.revision || manifest.signing_key_id !== feed.signing_key_id ||
           manifest.signature_algorithm !== 'Ed25519' || !Array.isArray(manifest.chunks) ||
@@ -203,7 +209,8 @@
           const event = chunk.events[eventIndex];
           if (event.event_id !== expected.event_ids[eventIndex]) throw new Error('告警事件 ID 與清單不一致');
           await verifyEvent(event, manifest.namespace, manifest.signing_key_id);
-          const expectedSource = source === 'ncdr' ? 'NCDR' : 'CWA';
+          const expectedSource = source === 'ncdr' ? 'NCDR' : source === 'government-announcements'
+            ? 'GOVERNMENT' : source === 'government-attestations' ? 'GOV_ATTEST' : 'CWA';
           if (event.source !== expectedSource) throw new Error('官方告警來源不一致');
           events.push(event);
         }

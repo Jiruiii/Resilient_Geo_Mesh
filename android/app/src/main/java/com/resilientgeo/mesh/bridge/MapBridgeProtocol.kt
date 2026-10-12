@@ -73,10 +73,11 @@ object MapBridgeProtocol {
     }
 
     /** Success reply; Flutter accepts nothing but UNVERIFIED/PENDING here. */
-    fun crowdReportCreated(eventId: String, applyState: String): Map<String, Any?> = mapOf(
+    fun crowdReportCreated(eventId: String, applyState: String, eventJson: String): Map<String, Any?> = mapOf(
         "event_id" to eventId,
         "apply_state" to applyState,
         "delivery_state" to "PENDING",
+        "event_json" to eventJson,
     )
 
     /** `calculateEvacuationRoute` arguments, or null when they are not the contract's shape. */

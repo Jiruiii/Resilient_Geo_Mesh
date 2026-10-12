@@ -112,8 +112,9 @@ class MapBridgeProtocolTest {
 
     @Test
     fun `crowd report reply carries exactly what Flutter accepts as success`() {
-        val reply = MapBridgeProtocol.crowdReportCreated("report:abcd1234:uuid", "UNVERIFIED")
-        assertEquals(mapOf("event_id" to "report:abcd1234:uuid", "apply_state" to "UNVERIFIED", "delivery_state" to "PENDING"), reply)
+        val reply = MapBridgeProtocol.crowdReportCreated("report:abcd1234:uuid", "UNVERIFIED", "{\"signature\":\"signed\"}")
+        assertEquals(mapOf("event_id" to "report:abcd1234:uuid", "apply_state" to "UNVERIFIED",
+            "delivery_state" to "PENDING", "event_json" to "{\"signature\":\"signed\"}"), reply)
     }
 
     @Test

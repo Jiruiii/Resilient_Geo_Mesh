@@ -95,7 +95,12 @@ class _EventCard extends StatelessWidget {
               '嚴重度：${event.severity ?? '無資料'}',
               isCrowdEvent(event) && !event.isExpired
                   ? '狀態：${crowdVerificationLabel(event.verification ?? CrowdVerification.unverified)}'
+                  : event.namespace == 'official.announcement'
+                  ? '狀態：官方簽章已驗證'
                   : '狀態：${_applyStateLabel(event.effectiveApplyState)}',
+              if (event.namespace == 'official.announcement' &&
+                  event.attributes?['content'] is String)
+                '內容：${event.attributes!['content']}',
               '發布：${event.issuedAt ?? '無資料'}',
               '有效期限：${event.expiresAt ?? '無資料'}',
             ].join('\n'),

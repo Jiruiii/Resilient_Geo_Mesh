@@ -148,6 +148,7 @@ class _MapAppHomeState extends State<_MapAppHome> {
                   onEventRead: controller.markEventRead,
                 ),
                 ProfileScreen(
+                  governmentAuth: controller.governmentAuth,
                   bridge: controller.bridge,
                   themeMode: controller.themeMode,
                   animationEnabled: controller.animationEnabled,

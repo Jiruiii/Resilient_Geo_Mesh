@@ -1,6 +1,6 @@
 # Central Server 政府資料更新
 
-目前唯一的正式收集／發布流程是：
+中央來源資料的收集／發布流程是：
 
 ```text
 政府 API → collector → private source cache → signed immutable release
@@ -8,7 +8,17 @@
                          Fastify read-only API / Caddy
 ```
 
-`collector:start` 是唯一會寫入 source cache 與 public release 的排程入口。舊的 `government-publisher`／worker 與 Cloudflare Pages 發布流程已淘汰；`pipeline/cli.mjs` 只保留一次性 normalize、build、verify、attest 工具。Web 與 Android 的 signed feed／static layer client 已加入；Caddy／API 尚未部署到正式 HTTPS 網域，Android 資產內的預設網址仍需切換。
+政府工作台另外使用獨立的 PostgreSQL outbox 與內部發布 worker：
+
+```text
+Flutter Web／Android → government-api → PostgreSQL outbox
+                                           ↓
+                            government-publisher → signed immutable release
+```
+
+`collector:start` 負責中央來源排程與 source cache。`government-publisher` 只處理工作台公告及查證事件，與 collector 共用發布鎖及同一中央 Ed25519 feed；工作台 API 不持有簽章私鑰，公開資料 API 仍唯讀。舊的 `pipeline/government-publisher`／worker 與 Cloudflare Pages 發布流程已淘汰；`pipeline/cli.mjs` 保留一次性 normalize、build、verify、attest 工具。工作台部署、管理者啟用及 API 合約見[政府工作台操作說明](government-workbench.md)。
+
+Web 與 Android 的 signed feed／static layer client 已加入；Caddy／API 尚未部署到正式 HTTPS 網域，Android 資產內的預設網址仍需切換。
 
 ## 本機啟動
 

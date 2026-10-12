@@ -10,6 +10,11 @@ const Set<String> _actionableNcdrRelevance = <String>{
 /// remain a separate, explicitly unverified event stream.
 bool isAppSupportedEvent(MeshEvent event) =>
     event.namespace?.startsWith('crowd.') == true ||
+    event.namespace == 'official.announcement' &&
+        event.source == 'GOVERNMENT' ||
+    event.namespace == 'official.verified' &&
+        event.source == 'GOV_ATTEST' &&
+        event.eventType == 'ATTESTATION' ||
     _isCwaEvent(event) ||
     _isNcdrEvent(event);
 
@@ -17,6 +22,12 @@ bool isAppSupportedEvent(MeshEvent event) =>
 /// their own source semantics and are not filtered by NCDR relevance fields.
 bool isMapVisibleEvent(MeshEvent event) {
   if (event.namespace?.startsWith('crowd.') == true) return true;
+  if (event.namespace == 'official.announcement') {
+    return event.attributes?['has_map_location'] == true;
+  }
+  if (event.namespace == 'official.verified') {
+    return false;
+  }
   if (_isCwaEvent(event)) return true;
   if (!_isNcdrEvent(event)) return false;
 

@@ -11,6 +11,7 @@ import '../data/map_bridge.dart';
 import '../data/map_models.dart';
 import '../data/ncdr_demo_events.dart';
 import '../data/ncdr_map_filter.dart';
+import '../data/government_api.dart';
 import '../data/offline_government_feed.dart';
 import '../data/offline_map_web_static_layers.dart';
 
@@ -30,7 +31,9 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
     bool? isWeb,
     WebStaticLayerLoader? webStaticLayerLoader,
     WebGovernmentFeedLoader? webGovernmentFeedLoader,
+    GovernmentAuthController? governmentAuthController,
   }) : bridge = bridge ?? MapBridge(),
+       governmentAuth = governmentAuthController ?? GovernmentAuthController(),
        _demoEventLoader = demoEventLoader ?? _loadBundledNcdrDemoEvents,
        _isWeb = isWeb ?? kIsWeb,
        _webStaticLayerLoader = webStaticLayerLoader ?? loadWebNLSCStaticLayers,
@@ -43,6 +46,7 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
   static const _animationPreference = 'map.animation_enabled';
   static const _readEventKeysPreference = 'map.read_event_keys';
   final MapBridge bridge;
+  final GovernmentAuthController governmentAuth;
   final DemoEventLoader _demoEventLoader;
   final bool _isWeb;
   final WebStaticLayerLoader _webStaticLayerLoader;
@@ -53,6 +57,7 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
   StreamSubscription<List<MeshEvent>>? _eventSubscription;
   Timer? _expiryTimer;
   Timer? _webFeedRefreshTimer;
+  Timer? _crowdUploadRetryTimer;
   bool _webFeedRefreshing = false;
   Object? eventUpdateError;
   bool retryingEvents = false;
@@ -174,7 +179,17 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
       if (_disposed) return;
       await _loadPreferences();
       if (_disposed) return;
-      if (nativeBridgeAvailable) _listenToNativeEvents();
+      unawaited(governmentAuth.restore());
+      if (nativeBridgeAvailable) {
+        _listenToNativeEvents();
+        unawaited(_syncQueuedCrowdReports());
+        _crowdUploadRetryTimer?.cancel();
+        _crowdUploadRetryTimer = Timer.periodic(const Duration(seconds: 30), (
+          _,
+        ) {
+          if (!_disposed) unawaited(_syncQueuedCrowdReports());
+        });
+      }
       _scheduleExpiryRefresh();
     } on Object catch (error) {
       loadError = error;
@@ -373,10 +388,19 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
     _eventUpdates.add(List<MeshEvent>.unmodifiable(persistedEvents));
     _scheduleExpiryRefresh();
     _notifyIfAlive();
+    if (nativeBridgeAvailable) unawaited(_syncQueuedCrowdReports());
     if (_isWeb && !nativeBridgeAvailable) {
       unawaited(_refreshWebGovernmentFeed());
     } else if (eventUpdateError != null) {
       unawaited(retryEventUpdates());
+    }
+  }
+
+  Future<void> _syncQueuedCrowdReports() async {
+    try {
+      await bridge.syncPendingCrowdReports();
+    } on Object {
+      // The queue remains local and will retry at the next interval or resume.
     }
   }
 
@@ -409,8 +433,10 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _expiryTimer?.cancel();
     _webFeedRefreshTimer?.cancel();
+    _crowdUploadRetryTimer?.cancel();
     _eventSubscription?.cancel();
     _eventUpdates.close();
+    governmentAuth.dispose();
     super.dispose();
   }
 

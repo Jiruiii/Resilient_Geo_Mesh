@@ -228,7 +228,7 @@ class FlutterMapBridge(
         scope.launch {
             when (val created = repository.createCrowdReport(input)) {
                 is CrowdReportResult.Created ->
-                    result.success(MapBridgeProtocol.crowdReportCreated(created.eventId, created.applyState.name))
+                    result.success(MapBridgeProtocol.crowdReportCreated(created.eventId, created.applyState.name, created.eventJson))
                 is CrowdReportResult.Invalid ->
                     result.error(INVALID_INPUT, created.errors.joinToString("; "), null)
                 is CrowdReportResult.SigningUnavailable ->

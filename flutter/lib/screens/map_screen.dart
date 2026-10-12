@@ -15,6 +15,7 @@ import '../data/corroboration.dart';
 import '../data/crowd_report_models.dart';
 import '../data/display_time.dart';
 import '../data/evacuation_models.dart';
+import '../data/government_api.dart';
 import '../data/location_controller.dart';
 import '../data/map_administrative.dart';
 import '../data/map_models.dart';
@@ -1404,7 +1405,11 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
         _reportSheetVisible = false;
         _reportStep = CrowdReportSheetStep.edit;
       });
-      _showMessage('警示已建立：未驗證／待同步');
+      _showMessage(
+        submission.deliveryState == 'UPLOADED'
+            ? '回報已上傳，尚未經查證，僅供參考'
+            : '回報已保存在本機，未經查證；連線後會重試上傳',
+      );
     } on Object catch (error) {
       if (!mounted) return;
       setState(() => _reportSubmitting = false);
@@ -1413,6 +1418,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   }
 
   String _reportErrorMessage(Object error) => switch (error) {
+    GovernmentApiException(:final message) => '回報已留在本機，但線上上傳未完成：$message',
     BridgeFailure(:final code) => switch (code) {
       BridgeFailureCode.unavailable => '此功能需要 Android App，Chrome 僅供地圖與資料預覽',
       BridgeFailureCode.signingUnavailable => '裝置安全簽署不可用，警示未送出',
