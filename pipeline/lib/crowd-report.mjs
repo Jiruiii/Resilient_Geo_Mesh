@@ -11,6 +11,26 @@ import {
   resolveDeviceKey,
 } from './device-key.mjs';
 import { bboxOfEvents } from './geo.mjs';
+import {
+  CROWD_HINT_KINDS,
+  CROWD_HINT_PRECISIONS,
+  CROWD_HINT_TEXT_MAX_CODE_POINTS,
+  CROWD_LOCATION_SOURCES,
+  TAIWAN_REPORT_BOUNDS,
+  coordinateErrors,
+  isoSeconds,
+  locationHintErrors,
+  roundCoordinate,
+} from './crowd-common.mjs';
+import { RESCUE_DATASET_ID, RESCUE_MANIFEST_ID, RESCUE_NAMESPACE } from './rescue-contract.mjs';
+
+export {
+  CROWD_HINT_KINDS,
+  CROWD_HINT_PRECISIONS,
+  CROWD_HINT_TEXT_MAX_CODE_POINTS,
+  CROWD_LOCATION_SOURCES,
+  TAIWAN_REPORT_BOUNDS,
+};
 
 /**
  * Crowd report events and their one-report-per-chunk mesh envelope.
@@ -38,41 +58,6 @@ export const CROWD_CATEGORY_SEVERITY = Object.freeze({
   TRAPPED_INJURED: 'CRITICAL',
   OTHER: 'LOW',
 });
-export const CROWD_LOCATION_SOURCES = Object.freeze(['CURRENT_LOCATION', 'MAP_PICK']);
-export const CROWD_HINT_KINDS = Object.freeze(['COUNTY', 'DISTRICT', 'VILLAGE', 'ROAD', 'FACILITY']);
-export const CROWD_HINT_PRECISIONS = Object.freeze(['AREA', 'ROAD', 'POINT']);
-export const CROWD_HINT_TEXT_MAX_CODE_POINTS = 80;
-
-/**
- * Taiwan including Penghu, Kinmen, Matsu, Green/Orchid Island and Pratas.
- * Reports outside it are rejected rather than relayed.
- */
-export const TAIWAN_REPORT_BOUNDS = Object.freeze([116.5, 20.5, 122.5, 26.8]);
-
-function roundCoordinate(value) {
-  return Number(value.toFixed(6));
-}
-
-function isoSeconds(date) {
-  return new Date(Math.floor(date.getTime() / 1000) * 1000).toISOString().replace('.000Z', 'Z');
-}
-
-function locationHintErrors(hint) {
-  if (hint === undefined || hint === null) return [];
-  if (typeof hint !== 'object' || Array.isArray(hint)) return ['location_hint must be an object'];
-  const errors = [];
-  if (hint.method !== 'ADDRESS') errors.push('location_hint.method must be ADDRESS');
-  if (!CROWD_HINT_KINDS.includes(hint.kind)) errors.push('location_hint.kind is invalid');
-  if (!CROWD_HINT_PRECISIONS.includes(hint.precision)) errors.push('location_hint.precision is invalid');
-  for (const field of ['query', 'label']) {
-    const value = hint[field];
-    if (typeof value !== 'string' || [...value].length > CROWD_HINT_TEXT_MAX_CODE_POINTS) {
-      errors.push(`location_hint.${field} must be a string of at most ${CROWD_HINT_TEXT_MAX_CODE_POINTS} characters`);
-    }
-  }
-  return errors;
-}
-
 export function crowdReportErrors({ category, description = '', lon, lat, locationSource, locationHint }) {
   const errors = locationHintErrors(locationHint);
   if (!(category in CROWD_CATEGORY_SEVERITY)) errors.push('category is not a known crowd report category');
@@ -82,12 +67,7 @@ export function crowdReportErrors({ category, description = '', lon, lat, locati
   } else if ([...description.trim()].length > CROWD_DESCRIPTION_MAX_CODE_POINTS) {
     errors.push(`description exceeds ${CROWD_DESCRIPTION_MAX_CODE_POINTS} characters`);
   }
-  if (typeof lon !== 'number' || typeof lat !== 'number' || !Number.isFinite(lon) || !Number.isFinite(lat)) {
-    errors.push('location must be finite numbers');
-  } else {
-    const [minLon, minLat, maxLon, maxLat] = TAIWAN_REPORT_BOUNDS;
-    if (lon < minLon || lon > maxLon || lat < minLat || lat > maxLat) errors.push('location is outside the supported area');
-  }
+  errors.push(...coordinateErrors(lon, lat));
   return errors;
 }
 
@@ -153,23 +133,39 @@ function priorityForSeverity(severity) {
   return severity === 'CRITICAL' || severity === 'HIGH' ? 'HIGH' : 'NORMAL';
 }
 
+export const CROWD_CHUNK_PROFILES = Object.freeze({
+  [CROWD_DATASET_ID]: Object.freeze({ manifestId: CROWD_MANIFEST_ID, chunkPrefix: 'crowd:', theme: 'report' }),
+  [RESCUE_DATASET_ID]: Object.freeze({ manifestId: RESCUE_MANIFEST_ID, chunkPrefix: 'crowd-rescue:', theme: 'rescue' }),
+});
+
+function datasetIdForNamespace(namespace) {
+  return namespace === RESCUE_NAMESPACE ? RESCUE_DATASET_ID : CROWD_DATASET_ID;
+}
+
+function namespaceFitsDataset(datasetId, namespace) {
+  if (!isCrowdNamespace(namespace)) return false;
+  return datasetId === RESCUE_DATASET_ID ? namespace === RESCUE_NAMESPACE : namespace !== RESCUE_NAMESPACE;
+}
+
 /**
  * Wraps one device-signed report into a chunk-v0 signed by the same device key.
  * Relays forward the chunk unchanged, so the original reporter stays traceable.
  */
 export function buildCrowdChunk(event, privateKey) {
+  const datasetId = datasetIdForNamespace(event.namespace);
+  const profile = CROWD_CHUNK_PROFILES[datasetId];
   const content = {
     schema_version: 'chunk-v0',
-    chunk_id: `crowd:${event.event_id}`,
-    manifest_id: CROWD_MANIFEST_ID,
+    chunk_id: `${profile.chunkPrefix}${event.event_id}`,
+    manifest_id: profile.manifestId,
     manifest_hash: event.payload_hash,
-    dataset_id: CROWD_DATASET_ID,
+    dataset_id: datasetId,
     namespace: event.namespace,
     dataset_version: 1,
     sequence: 0,
     priority: priorityForSeverity(event.severity),
     area_id: 'crowd',
-    theme: 'report',
+    theme: profile.theme,
     bbox: bboxOfEvents([event]),
     created_at: event.issued_at,
     content_type: 'application/json',
@@ -191,7 +187,8 @@ function invalid(stage, error) {
 /** Verifies a crowd chunk without any bundled trust entry. Mirrors `CrowdChunkCodec.verify`. */
 export function verifyCrowdChunk(chunk, options = {}) {
   if (validateChunkShape(chunk).length > 0) return invalid('schema', 'crowd_chunk_shape_invalid');
-  if (chunk?.dataset_id !== CROWD_DATASET_ID || !isCrowdNamespace(chunk?.namespace)) {
+  const profile = CROWD_CHUNK_PROFILES[chunk?.dataset_id];
+  if (!profile || !namespaceFitsDataset(chunk.dataset_id, chunk?.namespace)) {
     return invalid('binding', 'not_a_crowd_chunk');
   }
   if (!Array.isArray(chunk.events) || chunk.events.length !== 1 || chunk.event_count !== 1) {
@@ -199,8 +196,8 @@ export function verifyCrowdChunk(chunk, options = {}) {
   }
   const [event] = chunk.events;
   if (validateEventShape(event).length > 0) return invalid('event', 'crowd_event_shape_invalid');
-  if (chunk.chunk_id !== `crowd:${event.event_id}`
-    || chunk.manifest_id !== CROWD_MANIFEST_ID
+  if (chunk.chunk_id !== `${profile.chunkPrefix}${event.event_id}`
+    || chunk.manifest_id !== profile.manifestId
     || chunk.manifest_hash !== event.payload_hash
     || chunk.dataset_version !== 1
     || chunk.namespace !== event.namespace) {
