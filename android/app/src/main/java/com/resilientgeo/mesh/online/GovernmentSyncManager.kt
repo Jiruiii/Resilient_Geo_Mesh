@@ -68,25 +68,34 @@ class GovernmentSyncManager private constructor(context: Context) {
             syncing = true
             prefs.edit().putString("attempt", Instant.now().toString()).putLong("attempt_millis", System.currentTimeMillis()).commit()
             try {
-                val repository = MeshRepository(context)
-                repository.purgeUnsupportedOfficialEventData()
-                val trust = TrustedKeyStore.fromJson(context.assets.open("trust/trusted-keys.json").bufferedReader().use { it.readText() })
-                val downloadAll = prefs.getString("area", "all") == "all"
-                val sync = GovernmentFeedSync(trust, { GovernmentFeedSync.download(it) },
-                    { dataset, namespace, id -> repository.cachedChunkJson(dataset, namespace, id) },
-                    { chunk -> repository.ingestChunk(chunk) is ChunkIngestResult.Applied }, includeArea = { area ->
-                        downloadAll || area.startsWith("tw.630") || area.startsWith("tw.650") ||
-                            area in setOf("tw", "tw.unknown")
-                    })
-                val result = sync.sync(url, FeedCursor(prefs.getLong("revision", 0), prefs.getString("hash", "").orEmpty()), debug)
-                check(prefs.edit().putLong("revision", result.cursor.revision).putString("hash", result.cursor.hash)
-                    .putString("success", Instant.now().toString()).remove("error")
-                    .putInt("downloaded", result.downloaded).putString("sources", result.feed.getJSONArray("sources").toString()).commit())
-            } catch (error: Exception) {
-                if (error is kotlinx.coroutines.CancellationException) throw error
-                // Do not expose arbitrary URLs or raw server bodies in the product.
-                prefs.edit().putString("error", if (error is IllegalArgumentException)
-                    "資料驗證未通過或網址設定不正確；保留上次資料。" else "暫時無法取得更新；離線資料與附近轉傳仍可使用。").commit()
+                try {
+                    val repository = MeshRepository(context)
+                    repository.purgeUnsupportedOfficialEventData()
+                    val trust = TrustedKeyStore.fromJson(context.assets.open("trust/trusted-keys.json").bufferedReader().use { it.readText() })
+                    val downloadAll = prefs.getString("area", "all") == "all"
+                    val sync = GovernmentFeedSync(trust, { GovernmentFeedSync.download(it) },
+                        { dataset, namespace, id -> repository.cachedChunkJson(dataset, namespace, id) },
+                        { chunk -> repository.ingestChunk(chunk) is ChunkIngestResult.Applied }, includeArea = { area ->
+                            downloadAll || area.startsWith("tw.630") || area.startsWith("tw.650") ||
+                                area in setOf("tw", "tw.unknown")
+                        })
+                    val result = sync.sync(url, FeedCursor(prefs.getLong("revision", 0), prefs.getString("hash", "").orEmpty()), debug)
+                    check(prefs.edit().putLong("revision", result.cursor.revision).putString("hash", result.cursor.hash)
+                        .putString("success", Instant.now().toString()).remove("error")
+                        .putInt("downloaded", result.downloaded).putString("sources", result.feed.getJSONArray("sources").toString()).commit())
+                } catch (error: Exception) {
+                    if (error is kotlinx.coroutines.CancellationException) throw error
+                    // Do not expose arbitrary URLs or raw server bodies in the product.
+                    prefs.edit().putString("error", if (error is IllegalArgumentException)
+                        "資料驗證未通過或網址設定不正確；保留上次資料。" else "暫時無法取得更新；離線資料與附近轉傳仍可使用。").commit()
+                }
+                // Independent of the feed outcome above: a rescue chunk should still
+                // reach the server even when the government feed itself failed.
+                runCatching {
+                    val repository = MeshRepository(context)
+                    RescueServerSync(UrlConnectionRescueHttp, SharedPreferencesRescueUploadStates(context))
+                        .upload(url, repository.ownRescueChunks())
+                }
             } finally { syncing = false }
             message()
         }

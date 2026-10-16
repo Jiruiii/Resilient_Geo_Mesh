@@ -56,13 +56,13 @@ final class _WebSirenPlatform implements SirenPlatform {
   }
 
   @override
-  Future<SirenStatus> start() => _call(_start);
+  Future<SirenStatus> start() => _call(() => _start());
 
   @override
-  Future<SirenStatus> stop() => _call(_stop);
+  Future<SirenStatus> stop() => _call(() => _stop());
 
   @override
-  Future<SirenStatus> current() => _call(_status);
+  Future<SirenStatus> current() => _call(() => _status());
 
   @override
   Future<String> notificationPermission() async => 'not_required';

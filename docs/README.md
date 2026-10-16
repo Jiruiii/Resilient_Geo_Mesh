@@ -21,6 +21,7 @@
 | Android 建置與 Flutter 操作 | [Android README](../android/README.md)、[Flutter README](../flutter/README.md) |
 | 地圖、搜尋與路網重建 | [地圖工具 README](../tools/maps/README.md) |
 | 事件、簽章與同步契約 | [資料契約](data-contract-v0.md)、[Peer Sync 協定](peer-sync-v0.md) |
+| 需要救援／求救點設計與實作計畫 | [求救點規格](superpowers/specs/2026-10-12-rescue-request-design.md)、[實作計畫](superpowers/plans/2026-10-12-rescue-request/README.md) |
 | 前端資料整合與資料來源 | [前端整合](frontend-real-data-integration.md)、[來源盤點](neihu-online-data-sources.md) |
 | 模擬器、報告與資料集 | [Simulator README](../simulator/README.md)、[實驗 README](../experiments/README.md)、[資料 README](../data/README.md)、[Fixture README](../fixtures/README.md) |
 | 已知限制 | [限制聲明](../experiments/limitations.md) |

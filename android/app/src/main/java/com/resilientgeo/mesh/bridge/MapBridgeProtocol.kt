@@ -120,10 +120,11 @@ object MapBridgeProtocol {
 
     fun rescueAction(value: Any?): RescueAction? = RescueAction.entries.firstOrNull { it.name == value }
 
-    fun rescueSaved(entity: EventEntity, serverState: String = "NOT_UPLOADED"): Map<String, Any?> = mapOf(
+    fun rescueSaved(entity: EventEntity, serverState: String = "NOT_UPLOADED", serverReason: String? = null): Map<String, Any?> = mapOf(
         "request" to EventPayloadMapper.toMessage(entity),
         "delivery_state" to "PENDING",
         "server_state" to serverState,
+        "server_reason" to serverReason,
     )
 
     /** `calculateEvacuationRoute` arguments, or null when they are not the contract's shape. */

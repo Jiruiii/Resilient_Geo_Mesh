@@ -1,10 +1,15 @@
 package com.resilientgeo.mesh.bridge
 
 import android.content.Context
+import com.resilientgeo.mesh.data.ChunkIngestResult
 import com.resilientgeo.mesh.data.CrowdReportResult
 import com.resilientgeo.mesh.data.MeshRepository
 import com.resilientgeo.mesh.data.RescueResult
 import com.resilientgeo.mesh.online.GovernmentSyncManager
+import com.resilientgeo.mesh.online.RescueServerSync
+import com.resilientgeo.mesh.online.RescueUploadStates
+import com.resilientgeo.mesh.online.SharedPreferencesRescueUploadStates
+import com.resilientgeo.mesh.online.UrlConnectionRescueHttp
 import com.resilientgeo.mesh.routing.EvacuationRouteService
 import com.resilientgeo.mesh.routing.RouteResult
 import com.resilientgeo.mesh.routing.RouteStatus
@@ -61,6 +66,8 @@ class FlutterMapBridge(
             repository.verifiedShelterDisasterCatalog(governmentSync.message()["url"] as? String)
         },
     ),
+    private val rescueUploadStates: RescueUploadStates = SharedPreferencesRescueUploadStates(context),
+    private val rescueSync: RescueServerSync = RescueServerSync(UrlConnectionRescueHttp, rescueUploadStates),
 ) : MethodChannel.MethodCallHandler, EventChannel.StreamHandler {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -123,6 +130,7 @@ class FlutterMapBridge(
             METHOD_SUBMIT_RESCUE_REQUEST -> submitRescueRequest(call, result)
             METHOD_REVISE_RESCUE_REQUEST -> reviseRescueRequest(call, result)
             METHOD_GET_OWN_RESCUE_REQUESTS -> getOwnRescueRequests(result)
+            "syncRescueNearby" -> syncRescueNearby(call, result)
             METHOD_CALCULATE_EVACUATION_ROUTE -> calculateEvacuationRoute(call, result)
             else -> result.notImplemented()
         }
@@ -273,7 +281,10 @@ class FlutterMapBridge(
         scope.launch {
             try {
                 val rows = repository.ownRescueRequests()
-                result.success(mapOf("requests" to rows.map { MapBridgeProtocol.rescueSaved(it) }))
+                result.success(mapOf("requests" to rows.map { row ->
+                    val state = rescueUploadStates.get(row.eventId)?.takeIf { it.version == row.eventVersion }
+                    MapBridgeProtocol.rescueSaved(row, state?.state ?: "NOT_UPLOADED", state?.reason)
+                }))
             } catch (error: Throwable) {
                 result.error(METHOD_ERROR, error.message, null)
             }
@@ -282,13 +293,47 @@ class FlutterMapBridge(
 
     private fun replyRescue(outcome: RescueResult, result: MethodChannel.Result) {
         when (outcome) {
-            is RescueResult.Saved -> result.success(MapBridgeProtocol.rescueSaved(outcome.event))
+            is RescueResult.Saved -> {
+                result.success(MapBridgeProtocol.rescueSaved(outcome.event))
+                scope.launch { uploadOwnRescue() }
+            }
             is RescueResult.Invalid -> result.error(INVALID_INPUT, outcome.errors.joinToString("; "), null)
             is RescueResult.Conflict -> result.error(CONFLICT, outcome.reason, null)
             is RescueResult.RateLimited ->
                 result.error(RATE_LIMITED, "rescue revision cooldown", mapOf("retry_after_seconds" to outcome.retryAfterSeconds))
             is RescueResult.SigningUnavailable -> result.error(SIGNING_UNAVAILABLE, outcome.message, null)
             is RescueResult.StorageUnavailable -> result.error(STORAGE_UNAVAILABLE, outcome.message, null)
+        }
+    }
+
+    private suspend fun uploadOwnRescue() {
+        val base = governmentSync.message()["url"] as? String
+        if (base.isNullOrBlank()) return
+        runCatching { rescueSync.upload(base, repository.ownRescueChunks()) }
+    }
+
+    private fun syncRescueNearby(call: MethodCall, result: MethodChannel.Result) {
+        val bbox = ((call.arguments as? Map<*, *>)?.get("bbox") as? List<*>)?.mapNotNull { (it as? Number)?.toDouble() }
+        if (bbox == null || bbox.size != 4) {
+            result.error(INVALID_INPUT, "syncRescueNearby requires bbox", null)
+            return
+        }
+        val base = governmentSync.message()["url"] as? String
+        if (base.isNullOrBlank()) {
+            result.error("server_unavailable", "rescue server is not configured", null)
+            return
+        }
+        scope.launch {
+            try {
+                uploadOwnRescue()
+                val downloaded = withContext(Dispatchers.IO) {
+                    rescueSync.download(base, bbox) { chunk -> repository.ingestChunk(chunk) is ChunkIngestResult.Applied }
+                }
+                result.success(mapOf("downloaded" to downloaded))
+            } catch (error: Exception) {
+                // Offline is normal; never forward raw server bodies or URLs.
+                result.error("server_unavailable", "rescue sync unavailable", null)
+            }
         }
     }
 

@@ -700,6 +700,17 @@ class MeshRepository(
             .filter { JSONObject(it.eventJson).optString("signing_key_id") == keyId }
     }
 
+    /** Cached crowd-rescue chunk of the latest version of each of this device's requests. */
+    suspend fun ownRescueChunks(): List<JSONObject> = withContext(Dispatchers.IO) {
+        ownRescueRequests().mapNotNull { entity ->
+            cachedChunkJson(
+                RescueContract.DATASET_ID,
+                RescueContract.NAMESPACE,
+                CrowdChunkCodec.chunkIdFor(entity.eventId, RescueContract.NAMESPACE),
+            )
+        }
+    }
+
     /**
      * Creates and stores this device's rescue request through the same
      * EventIngestor path a peer's request takes. At most one ACTIVE request

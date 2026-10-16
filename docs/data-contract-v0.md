@@ -56,6 +56,7 @@ Chunk 的 `chunk_hash` 覆蓋 canonical chunk content（dataset metadata、prior
   - 其他 key id：維持原本規則，只接受內建信任清單中的金鑰。`device:` 金鑰永遠走不到這條路，所以加入群眾回報**不會**放寬 `official.*` 的信任規則；兩端都有反向測試釘住「裝置金鑰簽的 `official.*` 必須在 trust 階段被拒」。
 - `signing_key_id` 以 `device:` 開頭但缺少 `signer_public_key`，在 schema 階段就被拒（`event-v0.schema.json` 以 `if/then` 表達）。
 - 既有以內建 demo 金鑰簽章的 `crowd.*` fixture（`data/fixtures/neihu`、Android `signed-events.json`）仍然有效：規則以「金鑰種類」而不是 namespace 觸發，避免改寫所有既有 fixture。
+- 同一 `(namespace, event_id)` 的較新版本必須由相同 `signing_key_id` 簽署，否則以 `signer_mismatch` 拒收；既有回報永遠是 v1，不受影響。
 
 **裝置簽章證明什麼：** 內容從簽章後沒有被竄改；所有帶同一個 `device:` key id 的回報出自同一台裝置。**不證明什麼：** 回報內容屬實、回報者身分、或不同 key id 背後是不同的人。因此 crowd 事件一律以 `UNVERIFIED` 儲存與顯示，路線規劃也只把它當成加權、不當成封鎖。
 
@@ -72,6 +73,19 @@ Chunk 的 `chunk_hash` 覆蓋 canonical chunk content（dataset metadata、prior
 | `provenance.transport_source.kind` | `local_report`（新增的 enum 值；轉傳時不改寫，因為 provenance 不在簽章範圍） |
 
 座標必須落在台灣含離島的範圍（經度 116.5–122.5、緯度 20.5–26.8）。每台裝置同時最多 20 筆有效的自己的回報。
+
+## 求救事件（crowd.rescue）
+
+求救（「需要救援」）沿用群眾回報的裝置自我證明簽章，但是獨立的 namespace 與生命週期，不是 `crowd.reports` 的子類：
+
+1. **識別**：`namespace = crowd.rescue`、`event_type = RESCUE_REQUEST`、`source = CROWD`、`source_version = rescue-request-v0`。`event_id` 格式為 `rescue:<32 碼 hex 指紋>:<小寫 UUID>`，指紋必須等於 `signing_key_id` 去掉 `device:` 前綴；兩者不一致時以 `rescue_event_id_unbound` 拒收。
+2. **attributes**：僅允許 `request_type`（`FIRST_AID_NEEDED`／`IMMOBILE`／`TRAPPED`／`TRAPPED_DEBRIS`／`OTHER_RESCUE`）、`status`（`ACTIVE`／`RESOLVED`／`CANCELLED`）、`subject`（`SELF`／`OTHERS`；`SELF` 時 `triage.conscious` 必須是 `YES`）、`people_count`（整數 1–50）、`triage`（`immobile`／`breathing_difficulty`／`severe_bleeding`／`conscious`，值 `YES`／`NO`／`UNKNOWN`）、`description`（trim 後 ≤160 code points）、`location_source`、`location_hint`、`first_issued_at`、`area_id`、`theme`；出現清單以外的鍵以 `rescue_attributes_unknown` 拒收。
+3. **urgency 推導**（`severity` 欄位即 urgency，人數不影響）：`request_type = TRAPPED_DEBRIS` → `CRITICAL`；`breathing_difficulty = YES` 或 `severe_bleeding = YES` 或 `conscious = NO` → `CRITICAL`；`request_type` 為 `TRAPPED`／`IMMOBILE` 或 `immobile = YES` → `HIGH`；其餘 → `MEDIUM`。求救沒有 `LOW`，與 `crowd.reports` 不同。
+4. **TTL／延長**：`0 < expires_at - issued_at ≤ 6` 小時；延長後 `expires_at = min(now + 6h, first_issued_at + 72h)`；`expires_at ≤ first_issued_at + 72h`；`first_issued_at ≤ issued_at`；v1 時兩者相等，之後的修訂版本不可再變動 `first_issued_at`。超過上限分別以 `rescue_ttl_too_long`／`rescue_lifetime_exceeded`／`rescue_first_issued_changed` 拒收。
+5. **驗證階段**：schema → trust → integrity → signature → **contract**（`crowd.rescue` 專屬檢查，錯誤 `stage` 固定為 `contract`）。常見錯誤代碼：`rescue_field_invalid:<欄位>`、`rescue_geometry_invalid`、`rescue_identity_invalid`、`rescue_event_id_unbound`、`rescue_attributes_unknown`、`rescue_severity_mismatch`、`rescue_version_too_high`、`rescue_time_invalid`、`rescue_ttl_too_long`、`rescue_lifetime_exceeded`、`rescue_terminal`、`rescue_terminal_expiry_changed`、`rescue_first_issued_changed`。
+6. **套用規則**：同一 `(namespace, event_id)` 的任何 `crowd.*`（含 `crowd.reports` 與 `crowd.rescue`）新版本都必須由相同 `signing_key_id` 簽署，否則以 `signer_mismatch` 拒收（見下節）。`crowd.rescue` 終態（`RESOLVED`／`CANCELLED`）之後不接受任何新版本（`rescue_terminal`）；終態沿用前一版 `expires_at`，若新版本改動則以 `rescue_terminal_expiry_changed` 拒收；`first_issued_at` 一旦寫入即不可變；`event_version` 上限 200（`rescue_version_too_high`）。
+7. **轉傳單位**：上傳、儲存、下載與 mesh 轉傳的單位一律是「原裝置簽章的 crowd-rescue chunk」；`dataset_id = crowd-rescue`、`manifest_id = crowd-rescue:none`、`chunk_id = crowd-rescue:<event_id>`、`area_id = crowd`、`theme = rescue`。伺服器與中繼節點都原樣保存與轉發，不重簽、不改寫。
+8. **三端實作與共用 fixture**：JS `pipeline/lib/rescue-contract.mjs`、`pipeline/lib/rescue-request.mjs`；Android `trust/RescueContract.kt`、`report/RescueRequestFactory.kt`；Web `flutter/web/rescue_outbox.js`；三端位元相同的輸出由 `fixtures/rescue-requests-v0.json` 鎖定。
 
 ## 官方查證事件（official.verified）
 
