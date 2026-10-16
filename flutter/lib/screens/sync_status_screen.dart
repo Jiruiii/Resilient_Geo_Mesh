@@ -95,6 +95,27 @@ class _SyncStatusScreenState extends State<SyncStatusScreen>
     super.dispose();
   }
 
+  Future<void> _discoveryAction({String? mode}) async {
+    if (_changing) return;
+    setState(() => _changing = true);
+    try {
+      final status =
+          mode == null
+              ? await widget.bridge.searchPeersNow()
+              : await widget.bridge.setDiscoveryMode(mode);
+      if (mounted) {
+        setState(() {
+          _status = status;
+          _error = null;
+        });
+      }
+    } catch (error) {
+      if (mounted) setState(() => _error = error);
+    } finally {
+      if (mounted) setState(() => _changing = false);
+    }
+  }
+
   String _time(DateTime? value) {
     if (value == null) return '尚無紀錄';
     final local = value.toLocal();
@@ -194,6 +215,7 @@ class _SyncStatusScreenState extends State<SyncStatusScreen>
                       Padding(
                         padding: const EdgeInsets.all(16),
                         child: DropdownButtonFormField<String>(
+                          key: const ValueKey('sync-transport'),
                           value: status.transport,
                           decoration: const InputDecoration(labelText: '傳輸方式'),
                           items: const [
@@ -224,6 +246,57 @@ class _SyncStatusScreenState extends State<SyncStatusScreen>
                       ),
                     ],
                   ),
+                  if (status.usesWifiDirect)
+                    Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          DropdownButtonFormField<String>(
+                            key: const ValueKey('discovery-mode'),
+                            value: status.discoveryMode,
+                            decoration: const InputDecoration(
+                              labelText: '搜尋模式',
+                            ),
+                            items: const [
+                              DropdownMenuItem(
+                                value: 'balanced',
+                                child: Text('持續搜尋'),
+                              ),
+                              DropdownMenuItem(
+                                value: 'adaptive',
+                                child: Text('自適應間歇搜尋（實驗）'),
+                              ),
+                            ],
+                            onChanged:
+                                _changing ||
+                                        _error != null ||
+                                        status.emergencyModeEnabled
+                                    ? null
+                                    : (value) {
+                                      if (value != null) {
+                                        _discoveryAction(mode: value);
+                                      }
+                                    },
+                          ),
+                          const SizedBox(height: 8),
+                          const Text(
+                            '間歇模式在持續找不到節點時暫停搜尋，可能錯過短暫相遇；節電幅度仍待實測。切換模式前請先關閉緊急模式。',
+                          ),
+                          OutlinedButton.icon(
+                            onPressed:
+                                _changing ||
+                                        _error != null ||
+                                        !status.serviceRunning ||
+                                        !status.emergencyModeEnabled
+                                    ? null
+                                    : () => _discoveryAction(),
+                            icon: const Icon(Icons.search),
+                            label: const Text('立即搜尋'),
+                          ),
+                        ],
+                      ),
+                    ),
                   Padding(
                     padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
                     child: Text(

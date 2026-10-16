@@ -14,6 +14,12 @@ import com.google.android.gms.common.ConnectionResult
 
 class MeshTransportSettings(private val context: Context) {
     private val preferences = context.getSharedPreferences("emergency_mode", Context.MODE_PRIVATE)
+    var discoveryMode: String
+        get() = preferences.getString("discovery_mode", "balanced") ?: "balanced"
+        set(value) {
+            require(value in setOf("balanced", "adaptive"))
+            preferences.edit().putString("discovery_mode", value).apply()
+        }
     var mode: String
         // Old manual choices migrate to automatic; explicit diagnostic overrides use a new key.
         get() = preferences.getString("transport_v2", AUTO) ?: AUTO

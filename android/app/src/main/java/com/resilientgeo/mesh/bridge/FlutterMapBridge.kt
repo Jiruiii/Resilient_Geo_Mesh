@@ -94,6 +94,20 @@ class FlutterMapBridge(
         when (call.method) {
             METHOD_GET_INITIAL_STATE -> getInitialState(result)
             "getSyncStatus" -> result.success(syncStatus.message())
+            "setDiscoveryMode" -> {
+                val mode = (call.arguments as? Map<*, *>)?.get("mode") as? String
+                if (mode !in listOf("balanced", "adaptive")) result.error(INVALID_ARGUMENTS, "Unknown discovery mode", null)
+                else if (emergencyMode.isEnabled) result.error(METHOD_ERROR, "請先關閉緊急模式再切換搜尋模式", null)
+                else { transportSettings.discoveryMode = mode!!; result.success(syncStatus.message()) }
+            }
+            "searchPeersNow" -> {
+                if (!emergencyMode.isEnabled || transportSettings.mode != "wifi_direct" || syncStatus.message()["service_running"] != true)
+                    result.error(METHOD_ERROR, "請先開啟 Wi-Fi Direct 緊急模式", null)
+                else {
+                    com.resilientgeo.mesh.transport.WifiDiscoveryControl.requests.incrementAndGet()
+                    result.success(syncStatus.message())
+                }
+            }
             "setSyncTransport" -> {
                 val mode = (call.arguments as? Map<*, *>)?.get("transport") as? String
                 if (mode !in MeshTransportSettings.MODES) {

@@ -45,6 +45,8 @@ class SyncStatusStore(context: Context) {
             "nearby_available" to transport.nearbyAvailable(),
             "nearby_permissions_granted" to transport.nearbyGranted(),
             "nearby_ready" to transport.nearbyReady(),
+            "discovery_mode" to transport.discoveryMode,
+            "discovery_resting" to (discovery && com.resilientgeo.mesh.transport.WifiDiscoveryControl.resting),
             "wifi_direct_available" to transport.wifiAvailable(),
             "wifi_enabled" to transport.wifiEnabled(),
             "wifi_permissions_granted" to transport.wifiGranted(),
