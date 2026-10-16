@@ -130,8 +130,8 @@ Samsung SM-A536（Android 16）為 A，Pixel 8a（Android 17）為 B；兩台以
 
 操作注意：
 
-- 同步進行中，「A：載入發布資料」與「B：只準備接收」為停用狀態。重新發布後，A 須先「停止演練同步」，再載入新版，最後重新開始同步；同步中點載入不會有任何作用，B 會一直回報 `already in sync`。
-- Android 17（API 37）需額外授予 `ACCESS_LOCAL_NETWORK`，否則按下開始會顯示「請先在一般 App 授予 Wi-Fi 權限…」。權限可用 `adb shell pm grant com.resilientgeo.mesh android.permission.ACCESS_LOCAL_NETWORK`。
+- 同步進行中，「A：載入發布資料」與「B：只準備接收」為停用狀態。重新發布後，A 須先「停止演練同步」，再載入新版，最後重新開始同步；同步中點載入不會有任何作用，B 會一直回報 `already in sync`。畫面現在會在同步中顯示這個提示（單元測試通過，尚未重新在手機上確認）。
+- Android 17（API 37）需額外授予 `ACCESS_LOCAL_NETWORK`（詳見 `wifi-direct.md`）。舊版此時只顯示籠統的「請授予 Wi-Fi 權限」；現在會逐項指出缺少哪一項，例如「無法開始：缺少權限：區域網路（Android 17）」（單元測試通過，尚未重新在手機上確認）。權限可用 `adb shell pm grant com.resilientgeo.mesh android.permission.ACCESS_LOCAL_NETWORK`。
 - 已簽章的 debug APK 與裝置上既有安裝簽章不同時（`INSTALL_FAILED_UPDATE_INCOMPATIBLE`）須先解除安裝，會清除該機 App 本機資料。
 - 本次未驗收：1 分鐘 TTL 到期重算、鎖屏與 Doze、實際放電對照、距離與牆面、三節點以上。先前版本的離線 Wi-Fi Direct 證據仍保留於 `wifi-direct.md`。
 

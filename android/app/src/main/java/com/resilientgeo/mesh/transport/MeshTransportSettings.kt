@@ -64,6 +64,11 @@ class MeshTransportSettings(private val context: Context) {
         ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
     }
     fun wifiReady() = wifiAvailable() && wifiEnabled() && wifiGranted() && locationEnabled()
+    /** Human-readable reason Wi-Fi Direct cannot start, or null when it is ready. */
+    fun wifiNotReadyMessage(): String? = WifiReadiness.message(WifiReadiness.problems(
+        wifiAvailable(), wifiEnabled(), locationEnabled(),
+        wifiPermissions().filter { ContextCompat.checkSelfPermission(context, it) != PackageManager.PERMISSION_GRANTED },
+    ))
 
     companion object {
         const val AUTO = "auto"

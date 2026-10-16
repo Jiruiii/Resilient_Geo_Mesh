@@ -89,7 +89,7 @@ class MeshDrillActivity : FlutterFragmentActivity() {
                         "start" -> {
                             check(repository != null) { "請先準備演練角色" }
                             check(SyncStatusStore(applicationContext).message()["service_running"] != true) { "請先關閉一般 App 的緊急模式" }
-                            check(MeshTransportSettings(applicationContext).wifiReady()) { "請先在一般 App 授予 Wi-Fi 權限，並開啟 Wi-Fi 與定位服務" }
+                            MeshTransportSettings(applicationContext).wifiNotReadyMessage()?.let { error("$it。請先在一般 App 授予權限並開啟 Wi-Fi 與定位服務") }
                             if (engine == null) {
                                 val repo = repository!!
                                 val transport = WifiDirectTransport(applicationContext, "resilientgeo-drill")

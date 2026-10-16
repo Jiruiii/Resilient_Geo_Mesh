@@ -7,6 +7,11 @@ import '../data/location_controller.dart';
 import '../screens/map_screen.dart';
 import '../theme/app_theme.dart';
 
+/// Load buttons are disabled while a sync is running; say why instead of
+/// leaving them silently dead.
+String? drillRunningHint({required bool running}) =>
+    running ? '同步進行中，無法載入或準備資料。要載入新版請先按「停止演練同步」，載入後再重新開始。' : null;
+
 void runMeshDrillApp() =>
     runApp(MaterialApp(theme: AppTheme.light(), home: const MeshDrillScreen()));
 const _channel = MethodChannel('com.resilientgeo.mesh/drill');
@@ -132,6 +137,11 @@ class _MeshDrillScreenState extends State<MeshDrillScreen> {
                 ),
               ],
             ),
+            if (drillRunningHint(running: running) case final hint?)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: Text(hint, style: const TextStyle(color: Color(0xFF8A5A00))),
+              ),
             Text(
               '本機事件 ${_status['events'] ?? 0} 筆 · 本輪接收 ${_status['received'] ?? 0} 片',
             ),
