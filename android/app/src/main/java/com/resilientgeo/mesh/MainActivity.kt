@@ -10,6 +10,7 @@ import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import com.resilientgeo.mesh.bridge.FlutterMapBridge
 import com.resilientgeo.mesh.bridge.OfflineMapAssetBridge
 import com.resilientgeo.mesh.bridge.SharedPreferencesEmergencyModeState
+import com.resilientgeo.mesh.bridge.SirenBridge
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import androidx.lifecycle.lifecycleScope
@@ -31,6 +32,7 @@ class MainActivity : FlutterFragmentActivity() {
 
     private var mapBridge: FlutterMapBridge? = null
     private var offlineMapAssetBridge: OfflineMapAssetBridge? = null
+    private var sirenBridge: SirenBridge? = null
     private var governmentCheck: Job? = null
 
     override fun onResume() {
@@ -88,6 +90,12 @@ class MainActivity : FlutterFragmentActivity() {
             applicationContext,
             flutterEngine.dartExecutor.binaryMessenger,
         )
+        sirenBridge?.close()
+        sirenBridge = SirenBridge(
+            applicationContext,
+            flutterEngine.dartExecutor.binaryMessenger,
+            requestNotificationPermission = ::requestNotificationPermissionIfNeeded,
+        )
     }
 
     override fun onDestroy() {
@@ -95,6 +103,8 @@ class MainActivity : FlutterFragmentActivity() {
         mapBridge = null
         offlineMapAssetBridge?.close()
         offlineMapAssetBridge = null
+        sirenBridge?.close()
+        sirenBridge = null
         super.onDestroy()
     }
 

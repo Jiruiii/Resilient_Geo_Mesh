@@ -16,7 +16,8 @@ class FeatureDetailsSheet extends StatelessWidget {
     this.onPlanEvacuationRoute,
   }) : _feature = feature,
        _event = null,
-       corroboration = null;
+       corroboration = null,
+       confirmedEarlierVersion = false;
 
   const FeatureDetailsSheet.event({
     super.key,

@@ -14,7 +14,7 @@ import 'support/fake_rescue_service.dart';
 
 void main() {
   testWidgets('submits a TRAPPED_DEBRIS request and shows the active card', (tester) async {
-    final service = FakeRescueService();
+    final service = FakeRescueService()..submitResult = _activeFakeSession();
     await tester.pumpWidget(_app(service));
     await _finishLoad(tester);
 
@@ -51,7 +51,7 @@ void main() {
   });
 
   testWidgets('an ACTIVE request is restored on start and can be marked safe', (tester) async {
-    final service = FakeRescueService()..initialSessions = <RescueSession>[fakeSession()];
+    final service = FakeRescueService()..initialSessions = <RescueSession>[_activeFakeSession()];
     await tester.pumpWidget(_app(service));
     await _finishLoad(tester);
     expect(find.byKey(const ValueKey<String>('rescue-status-card')), findsOneWidget);
@@ -88,6 +88,18 @@ void main() {
     service.pendingSubmit!.complete(fakeSession());
     await tester.pump();
   });
+}
+
+/// [fakeSession]'s default timestamps are fixed to 2026-10-12; [MapScreen]
+/// builds its [RescueFlowController] with the real wall clock (no injected
+/// clock seam for widget tests), so these widget tests need a session that
+/// stays ACTIVE whenever the suite actually runs.
+RescueSession _activeFakeSession() {
+  final now = DateTime.now().toUtc();
+  return fakeSession(
+    issuedAt: now.subtract(const Duration(hours: 1)).toIso8601String(),
+    expiresAt: now.add(const Duration(hours: 5)).toIso8601String(),
+  );
 }
 
 Future<void> _openAndConfirm(WidgetTester tester) async {

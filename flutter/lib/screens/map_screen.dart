@@ -27,7 +27,6 @@ import '../data/map_search_asset.dart';
 import '../data/ncdr_map_filter.dart';
 import '../data/offline_address_pack_store.dart';
 import '../data/offline_map_asset_store.dart';
-import '../data/rescue_request_models.dart';
 import '../data/rescue_service.dart';
 import '../widgets/feature_details_sheet.dart';
 import '../widgets/crowd_report_sheet.dart';
@@ -1451,8 +1450,25 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     ));
   }
 
-  // TODO(06 Task 26): replace with the real locator-siren entry point.
-  void _openSirenOnly() => _showMessage('定位警報聲尚未啟用');
+  void _openSirenOnly() {
+    final builder = widget.sirenPanelBuilder;
+    if (builder == null) {
+      _showMessage('此環境不支援播放警報聲');
+      return;
+    }
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: PointerInterceptor(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+            child: builder(context, _rescue),
+          ),
+        ),
+      ),
+    );
+  }
 
   void _onReportAddressChanged(String value) {
     _reportSearchGeneration++;
