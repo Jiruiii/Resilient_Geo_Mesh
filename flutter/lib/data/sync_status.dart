@@ -25,6 +25,8 @@ final class SyncStatus {
     this.nearbyReady = false,
     this.fallbackReason,
     this.lastFailureTransport,
+    this.discoveryMode = 'balanced',
+    this.discoveryResting = false,
   });
 
   final bool emergencyModeEnabled,
@@ -65,6 +67,8 @@ final class SyncStatus {
     return '$label 嘗試失敗，已改試其他方式。';
   }
 
+  final String discoveryMode;
+  final bool discoveryResting;
   final bool wifiDirectAvailable,
       wifiEnabled,
       wifiPermissionsGranted,
@@ -110,6 +114,8 @@ final class SyncStatus {
       nearbyReady: message['nearby_ready'] as bool? ?? false,
       fallbackReason: message['fallback_reason'] as String?,
       lastFailureTransport: message['last_failure_transport'] as String?,
+      discoveryMode: message['discovery_mode'] as String? ?? 'balanced',
+      discoveryResting: message['discovery_resting'] as bool? ?? false,
       wifiDirectAvailable: message['wifi_direct_available'] as bool? ?? false,
       wifiEnabled: message['wifi_enabled'] as bool? ?? false,
       wifiPermissionsGranted:
@@ -162,6 +168,7 @@ final class SyncStatus {
           : '服務已啟動，尚未開始搜尋';
     }
     if (activeSessions > 0) return '正在與附近節點同步';
+    if (usesWifiDirect && discoveryResting) return '搜尋暫歇中，將自動恢復；也可立即搜尋';
     return nearbyPeers > 0 ? '正在搜尋，附近有可同步節點' : '正在搜尋附近節點';
   }
 

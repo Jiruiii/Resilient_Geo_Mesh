@@ -15,11 +15,15 @@ class LayerFilterPanel extends StatelessWidget {
     this.disasterType,
     this.onDisasterTypeChanged,
     this.onOpenSyncStatus,
+    this.showSupplies = true,
+    this.onSuppliesChanged,
   });
 
   final bool showShelters;
   final bool showMedical;
   final bool showEvents;
+  final bool showSupplies;
+  final ValueChanged<bool>? onSuppliesChanged;
   final bool emergencyModeEnabled;
   final ValueChanged<bool> onSheltersChanged;
   final ValueChanged<bool> onMedicalChanged;
@@ -54,6 +58,12 @@ class LayerFilterPanel extends StatelessWidget {
               onChanged: onEventsChanged,
             ),
             const Divider(),
+            if (onSuppliesChanged != null)
+              SwitchListTile(
+                title: const Text('物資發放點'),
+                value: showSupplies,
+                onChanged: onSuppliesChanged,
+              ),
             if (onDisasterTypeChanged != null) ...[
               DropdownButtonFormField<String>(
                 key: const ValueKey('disaster-type-selector'),

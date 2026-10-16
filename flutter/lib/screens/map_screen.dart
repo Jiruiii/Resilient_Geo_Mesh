@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:pointer_interceptor/pointer_interceptor.dart';
 
 import '../data/map_bridge.dart';
+import '../data/supply_status.dart';
 import '../data/offline_search_worker.dart';
 import '../data/app_performance.dart';
 import '../data/attestation_index.dart';
@@ -106,6 +107,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   bool _showShelters = true;
   bool _showMedical = true;
   bool _showEvents = true;
+  bool _showSupplies = true;
   bool _emergencyModeEnabled = false;
   StaticFeature? _selectedFeature;
   MeshEvent? _selectedEvent;
@@ -1155,6 +1157,11 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                 showShelters: _showShelters,
                 showMedical: _showMedical,
                 showEvents: _showEvents,
+                showSupplies: _showSupplies,
+                onSuppliesChanged: (value) {
+                  setState(() => _showSupplies = value);
+                  modalSetState(() {});
+                },
                 emergencyModeEnabled: _emergencyModeEnabled,
                 disasterType: _disasterType,
                 onDisasterTypeChanged:
@@ -1593,10 +1600,14 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
             runtimeState: _runtimeState,
             staticFeatures: staticFeatures.features,
             administrativeIndex: _administrativeIndex,
-            visibleEvents: visibleEvents,
+            visibleEvents: filterMapEventLayers(
+              visibleEvents,
+              incidents: _showEvents,
+              supplies: _showSupplies,
+            ),
             showShelters: _showShelters,
             showMedical: _showMedical,
-            showEvents: _showEvents,
+            showEvents: _showEvents || _showSupplies,
             onStaticFeatureSelected: _showStaticSelection,
             onEventSelected: _showEvent,
             onZoomPercentageChanged: _setZoomPercentage,

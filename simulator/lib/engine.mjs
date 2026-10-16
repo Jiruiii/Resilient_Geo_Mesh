@@ -15,6 +15,7 @@ import { roundContacts } from './topology.mjs';
 import { applyServerChunk, transferChunk } from './transfer.mjs';
 import { shuffleInPlace, subStream } from './rng.mjs';
 import { computeDiff } from '../../pipeline/lib/peer-sync.mjs';
+import { validateTransportProfile, contactBudget } from './transport-profile.mjs';
 
 const PRIORITY_RANK = { CRITICAL: 0, HIGH: 1, NORMAL: 2, LOW: 3 };
 
@@ -115,7 +116,7 @@ function serverPhase(scenario, config, nodes, strategy, geoFilter, seed, round, 
   }
 }
 
-function peerPhase(scenario, config, nodes, strategy, geoFilter, seed, round, simClock, rarityScope) {
+function peerPhase(scenario, config, nodes, strategy, geoFilter, seed, round, simClock, rarityScope, transportProfile, secondsPerRound) {
   const edges = roundContacts(config, nodes, seed, round);
   if (edges.length === 0) return;
 
@@ -131,6 +132,7 @@ function peerPhase(scenario, config, nodes, strategy, geoFilter, seed, round, si
   };
 
   for (const [ai, bi] of edges) {
+    let sharedBudget = transportProfile ? contactBudget(transportProfile, secondsPerRound, seed, round, ai, bi) : null;
     for (const [srcIndex, dstIndex] of [
       [ai, bi],
       [bi, ai],
@@ -157,12 +159,13 @@ function peerPhase(scenario, config, nodes, strategy, geoFilter, seed, round, si
       const rarity = sharedRarity ?? neighbourhoodRarity(nodes, dst, config);
       const orderedIds = strategy.orderRequest(wanted, { ...requestCtx, rarity });
 
-      let budget = config.max_bytes_per_round;
+      let budget = sharedBudget ?? config.max_bytes_per_round;
       let chunkSeq = 0;
       for (const chunkId of orderedIds) {
         const size = scenario.manifestEntryById.get(chunkId).size_bytes;
         if (size > budget) break;
         budget -= size;
+        if (transportProfile) sharedBudget = budget;
         transferChunk(scenario, config, src, dst, chunkId, seed, round, chunkSeq, simClock);
         chunkSeq += 1;
       }
@@ -173,15 +176,20 @@ function peerPhase(scenario, config, nodes, strategy, geoFilter, seed, round, si
 export function runSimulation(options) {
   const {
     scenario,
-    config,
+    config: originalConfig,
     nodeCount,
     strategy: strategyName,
     seed,
     geoFilter = false,
-    rounds = config.rounds,
-    secondsPerRound = config.seconds_per_round,
-    rarityScope = config.rarity_scope ?? 'global',
+    rounds = originalConfig.rounds,
+    secondsPerRound = originalConfig.seconds_per_round,
+    rarityScope = originalConfig.rarity_scope ?? 'global',
+    transportProfile = null,
   } = options;
+
+  if (transportProfile) validateTransportProfile(transportProfile);
+  if (!Number.isFinite(secondsPerRound) || secondsPerRound <= 0) throw new Error('secondsPerRound must be positive');
+  const config = transportProfile ? { ...originalConfig, max_peer_count: 1 } : originalConfig;
 
   const strategy = getStrategy(strategyName);
   const nodes = placeNodes(scenario, config, nodeCount, { allGateways: strategy.allGateways });
@@ -190,7 +198,7 @@ export function runSimulation(options) {
     const simClock = isoAdd(scenario.clock.issued_at, round * secondsPerRound);
     serverPhase(scenario, config, nodes, strategy, geoFilter, seed, round, simClock);
     if (strategy.usesPeerPhase) {
-      peerPhase(scenario, config, nodes, strategy, geoFilter, seed, round, simClock, rarityScope);
+      peerPhase(scenario, config, nodes, strategy, geoFilter, seed, round, simClock, rarityScope, transportProfile, secondsPerRound);
     }
   }
 
@@ -205,6 +213,9 @@ export function runSimulation(options) {
       rounds,
       seconds_per_round: secondsPerRound,
       rarity_scope: rarityScope,
+      ...(transportProfile ? { transport_profile: transportProfile, contact_model: { max_peer_count: 1, contact_seconds: secondsPerRound,
+        contact_probability: config.contact_probability, transfer_failure_prob: config.transfer_failure_prob, gateway_ratio: config.gateway_ratio,
+        cellular_fallback_rounds: config.cellular_fallback_rounds, shared_bidirectional_budget: true, freshness_resolution: 'round-level' } } : {}),
     },
   };
 }

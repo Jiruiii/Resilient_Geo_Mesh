@@ -42,6 +42,7 @@ data class ShelterState(val availability: Availability, val event: RouteEvent?) 
                 .maxWithOrNull(compareBy<RouteEvent>({ it.issuedAt.toInstantOrMin() }, { it.eventId }))
                 ?: return ShelterState(Availability.UNKNOWN, null)
             val availability = when (match.attributes.optString("status")) {
+                "FULL" -> Availability.FULL
                 "OPEN" -> {
                     val available = match.attributes.opt("available")
                     if (available is Number && available.toDouble() <= 0.0) Availability.FULL else Availability.OPEN

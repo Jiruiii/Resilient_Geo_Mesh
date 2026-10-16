@@ -107,6 +107,7 @@ class EvacuationRouterTest {
         )
         assertEquals("SHELTER_CLOSED", plan(status("STANDBY", 50)).warnings.first().code)
         assertEquals("SHELTER_FULL", plan(status("OPEN", 0)).warnings.first().code)
+        assertEquals("SHELTER_FULL", plan(status("FULL", null)).warnings.first().code)
         assertEquals(RouteStatus.OK, plan(status("OPEN", 50)).status)
         val unknown = plan()
         assertTrue(unknown.warnings.any { it.code == "SHELTER_STATUS_UNKNOWN" })

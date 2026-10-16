@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.net.ConnectivityManager
+import android.net.MacAddress
 import android.net.wifi.WpsInfo
 import android.net.wifi.p2p.WifiP2pConfig
 import android.net.wifi.p2p.WifiP2pDevice
@@ -13,6 +14,7 @@ import android.net.wifi.p2p.WifiP2pManager
 import android.net.wifi.p2p.nsd.WifiP2pDnsSdServiceInfo
 import android.net.wifi.p2p.nsd.WifiP2pDnsSdServiceRequest
 import android.os.Looper
+import android.os.Build
 import android.os.SystemClock
 import android.util.Log
 import androidx.core.content.ContextCompat
@@ -42,7 +44,7 @@ import kotlin.coroutines.resumeWithException
  * Socket binding never changes the process-wide network used by government sync.
  */
 @SuppressLint("MissingPermission")
-class WifiDirectTransport(context: Context) : PeerTransport {
+class WifiDirectTransport(context: Context, private val serviceInstance: String = INSTANCE) : PeerTransport {
     private val app = context.applicationContext
     private val manager = app.getSystemService(WifiP2pManager::class.java)
         ?: throw IllegalStateException("Wi-Fi Direct unavailable")
@@ -56,7 +58,7 @@ class WifiDirectTransport(context: Context) : PeerTransport {
     @Volatile private var emitPeer: ((PeerAdvertisement) -> Unit)? = null
     private val messages = MutableSharedFlow<Pair<String, ByteArray>>(extraBufferCapacity = 16)
     override val receivedMessages: SharedFlow<Pair<String, ByteArray>> = messages
-    private data class Peer(val address: String, val seenAt: Long)
+    private data class Peer(val address: String, val seenAt: Long, val isGroupOwner: Boolean)
     private val peers = ConcurrentHashMap<String, Peer>()
     private val links = ConcurrentHashMap<String, Link>()
     private val rawSockets = ConcurrentHashMap.newKeySet<Socket>()
@@ -71,7 +73,8 @@ class WifiDirectTransport(context: Context) : PeerTransport {
     @Volatile private var usedGroup = false
     @Volatile private var stopped = false
     private val discoveryStartedAt = SystemClock.elapsedRealtime()
-    private val discoverySchedule = WifiDirectDiscoverySchedule(discoveryStartedAt)
+    private val discoverySchedule = WifiDirectDiscoverySchedule(discoveryStartedAt,
+        adaptive = MeshTransportSettings(app).discoveryMode == "adaptive")
     private var invitationUntil = 0L
     private var lastRawPeerCount = -1
 
@@ -106,6 +109,12 @@ class WifiDirectTransport(context: Context) : PeerTransport {
                             lastRawPeerCount = devices.deviceList.size
                             trace("raw peers=$lastRawPeerCount")
                         }
+                        devices.deviceList.forEach { device ->
+                            peers.replaceAll { _, peer ->
+                                if (peer.address == device.deviceAddress)
+                                    peer.copy(isGroupOwner = device.isGroupOwner) else peer
+                            }
+                        }
                         invitationUntil = if (devices.deviceList.any { it.status == WifiP2pDevice.INVITED })
                             SystemClock.elapsedRealtime() + 90_000 else 0L
                     }
@@ -124,17 +133,18 @@ class WifiDirectTransport(context: Context) : PeerTransport {
         }, ContextCompat.RECEIVER_EXPORTED)
         manager.setDnsSdResponseListeners(ch, { _, _, _ -> }, { domain, record, device ->
             val identity = record["id"]
-            if (!stopped && domain.equals("$INSTANCE.$TYPE.local.", ignoreCase = true) &&
+            if (!stopped && domain.equals("$serviceInstance.$TYPE.local.", ignoreCase = true) &&
                 record["v"] == "1" && identity != null && WifiDirectFraming.validIdentity(identity) && identity != localIdentity) {
-                peers[identity] = Peer(device.deviceAddress, SystemClock.elapsedRealtime())
+                peers[identity] = Peer(device.deviceAddress, SystemClock.elapsedRealtime(), device.isGroupOwner)
+                discoverySchedule.peerSeen(SystemClock.elapsedRealtime())
                 trace("service found peer=$identity")
                 advertise(identity)
             }
         })
         try {
-            service = WifiP2pDnsSdServiceInfo.newInstance(INSTANCE, TYPE, mapOf("v" to "1", "id" to localIdentity))
+            service = WifiP2pDnsSdServiceInfo.newInstance(serviceInstance, TYPE, mapOf("v" to "1", "id" to localIdentity))
             action { manager.addLocalService(ch, service, it) }
-            request = WifiP2pDnsSdServiceRequest.newInstance(INSTANCE, TYPE)
+            request = WifiP2pDnsSdServiceRequest.newInstance(serviceInstance, TYPE)
             action { manager.addServiceRequest(ch, request, it) }
             trace("service registered identity=$localIdentity")
         } catch (error: Exception) {
@@ -142,9 +152,15 @@ class WifiDirectTransport(context: Context) : PeerTransport {
             throw error
         }
         val refresh = scope.launch {
+            var requestGeneration = WifiDiscoveryControl.requests.get()
             var nextRefresh = 0L
             while (isActive) {
                 val now = SystemClock.elapsedRealtime()
+                val generation = WifiDiscoveryControl.requests.get()
+                if (generation != requestGeneration) {
+                    requestGeneration = generation
+                    discoverySchedule.searchNow(now)
+                }
                 val recent = peers.filterValues { now - it.seenAt < 25_000 }
                 if (now >= nextRefresh) {
                     refreshGroup()
@@ -158,11 +174,15 @@ class WifiDirectTransport(context: Context) : PeerTransport {
                 val paused = groupPresent || outboundInvitation || now < invitationUntil
                 discoverySchedule.next(now, paused)?.let { step ->
                     try {
-                        action { manager.discoverServices(ch, it) }
+                        if (step == WifiDirectDiscoverySchedule.Action.REST)
+                            action { manager.stopPeerDiscovery(ch, it) }
+                        else action { manager.discoverServices(ch, it) }
+                        WifiDiscoveryControl.resting = step == WifiDirectDiscoverySchedule.Action.REST
                         trace("discovery step=$step accepted")
                     } catch (error: Exception) {
                         if (error is CancellationException) throw error
                         discoverySchedule.failed(SystemClock.elapsedRealtime())
+                        WifiDiscoveryControl.resting = false
                         Log.w(TAG, "discovery step=$step failed: ${error.message}")
                     }
                 }
@@ -178,32 +198,29 @@ class WifiDirectTransport(context: Context) : PeerTransport {
 
     override suspend fun connect(peerId: String): Connection {
         links[peerId]?.let { return Connection(peerId, it.id) }
-        // Android negotiates a single P2P group, so serialize invitations. Only
-        // the lexically smaller identity initiates to avoid simultaneous invites.
+        // Serialize invitations. Fresh peers elect one initiator; an existing
+        // group must instead be joined, regardless of its owner's identity.
         return connectLock.withLock {
             try {
-                withContext(Dispatchers.Main.immediate) {
-                    val ch = p2pChannel ?: throw IOException("Discovery not running")
-                    if (!groupPresent && localIdentity < peerId) {
-                        val peer = peers[peerId] ?: throw IOException("Peer is no longer available")
-                        val config = WifiP2pConfig().apply {
-                            deviceAddress = peer.address
-                            wps.setup = WpsInfo.PBC
-                        }
-                        initiatedGroup = true
-                        outboundInvitation = true
-                        Log.i(TAG, "inviting peer=$peerId")
-                        // Some Samsung stacks emit DEVICE_LOST when discovery is
-                        // stopped and then reject connect for that same peer.
-                        // Let connect stop radio discovery; suppress our periodic
-                        // discoverServices calls while negotiation is in progress.
-                        action { manager.connect(ch, config, it) }
-                    }
-                }
+                var invited = false
                 withTimeoutOrNull(85_000) {
                     while (true) {
                         links[peerId]?.let { return@withTimeoutOrNull Connection(peerId, it.id) }
                         check(!stopped) { "Wi-Fi Direct stopped" }
+                        withContext(Dispatchers.Main.immediate) {
+                            val ch = p2pChannel ?: throw IOException("Discovery not running")
+                            val peer = peers[peerId]
+                            if (!invited && !groupPresent && peer != null &&
+                                WifiDirectConnectionPolicy.shouldInitiate(localIdentity, peerId, peer.isGroupOwner)) {
+                                initiatedGroup = true
+                                outboundInvitation = true
+                                Log.i(TAG, "inviting peer=$peerId existing_owner=${peer.isGroupOwner}")
+                                // Let connect stop discovery. Stopping it first can
+                                // make Samsung discard the peer before the invitation.
+                                action { manager.connect(ch, connectionConfig(peer.address), it) }
+                                invited = true
+                            }
+                        }
                         delay(200)
                     }
                     @Suppress("UNREACHABLE_CODE") error("unreachable")
@@ -394,6 +411,7 @@ class WifiDirectTransport(context: Context) : PeerTransport {
     fun teardown() {
         if (stopped) return
         stopped = true
+        WifiDiscoveryControl.resting = false
         emitPeer = null
         clearSockets()
         scope.cancel()
@@ -415,6 +433,23 @@ class WifiDirectTransport(context: Context) : PeerTransport {
     }
 
     companion object {
+        internal fun connectionConfig(address: String): WifiP2pConfig {
+            val config = if (Build.VERSION.SDK_INT >= 29) {
+                WifiP2pConfig.Builder()
+                    .setDeviceAddress(MacAddress.fromString(address))
+                    .enablePersistentMode(false)
+                    .apply {
+                        if (Build.VERSION.SDK_INT >= 34)
+                            setGroupClientIpProvisioningMode(WifiP2pConfig.GROUP_CLIENT_IP_PROVISIONING_MODE_IPV4_DHCP)
+                    }.build()
+            } else WifiP2pConfig().apply { deviceAddress = address }
+            // The initiating client applies this IPv4 configuration. A passive
+            // client can retain Nearby's IPv6-only provisioning on some devices.
+            config.groupOwnerIntent = 0
+            config.wps.setup = WpsInfo.PBC
+            return config
+        }
+
         private const val TAG = "ResilientGeoWifi"
         private const val INSTANCE = "resilientgeo"
         private const val TYPE = "_rgmesh._tcp"

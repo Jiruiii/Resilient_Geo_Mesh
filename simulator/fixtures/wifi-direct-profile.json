@@ -1,0 +1,9 @@
+{
+  "schema_version": "transport-profile-v1",
+  "transport": "WIFI_DIRECT_TCP",
+  "setup_ms": [14345, 9637, 12927, 13034],
+  "bytes_per_second": 32000,
+  "evidence": "2026-10-04/05 Pixel 8a + Samsung SM-A5360 offline-final logcat: transport creation to socket ready. Four device-side observations from TWO paired encounters, not four independent experiments. See docs/wifi-direct.md and docs/committee-followup.md.",
+  "throughput_source": "SCENARIO ASSUMPTION: 32000 B/s is NOT measured Wi-Fi throughput. Sweep this parameter; do not present resulting coverage as a field measurement.",
+  "limitations": "Awake devices at one indoor location. No distance, dense crowd, rain, Doze, group-owner reversal or adaptive discovery calibration. A contact lasts one simulation round; one peer per node; no simultaneous multi-hop. Contact probability, failure probability and gateway ratio remain assumptions from the selected config."
+}

@@ -82,7 +82,7 @@
 - [x] **6. `.gitignore` 漏一層目錄** — 規則是 `/android/.idea/`，實際目錄在 `android/app/.idea/`，導致 `workspace.xml` 被追蹤、其餘 7 個檔案永遠浮在 `git status`。補規則並 `git rm --cached`。
 - [x] **7. 所有 spike activity `exported="true"`** — 沒有 intent-filter 卻對外開放，任何 App 都能啟動會開藍牙廣播的畫面。main manifest 全改 `exported="false"`。
   **修正（實機驗證後）**：原本以為「shell 持有 `START_ANY_ACTIVITY`，所以 `adb shell am start` 不受影響」——**這是錯的**，Pixel 7 上實測直接噴 `SecurityException: Permission Denial ... not exported from uid 10262`。這會打斷所有靠 adb 驅動 harness 畫面的量測流程（接觸窗、connection rate、耗電）。改用 `src/debug/AndroidManifest.xml` 只在 debug 變體以 `tools:replace` 重新 export，release 變體維持全關；已用 merged manifest 逐項確認兩個變體的旗標。`EmergencyModeService` 兩個變體都維持 non-exported，由 UI 開關驅動。
-- [x] **8. 已否決方案仍留在 App 裡** — 刪除 `NearbyConnectionsTransport`／`WifiDirectTransport`／`LocalNetworkTransport` 與三個對應 spike activity，連同 `INTERNET`、`ACCESS_WIFI_STATE`、`CHANGE_WIFI_STATE`、`NEARBY_WIFI_DEVICES`、`CHANGE_WIFI_MULTICAST_STATE` 權限與 Play Services 相依。程式碼保留在 git 歷史，實測記錄保留在 ADR-001。**現在 APK 實際權限只剩藍牙／前景服務／通知**（`aapt2 dump permissions` 驗證過），「不需要網路基礎設施」才是可查證的主張。
+- [x] **8. 已否決方案仍留在 App 裡**（2026-09-05 狀態；2026-10-04 起 Wi-Fi Direct、10-10 起 Nearby 已重新加入，權限也隨之增加，現況見 `docs/nearby-auto-transport.md`）— 刪除 `NearbyConnectionsTransport`／`WifiDirectTransport`／`LocalNetworkTransport` 與三個對應 spike activity，連同 `INTERNET`、`ACCESS_WIFI_STATE`、`CHANGE_WIFI_STATE`、`NEARBY_WIFI_DEVICES`、`CHANGE_WIFI_MULTICAST_STATE` 權限與 Play Services 相依。程式碼保留在 git 歷史，實測記錄保留在 ADR-001。**現在 APK 實際權限只剩藍牙／前景服務／通知**（`aapt2 dump permissions` 驗證過），「不需要網路基礎設施」才是可查證的主張。
 - [x] **9. README 不實陳述** — 原本寫「不需要任何網路權限」但 manifest 有 `INTERNET`（第 8 項修掉後這句才成立）；Emergency Mode 的描述也超前於實作，已改為精確描述並補進限制段落。
 
 ### D 段的實機驗證結果（2026-09-05，三台裝置實測）

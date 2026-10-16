@@ -5,6 +5,32 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class WifiDirectDiscoveryScheduleTest {
+    @Test fun adaptiveRestSurvivesNativeStopAndManualSearchResumesWhenSafe() {
+        val schedule = WifiDirectDiscoverySchedule(0, adaptive = true) { min, _ -> min }
+        assertEquals(Action.SEARCH, schedule.next(100, false))
+        assertEquals(Action.REST, schedule.next(60000, false))
+        schedule.searchStopped(60001)
+        schedule.searchStarted()
+        assertNull(schedule.next(89999, false))
+        schedule.searchNow(70000)
+        assertNull(schedule.next(70000, true))
+        assertEquals(Action.SEARCH, schedule.next(71000, false))
+    }
+
+    @Test fun adaptiveKeepsSearchingForRecentPeerAndUsesBoundedIdleWindows() {
+        val schedule = WifiDirectDiscoverySchedule(0, adaptive = true) { min, _ -> min }
+        schedule.next(100, false)
+        schedule.peerSeen(59000)
+        assertEquals(Action.SEARCH, schedule.next(60000, false))
+        assertEquals(Action.REST, schedule.next(120000, false))
+        assertEquals(Action.SEARCH, schedule.next(150000, false))
+        assertNull(schedule.next(161999, false))
+        assertEquals(Action.REST, schedule.next(162000, false))
+        assertEquals(Action.SEARCH, schedule.next(240000, false))
+        assertEquals(Action.REST, schedule.next(252000, false))
+        assertNull(schedule.next(311999, false))
+        assertEquals(Action.SEARCH, schedule.next(312000, false))
+    }
     private fun schedule() = WifiDirectDiscoverySchedule(0) { min, _ -> min }
 
     @Test fun startupAndRetriesAreBoundedWithoutAStopListenPhase() {

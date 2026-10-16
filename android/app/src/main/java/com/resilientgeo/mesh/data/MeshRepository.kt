@@ -50,6 +50,7 @@ class MeshRepository(
     private val cacheCapBytes: Long = CHUNK_CACHE_CAP_BYTES,
     private val governmentDeviceKeyStore: GovernmentDeviceKeyStore = GovernmentDeviceKeyStore(context.applicationContext),
     private val trustedKeyStoreOverride: TrustedKeyStore? = null,
+    private val trustedKeysJson: String? = null,
 ) {
     private val appContext = context.applicationContext
     private val store = RoomEventStore(db.eventDao())
@@ -72,7 +73,7 @@ class MeshRepository(
     }
 
     private val trustStoreText: String by lazy {
-        appContext.assets.open(TRUSTED_KEYS_ASSET).bufferedReader().use { it.readText() }
+        trustedKeysJson ?: appContext.assets.open(TRUSTED_KEYS_ASSET).bufferedReader().use { it.readText() }
     }
 
     private val trustStore: TrustedKeyStore by lazy { trustedKeyStoreOverride ?: TrustedKeyStore.fromJson(trustStoreText) }

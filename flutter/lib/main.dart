@@ -11,6 +11,7 @@ import 'data/ncdr_map_filter.dart';
 import 'data/offline_map_web_protocol.dart';
 import 'data/maplibre_web_runtime.dart';
 import 'debug/route_validation_app.dart';
+import 'debug/mesh_drill_app.dart';
 import 'screens/map_screen.dart';
 import 'screens/notifications_screen.dart';
 import 'screens/profile_screen.dart';
@@ -31,6 +32,13 @@ Future<void> main() async {
     await registerOfflineMapProtocol();
   }
   runApp(const ResilientGeoApp());
+}
+
+@pragma('vm:entry-point')
+void meshDrillMain() {
+  if (kReleaseMode) return;
+  WidgetsFlutterBinding.ensureInitialized();
+  runMeshDrillApp();
 }
 
 @pragma('vm:entry-point')

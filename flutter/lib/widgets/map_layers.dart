@@ -9,6 +9,9 @@ import '../data/map_models.dart';
 import '../data/map_zoom.dart';
 import '../data/maplibre_map_config.dart';
 import '../data/ncdr_map_filter.dart';
+import '../data/supply_status.dart';
+
+export '../data/supply_status.dart' show isSupplyStationEvent;
 
 typedef StaticFeatureSelection = void Function(List<StaticFeature> features);
 typedef MeshEventSelection = void Function(MeshEvent event);
@@ -34,13 +37,12 @@ class MapIconCatalog {
   static const IconData supplyStation = LucideIcons.packageOpen;
 
   static IconData forEvent(MeshEvent event) =>
-      isSupplyStationEvent(event) ? supplyStation : disaster;
+      isSupplyStationEvent(event)
+          ? supplyStation
+          : isSupplyEvent(event)
+          ? LucideIcons.box
+          : disaster;
 }
-
-bool isSupplyStationEvent(MeshEvent event) =>
-    event.namespace == 'official.announcement' &&
-    event.source == 'GOVERNMENT' &&
-    event.attributes?['category'] == 'SUPPLY_STATION';
 
 String governmentAnnouncementCategoryLabel(Object? category) =>
     switch (category) {
@@ -1084,6 +1086,9 @@ String featureName(StaticFeature feature) {
 }
 
 String eventName(MeshEvent event) {
+  if (isSupplyEvent(event)) {
+    return '${SupplyStatus(event).drill ? '演練・' : ''}${SupplyStatus(event).name}';
+  }
   final attributes = event.attributes;
   if (event.eventType == 'CROWD_REPORT') {
     return '民眾回報：${crowdCategoryLabel(attributes?['category'])}';
@@ -1115,6 +1120,7 @@ Color eventColor(MeshEvent event) {
     return confirmedCrowdEventColor;
   }
   if (event.isUnverified) return unverifiedEventColor;
+  if (isSupplyEvent(event)) return const Color(0xFF0369A1);
   return switch (event.severity) {
     'CRITICAL' => const Color(0xFFD92D20),
     'HIGH' => const Color(0xFFF97316),

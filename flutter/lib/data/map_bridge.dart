@@ -133,6 +133,14 @@ class MapBridge {
         await _invokeRequiredMap('setSyncTransport', {'transport': transport}),
       );
 
+  Future<SyncStatus> setDiscoveryMode(String mode) async =>
+      SyncStatus.fromMessage(
+        await _invokeRequiredMap('setDiscoveryMode', {'mode': mode}),
+      );
+
+  Future<SyncStatus> searchPeersNow() async =>
+      SyncStatus.fromMessage(await _invokeRequiredMap('searchPeersNow'));
+
   /// Verified nationwide static layers. Android verifies them in the
   /// background, so the first call after install can take several seconds;
   /// it never returns unverified data.
