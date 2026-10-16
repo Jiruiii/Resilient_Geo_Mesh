@@ -30,6 +30,8 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <application android:networkSecurityConfig="@xml/debug_network_security_config">
+        <activity android:name=".debug.MeshDrillActivity" android:exported="true"
+            android:theme="@style/Theme.ResilientGeoMesh.OfflineGis" />
         <activity
             android:name=".debug.RouteValidationActivity"
             android:exported="true"
