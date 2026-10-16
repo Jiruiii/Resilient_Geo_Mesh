@@ -418,8 +418,10 @@ acceptance checks.
   GeometryCollection return `null` (skipped, not crashed).
 - No UI for namespace filtering or TTL countdown; Flutter now provides marker
   details for shelters, medical facilities and events.
-- `PeerTransport` is implemented by `BleGattTransport` (ADR-001 rejected
-  Nearby Connections and Wi-Fi Direct; both implementations were removed).
+- `PeerTransport` is implemented by `BleGattTransport`, `WifiDirectTransport`
+  and the Nearby adapter. ADR-001 rejected the first Nearby/Wi-Fi Direct
+  attempts on 2026-09-05; both were re-implemented later (see
+  `docs/wifi-direct.md` and `docs/nearby-auto-transport.md`).
   Received chunks go through `MeshRepository.ingestChunk` →
   `ChunkVerifier` → `EventIngestor`, so peer data follows the same apply
   rules as the bundled fixture. `EmergencyModeService` runs
