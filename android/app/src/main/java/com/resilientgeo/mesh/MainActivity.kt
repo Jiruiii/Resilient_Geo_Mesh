@@ -19,6 +19,7 @@ import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import com.resilientgeo.mesh.online.GovernmentSyncJob
 import com.resilientgeo.mesh.online.GovernmentSyncManager
 import com.resilientgeo.mesh.transport.MeshTransportSettings
 
@@ -41,6 +42,7 @@ class MainActivity : FlutterFragmentActivity() {
 
     override fun onResume() {
         super.onResume()
+        GovernmentSyncJob.schedulePendingUpload(applicationContext)
         governmentCheck?.cancel()
         governmentCheck = lifecycleScope.launch {
             while (true) {
@@ -107,7 +109,11 @@ class MainActivity : FlutterFragmentActivity() {
                         "writeSessionToken" -> {
                             val token = (call.arguments as? Map<*, *>)?.get("token") as? String
                             if (token == null) result.error("invalid_input", "session token is required", null)
-                            else { governmentSessionStore.write(token); result.success(null) }
+                            else {
+                                governmentSessionStore.write(token)
+                                GovernmentSyncJob.schedulePendingUpload(applicationContext)
+                                result.success(null)
+                            }
                         }
                         "clearSessionToken" -> { governmentSessionStore.clear(); result.success(null) }
                         else -> result.notImplemented()

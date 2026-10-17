@@ -4,6 +4,7 @@ import android.content.Context
 import com.resilientgeo.mesh.data.CrowdReportResult
 import com.resilientgeo.mesh.data.GovernmentWarningResult
 import com.resilientgeo.mesh.data.MeshRepository
+import com.resilientgeo.mesh.online.GovernmentSyncJob
 import com.resilientgeo.mesh.online.GovernmentSyncManager
 import com.resilientgeo.mesh.report.GovernmentWarningInput
 import com.resilientgeo.mesh.routing.EvacuationRouteService
@@ -64,6 +65,7 @@ class FlutterMapBridge(
     ),
 ) : MethodChannel.MethodCallHandler, EventChannel.StreamHandler {
 
+    private val appContext = context.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val methodChannel = MethodChannel(messenger, METHOD_CHANNEL_NAME)
     private val eventChannel = EventChannel(messenger, EVENT_CHANNEL_NAME)
@@ -138,6 +140,7 @@ class FlutterMapBridge(
             "getGovernmentDevicePublicKey" -> getGovernmentDevicePublicKey(result)
             "storeGovernmentDeviceCertificate" -> storeGovernmentDeviceCertificate(call, result)
             "getGovernmentDeviceAuthorization" -> getGovernmentDeviceAuthorization(result)
+            "configureGovernmentWarningUpload" -> configureGovernmentWarningUpload(call, result)
             "createGovernmentWarning" -> createGovernmentWarning(call, result)
             "listPendingGovernmentWarningUploads" -> listPendingGovernmentWarningUploads(result)
             "listGovernmentWarningStatuses" -> listGovernmentWarningStatuses(result)
@@ -304,14 +307,31 @@ class FlutterMapBridge(
         }
         scope.launch {
             when (val created = repository.createGovernmentWarning(request.input, request.eventId)) {
-                is GovernmentWarningResult.Created -> result.success(MapBridgeProtocol.governmentWarningCreated(
-                    created.eventId, created.payloadHash, created.eventJson, created.duplicate,
-                ))
+                is GovernmentWarningResult.Created -> {
+                    runCatching { GovernmentSyncJob.schedulePendingUpload(appContext) }
+                    result.success(MapBridgeProtocol.governmentWarningCreated(
+                        created.eventId, created.payloadHash, created.eventJson, created.duplicate,
+                    ))
+                }
                 is GovernmentWarningResult.Invalid -> result.error(INVALID_INPUT, created.errors.joinToString("; "), null)
                 is GovernmentWarningResult.Unauthorized -> result.error(DEVICE_NOT_AUTHORIZED, created.message, null)
                 is GovernmentWarningResult.SigningUnavailable -> result.error(SIGNING_UNAVAILABLE, created.message, null)
                 is GovernmentWarningResult.StorageUnavailable -> result.error(STORAGE_UNAVAILABLE, created.message, null)
             }
+        }
+    }
+
+    private fun configureGovernmentWarningUpload(call: MethodCall, result: MethodChannel.Result) {
+        val baseUrl = (call.arguments as? Map<*, *>)?.get("base_url") as? String
+        if (baseUrl.isNullOrBlank()) {
+            result.error(INVALID_ARGUMENTS, "configureGovernmentWarningUpload requires base_url", null)
+            return
+        }
+        try {
+            governmentSync.configureWarningUploadBaseUrl(baseUrl)
+            result.success(mapOf("configured" to true))
+        } catch (error: Exception) {
+            result.error(INVALID_ARGUMENTS, error.message, null)
         }
     }
 

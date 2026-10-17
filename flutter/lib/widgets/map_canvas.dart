@@ -1165,32 +1165,6 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
           fit: StackFit.expand,
           children: <Widget>[
             baseMap,
-            if (_usesPlatformMap && _styleJson != null && _styleError == null)
-              ValueListenableBuilder<bool>(
-                valueListenable: _tilesLoading,
-                builder: (context, tilesLoading, _) {
-                  if (!tilesLoading && _markerLayoutReady) {
-                    return const SizedBox.shrink();
-                  }
-                  return Positioned.fill(
-                    child: IgnorePointer(
-                      child: ColoredBox(
-                        color: const Color.fromRGBO(248, 252, 255, 0.72),
-                        child: Center(
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: <Widget>[
-                              const CircularProgressIndicator(),
-                              const SizedBox(height: 12),
-                              Text(tilesLoading ? '正在載入地圖圖磚…' : '正在準備地圖標記…'),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  );
-                },
-              ),
             if (_usesPlatformMap && _animationsAllowed && _radarVisible)
               Positioned.fill(
                 child: ValueListenableBuilder<Offset?>(
@@ -1330,6 +1304,32 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
                 ),
               ),
             ),
+            if (_usesPlatformMap && _styleJson != null && _styleError == null)
+              ValueListenableBuilder<bool>(
+                valueListenable: _tilesLoading,
+                builder: (context, tilesLoading, _) {
+                  if (!tilesLoading) {
+                    return const SizedBox.shrink();
+                  }
+                  return Positioned.fill(
+                    child: AbsorbPointer(
+                      child: ColoredBox(
+                        color: const Color.fromRGBO(248, 252, 255, 0.72),
+                        child: Center(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: <Widget>[
+                              const CircularProgressIndicator(),
+                              const SizedBox(height: 12),
+                              const Text('正在載入地圖圖磚…'),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
           ],
         );
       },
@@ -1492,7 +1492,16 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
 
   Widget _buildLoadingSurface() => const ColoredBox(
     color: Color(0xFFF2F0EC),
-    child: Center(child: CircularProgressIndicator()),
+    child: Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          CircularProgressIndicator(),
+          SizedBox(height: 12),
+          Text('正在載入地圖樣式…'),
+        ],
+      ),
+    ),
   );
 
   Widget _buildErrorSurface() => ColoredBox(

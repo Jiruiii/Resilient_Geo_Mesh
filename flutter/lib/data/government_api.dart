@@ -77,6 +77,12 @@ class GovernmentUser {
 }
 
 typedef GovernmentApiBaseUri = Future<Uri> Function();
+typedef GovernmentAnnouncementChangeCallback =
+    void Function({
+      required String eventId,
+      required int eventVersion,
+      required bool retracted,
+    });
 typedef GovernmentHttpSender =
     Future<GovernmentHttpResponse> Function({
       required String method,
@@ -102,9 +108,14 @@ class GovernmentApiClient {
 
   Future<String?> _readToken() async => _token ??= await _sessionStore.read();
 
-  Future<Uri> _uri(String path) async {
+  Future<Uri> resolveBaseUri() async {
     var base = await _baseUri();
     if (!base.path.endsWith('/')) base = base.replace(path: '${base.path}/');
+    return base;
+  }
+
+  Future<Uri> _uri(String path) async {
+    final base = await resolveBaseUri();
     return base.resolve(path.replaceFirst(RegExp(r'^/'), ''));
   }
 
@@ -383,6 +394,8 @@ class GovernmentAuthController extends ChangeNotifier {
   Object? error;
   bool _restoreStarted = false;
   bool _disposed = false;
+  Future<void> Function()? onDeviceWarningCreated;
+  GovernmentAnnouncementChangeCallback? onCloudAnnouncementChanged;
 
   void _notifyIfAlive() {
     if (!_disposed) notifyListeners();
@@ -547,7 +560,63 @@ class GovernmentAuthController extends ChangeNotifier {
         403,
       );
     }
-    return mapBridge.createGovernmentWarning(input);
+    try {
+      await mapBridge.configureGovernmentWarningUpload(
+        await api.resolveBaseUri(),
+      );
+    } on Object {
+      // Local creation remains available if native background scheduling cannot be configured.
+    }
+    final created = await mapBridge.createGovernmentWarning(input);
+    try {
+      await onDeviceWarningCreated?.call();
+    } on Object {
+      // The Room event stream remains authoritative if the snapshot fallback fails.
+    }
+    return created;
+  }
+
+  Future<Map<String, dynamic>> createAnnouncement(
+    Map<String, Object?> input,
+  ) async {
+    final result = await api.createAnnouncement(input);
+    _notifyCloudAnnouncementChanged(result);
+    return result;
+  }
+
+  Future<Map<String, dynamic>> reviseAnnouncement(
+    String eventId,
+    Map<String, Object?> input,
+  ) async {
+    final result = await api.reviseAnnouncement(eventId, input);
+    _notifyCloudAnnouncementChanged(result);
+    return result;
+  }
+
+  Future<Map<String, dynamic>> retractAnnouncement(String eventId) async {
+    final result = await api.retractAnnouncement(eventId);
+    if (result['already_retracted'] != true) {
+      _notifyCloudAnnouncementChanged(result, retracted: true);
+    }
+    return result;
+  }
+
+  void _notifyCloudAnnouncementChanged(
+    Map<String, dynamic> result, {
+    bool retracted = false,
+  }) {
+    final eventId = result['event_id'];
+    final eventVersion = result['event_version'];
+    if (eventId is! String || eventVersion is! int) return;
+    try {
+      onCloudAnnouncementChanged?.call(
+        eventId: eventId,
+        eventVersion: eventVersion,
+        retracted: retracted,
+      );
+    } on Object {
+      // The cloud mutation is already committed; local feed refresh is recoverable.
+    }
   }
 
   Future<void> _refreshLastRevocationSync() async {

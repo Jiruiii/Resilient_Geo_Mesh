@@ -41,6 +41,7 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen> {
   List<Map<String, dynamic>> _announcements = const <Map<String, dynamic>>[];
   List<Map<String, dynamic>> _users = const <Map<String, dynamic>>[];
   List<Map<String, dynamic>> _deviceWarnings = const <Map<String, dynamic>>[];
+  bool? _emergencyModeEnabled;
   bool _loading = true;
   bool _busy = false;
   bool _warningUploadActive = false;
@@ -94,6 +95,16 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen> {
         final localWarnings =
             await widget.auth.mapBridge.listGovernmentWarningStatuses();
         if (mounted) setState(() => _deviceWarnings = localWarnings);
+        try {
+          final localState = await widget.auth.mapBridge.getInitialState();
+          if (mounted) {
+            setState(
+              () => _emergencyModeEnabled = localState.emergencyModeEnabled,
+            );
+          }
+        } on Object {
+          // Unknown mode is not reported as enabled or disabled.
+        }
       }
       final values = await Future.wait<Object>(<Future<Object>>[
         widget.auth.api.listReports(),
@@ -103,7 +114,9 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen> {
       if (!mounted) return;
       setState(() {
         _reports = values[0] as List<Map<String, dynamic>>;
-        _announcements = values[1] as List<Map<String, dynamic>>;
+        _announcements = (values[1] as List<Map<String, dynamic>>)
+            .where((announcement) => announcement['retracted'] != true)
+            .toList(growable: false);
         if (_isAdmin) _users = values[2] as List<Map<String, dynamic>>;
       });
       if (widget.auth.androidDeviceMode &&
@@ -298,7 +311,7 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen> {
       Expanded(
         child:
             _announcements.isEmpty && !_loading
-                ? const Center(child: Text('尚未發布公告'))
+                ? const Center(child: Text('目前沒有有效公告'))
                 : RefreshIndicator(
                   onRefresh: _refresh,
                   child: ListView.separated(
@@ -335,7 +348,7 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen> {
                                           ),
                                           PopupMenuItem(
                                             value: 'retract',
-                                            child: Text('撤回'),
+                                            child: Text('撤回並隱藏'),
                                           ),
                                         ],
                                   ),
@@ -388,6 +401,21 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen> {
               const Divider(height: 16),
               ..._deviceWarnings.map(_deviceWarningStatusRow),
             ],
+            if (_emergencyModeEnabled == false &&
+                _deviceWarnings.any(
+                  (row) => row['upload_status'] != 'EXPIRED',
+                )) ...<Widget>[
+              const SizedBox(height: 8),
+              const Text('緊急模式未開啟；公告已保存在本機，Mesh 尚未啟動。'),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  onPressed: _busy ? null : _enableEmergencyMode,
+                  icon: const Icon(Icons.wifi_tethering),
+                  label: const Text('啟用緊急模式以進行 Mesh 傳播'),
+                ),
+              ),
+            ],
             if (_deviceWarnings.any((row) => row['upload_status'] == 'PENDING'))
               Align(
                 alignment: Alignment.centerRight,
@@ -428,7 +456,13 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen> {
                 ),
               ),
               if (row['upload_status'] != 'EXPIRED')
-                const Chip(label: Text('待 mesh 同步')),
+                Chip(
+                  label: Text(switch (_emergencyModeEnabled) {
+                    true => '待 Mesh 同步',
+                    false => 'Mesh 未啟用',
+                    null => 'Mesh 狀態未知',
+                  }),
+                ),
             ],
           ),
         ],
@@ -494,6 +528,11 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen> {
       _warningUploadActive = false;
     }
   }
+
+  Future<void> _enableEmergencyMode() => _perform(() async {
+    final enabled = await widget.auth.mapBridge.setEmergencyMode(enabled: true);
+    if (mounted) setState(() => _emergencyModeEnabled = enabled);
+  });
 
   Future<void> _editAnnouncement([Map<String, dynamic>? existing]) async {
     final title =
@@ -764,10 +803,10 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen> {
             widget.auth.user?.role == 'GOVERNMENT') {
           await widget.auth.createDeviceGovernmentWarning(input);
         } else {
-          await widget.auth.api.createAnnouncement(input);
+          await widget.auth.createAnnouncement(input);
         }
       } else {
-        await widget.auth.api.reviseAnnouncement(
+        await widget.auth.reviseAnnouncement(
           existing['event_id'] as String,
           input,
         );
@@ -937,8 +976,10 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen> {
       context: context,
       builder:
           (context) => AlertDialog(
-            title: const Text('撤回公告？'),
-            content: const Text('撤回會發布新的官方簽章版本，並在同步後更新使用者通知。'),
+            title: const Text('撤回並隱藏公告？'),
+            content: const Text(
+              '公告將從工作台清單隱藏，並發布新的官方簽章撤回版本。已發布的簽章歷史與稽核紀錄會保留；使用者端會在同步撤回版本後更新。',
+            ),
             actions: <Widget>[
               TextButton(
                 onPressed: () => Navigator.pop(context, false),
@@ -946,14 +987,21 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen> {
               ),
               FilledButton(
                 onPressed: () => Navigator.pop(context, true),
-                child: const Text('撤回公告'),
+                child: const Text('撤回並隱藏'),
               ),
             ],
           ),
     );
     if (confirmed != true) return;
     await _perform(() async {
-      await widget.auth.api.retractAnnouncement(item['event_id'] as String);
+      final eventId = item['event_id'] as String;
+      await widget.auth.retractAnnouncement(eventId);
+      if (!mounted) return;
+      setState(() {
+        _announcements = _announcements
+            .where((announcement) => announcement['event_id'] != eventId)
+            .toList(growable: false);
+      });
       await _refresh();
     });
   }

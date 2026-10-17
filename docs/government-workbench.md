@@ -21,7 +21,7 @@ government-api ───── PostgreSQL
 
 - `government-api` 只持有 PostgreSQL 連線，不讀取簽章私鑰，也不寫 public release。
 - `government-publisher` 在內部讀取 outbox，以中央 Ed25519 金鑰發布 `official.announcement` 與 `official.verified`。它和中央 collector 共用發布鎖及 release 儲存區。
-- 公開資料 API 仍只讀取已發布資料。公告與查證結論會在下一次 App 重新整理或同步後出現。
+- 公開資料 API 仍只讀取已發布資料。Web 與 Android `SYSTEM_ADMIN` 透過線上工作台建立、修訂或撤回公告後，App 會自動檢查簽章 feed，並在中央 Publisher 發布新版本後更新本機通知；不必手動執行「政府資料更新」。Publisher 非同步處理 outbox，因此雲端公告不是 API 成功回應當下就能顯示。Android 裝置簽署的公告則在 Room 本機提交後立即出現在建立者手機，其他裝置在取得已發布 feed 或 Mesh 資料後顯示。
 - 裝置簽章證明回報來自該裝置金鑰且內容未被改動；中央簽章證明官方發布來源與內容完整性。簽章本身不代表系統已獨立證明回報或公告的事實正確。
 - 未查證回報仍顯示「未經查證，僅供參考」。`REFUTED` 會顯示官方否定結論，不會改成已確認。
 
@@ -86,7 +86,8 @@ Web 以同源 `HttpOnly`、`SameSite=Strict` session cookie 登入，變更請�
 - 所有官方公告固定以全台灣為範圍（`area_id=tw.national`），工作台不提供行政區域代碼欄位；後端也會忽略舊版客戶端傳入的縣市代碼。
 - 建立或修訂欄位：標題、內容、類別、嚴重程度與有效期限。有效期限以台灣時間透過日期／時間選擇器輸入，畫面使用 `yyyy/MM/dd HH:mm:ss`，API 與簽章事件仍保存 ISO 8601 UTC，期限最多 90 天。
 - 地圖位置選填。人員可搜尋 App 隨附的台灣離線地名索引，或移動地圖中心圖釘選點；選取後只發布座標，未指定位置時公告只出現在通知列表。
-- API 將變更寫入 PostgreSQL 與 outbox。Publisher 用中央簽章發布 event-v0 `official.announcement`；修改沿用同一 `event_id` 並遞增版本，撤回則發布新的撤回版本。
+- API 將變更寫入 PostgreSQL 與 outbox。Publisher 用中央簽章發布 event-v0 `official.announcement`；修改沿用同一 `event_id` 並遞增版本，撤回則發布新的撤回版本。工作台的「撤回並隱藏」會將已撤回公告從清單移除，但保留資料庫稽核紀錄與簽章發布歷史。
+- 雲端工作台變更成功後，Android 會自動同步並讀取已驗證的 Room 快照；Web 會檢查已驗證的 feed metadata revision，發現新版本後才載入完整 feed。新增與修訂等中央簽章版本出現後更新通知；撤回版本出現後，已撤回公告從有效通知中消失。若 Publisher 尚未完成發布，App 會短暫重試；不會把未簽章的 API 回應直接顯示為官方通知。
 - 有座標的公告可出現在地圖；沒有座標的公告只顯示在通知列表。
 
 ### Android 政府手機離線警告
@@ -96,7 +97,8 @@ Web 以同源 `HttpOnly`、`SameSite=Strict` session cookie 登入，變更請�
 - 憑證有效時，Android 可離線建立全台警告。事件使用手機私鑰簽署並同時保存到 Room、mesh chunk 與雲端補傳佇列。事件本身的有效期限最多 90 天；憑證之後到期，不會讓憑證有效期間簽出的未過期警告失效。
 - 政府警告使用 `official.announcement`、`source=GOVERNMENT`、`area_id=tw.national`。沒有選地圖位置時不顯示地圖標記。手機端先以政府憑證驗簽，公開中央 feed 仍會另以中央金鑰簽署 manifest 與 chunk。
 - Android 只在使用者已啟用既有「緊急模式」時參與 mesh；App 不會自行啟動藍牙或附近裝置廣播。已簽警告會保留供轉傳；目前 mesh 協定沒有對發布端回報每一台 peer 是否收到，因此畫面不宣稱已送達特定手機。
-- 工作台連線時自動補傳；工作台開啟期間每 5 分鐘重試，亦可按「補傳待上傳警告」。補傳保留原始事件 JSON、`event_id` 與 `payload_hash`；重複請求具冪等性。伺服器成功收件只代表進入發布佇列，App 收到簽章 feed 並核對同一事件後才顯示「已發布」。過期且未上傳的佇列項目會標記為過期，不會送出。
+- 公告本機提交後即出現在建立者手機，不需先執行「政府資料更新」。緊急模式已開啟時，本機 inventory 變更會要求現有 Mesh 服務儘快與近期 peer 同步；緊急模式關閉時保留公告並提供啟用按鈕，不會自行開啟無線電。
+- 上傳佇列在公告建立後排入 Android 網路工作；網路恢復或 App 回到前景時會重試，既有工作台開啟期間每 5 分鐘的重試也保留，亦可手動按「補傳待上傳警告」。Android 系統控制背景工作的實際執行時間。補傳保留原始事件 JSON、`event_id` 與 `payload_hash`；重複請求具冪等性。伺服器成功收件只代表進入發布佇列，App 收到簽章 feed 並核對同一事件後才顯示「已發布」。過期且未上傳的佇列項目會標記為過期，不會送出。
 - 撤銷透過中央簽章的 `government-device-revocations` feed 傳播；資料不包含帳號名稱。Android 同步時先處理撤銷資料，再驗證警告，並透過 mesh relay 原始簽章資料。設備在已知撤銷時間之後簽出的事件會拒絕；撤銷之前的有效警告仍可驗證。離線手機只能依最近一次取得的撤銷資料判斷，工作台會顯示撤銷資訊同步時間。
 - 離線登入僅允許曾登入的啟用政府帳號，且手機本機憑證狀態為 `AUTHORIZED`、憑證未過期時開啟。這只能證明裝置仍持有最後一次取得的有效憑證；離線期間的新停權或撤銷要等資料同步後才會得知。登出清除政府帳號快取與 API session，不會刪除已簽警告、mesh chunk 或待補傳資料。
 

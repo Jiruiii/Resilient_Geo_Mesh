@@ -104,7 +104,9 @@ npm run server:cleanup -- --public-root /var/lib/resilientgeo-public --execute
 
 Android 會先下載並保存撤銷來源，再處理公告來源。裝置在 `revoked_at` 之後簽署的警告不會被接受；時間早於撤銷的警告仍可驗簽與轉傳。Web 驗證器遵循相同規則，並在 IndexedDB 離線快取中保存撤銷事件供舊警告驗證；內部撤銷事件不會送入通知或地圖。離線期間看不到尚未同步到該裝置的最新撤銷，介面會顯示最近一次撤銷同步時間。
 
-Android 簽好的警告先原子保存於 Room 事件、mesh chunk 與上傳佇列。政府工作台連線時及開啟期間每五分鐘會以原 event JSON 重試 `POST /api/v1/government/warnings`；網路失敗不會變更已簽內容或 event id。API 回覆排入佇列不等於 feed 已發布；裝置同步到中央簽章 feed 並確認同一 event id 與 payload hash 後，才將本機狀態更新為已發布。Mesh 目前沒有 peer 收件回執；需啟用既有 Android 緊急模式才會開始 mesh 廣播，應用程式不會自動開啟無線電。
+Android 簽好的警告先原子保存於 Room 事件、mesh chunk 與上傳佇列，建立者手機隨 Room 本機事件更新立即顯示，不需先下載 feed 或手動執行「政府資料更新」。政府工作台連線時及開啟期間每五分鐘以原 event JSON 重試 `POST /api/v1/government/warnings`；另有受網路條件限制的 Android 背景工作，在公告建立後排程，並於網路恢復或 App 回到前景時重試。Android 系統控制背景工作的實際執行時間；網路失敗不會變更已簽內容或 event id。API 回覆排入佇列不等於 feed 已發布；裝置同步到中央簽章 feed 並確認同一 event id 與 payload hash 後，才將本機狀態更新為已發布。
+
+緊急模式已開啟時，Room 中已驗證 chunk inventory 的新增或更新會要求現行 Mesh 服務儘快與近期 peer 同步，並在傳輸中發生 inventory 更新時於當前工作結束後再同步一次。緊急模式關閉時不會啟動服務或無線電；公告留在本機並由工作台提供明確啟用入口。Mesh 目前沒有 peer 收件回執，畫面不宣稱已送達特定手機。其他 Android 裝置先從中央簽章 feed 驗證及保存事件，再由已啟用的 Mesh 服務轉傳；Web 維持簽章 feed 驗證與 IndexedDB 快取，不執行 BLE Mesh。
 
 資料版本、醫療定位限制與逐縣市狀態見[資料說明](../data_description.md)及[點位涵蓋報告](data-coverage-2026-10-04.md)。目前底圖限制見根目錄 [Map_description.md](../Map_description.md)。
 
