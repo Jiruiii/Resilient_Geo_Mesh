@@ -46,6 +46,8 @@ class RouteEventSnapshot {
   }
 
   static String? _kind(MeshEvent event) {
+    // Rescue points are people needing help, not hazards (HazardOverlay ignores them).
+    if (event.namespace == 'crowd.rescue') return null;
     if (event.namespace?.startsWith('crowd.') == true) return '民眾警示';
     return switch (event.eventType) {
       'ROAD_STATUS' => '道路狀態',

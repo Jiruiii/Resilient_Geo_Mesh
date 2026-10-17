@@ -1,12 +1,12 @@
 package com.resilientgeo.mesh.report
 
 import com.resilientgeo.mesh.trust.Canonical
+import com.resilientgeo.mesh.trust.CrowdCommon
+import com.resilientgeo.mesh.trust.CrowdLocationHint
 import com.resilientgeo.mesh.trust.DeviceSigningKey
 import com.resilientgeo.mesh.trust.EventVerifier
 import org.json.JSONArray
 import org.json.JSONObject
-import java.math.BigDecimal
-import java.math.RoundingMode
 import java.time.Duration
 import java.time.Instant
 import java.time.temporal.ChronoUnit
@@ -19,16 +19,8 @@ data class CrowdReportInput(
     val lon: Double,
     val lat: Double,
     val locationSource: String,
-    val locationHint: LocationHint? = null,
-) {
-    data class LocationHint(
-        val method: String,
-        val query: String,
-        val label: String,
-        val kind: String,
-        val precision: String,
-    )
-}
+    val locationHint: CrowdLocationHint? = null,
+)
 
 /**
  * Pure function from form fields + time + device key to a signed event-v0.
@@ -42,7 +34,7 @@ object CrowdReportFactory {
     const val SOURCE_VERSION = "crowd-report-v0"
     val TTL: Duration = Duration.ofHours(6)
     const val DESCRIPTION_MAX_CODE_POINTS = 160
-    const val HINT_TEXT_MAX_CODE_POINTS = 80
+    const val HINT_TEXT_MAX_CODE_POINTS = CrowdCommon.HINT_TEXT_MAX_CODE_POINTS
 
     /** Wire category -> severity; same table as CROWD_CATEGORY_SEVERITY in crowd-report.mjs. */
     val CATEGORY_SEVERITY: Map<String, String> = linkedMapOf(
@@ -52,38 +44,23 @@ object CrowdReportFactory {
         "TRAPPED_INJURED" to "CRITICAL",
         "OTHER" to "LOW",
     )
-    val LOCATION_SOURCES = setOf("CURRENT_LOCATION", "MAP_PICK")
-    val HINT_KINDS = setOf("COUNTY", "DISTRICT", "VILLAGE", "ROAD", "FACILITY")
-    val HINT_PRECISIONS = setOf("AREA", "ROAD", "POINT")
+    val LOCATION_SOURCES = CrowdCommon.LOCATION_SOURCES
+    val HINT_KINDS = CrowdCommon.HINT_KINDS
+    val HINT_PRECISIONS = CrowdCommon.HINT_PRECISIONS
 
     /** [minLon, minLat, maxLon, maxLat]: Taiwan incl. Penghu, Kinmen, Matsu and Pratas. */
-    val TAIWAN_BOUNDS = doubleArrayOf(116.5, 20.5, 122.5, 26.8)
+    val TAIWAN_BOUNDS = CrowdCommon.TAIWAN_BOUNDS
 
     fun validate(input: CrowdReportInput): List<String> {
         val errors = mutableListOf<String>()
-        input.locationHint?.let { hint ->
-            if (hint.method != "ADDRESS") errors += "location_hint.method must be ADDRESS"
-            if (hint.kind !in HINT_KINDS) errors += "location_hint.kind is invalid"
-            if (hint.precision !in HINT_PRECISIONS) errors += "location_hint.precision is invalid"
-            for ((field, value) in listOf("query" to hint.query, "label" to hint.label)) {
-                if (value.codePointCount(0, value.length) > HINT_TEXT_MAX_CODE_POINTS) {
-                    errors += "location_hint.$field must be a string of at most $HINT_TEXT_MAX_CODE_POINTS characters"
-                }
-            }
-        }
+        input.locationHint?.let { errors += CrowdCommon.hintErrors(it) }
         if (input.category !in CATEGORY_SEVERITY) errors += "category is not a known crowd report category"
         if (input.locationSource !in LOCATION_SOURCES) errors += "location.source is invalid"
         val description = input.description.trim()
         if (description.codePointCount(0, description.length) > DESCRIPTION_MAX_CODE_POINTS) {
             errors += "description exceeds $DESCRIPTION_MAX_CODE_POINTS characters"
         }
-        if (!input.lon.isFinite() || !input.lat.isFinite()) {
-            errors += "location must be finite numbers"
-        } else if (input.lon < TAIWAN_BOUNDS[0] || input.lon > TAIWAN_BOUNDS[2] ||
-            input.lat < TAIWAN_BOUNDS[1] || input.lat > TAIWAN_BOUNDS[3]
-        ) {
-            errors += "location is outside the supported area"
-        }
+        errors += CrowdCommon.coordinateErrors(input.lon, input.lat)
         return errors
     }
 
@@ -123,7 +100,7 @@ object CrowdReportFactory {
                 "geometry",
                 JSONObject()
                     .put("type", "Point")
-                    .put("coordinates", JSONArray().put(roundCoordinate(input.lon)).put(roundCoordinate(input.lat))),
+                    .put("coordinates", JSONArray().put(CrowdCommon.roundCoordinate(input.lon)).put(CrowdCommon.roundCoordinate(input.lat))),
             )
             .put("severity", CATEGORY_SEVERITY.getValue(input.category))
             .put("source", SOURCE)
@@ -153,6 +130,5 @@ object CrowdReportFactory {
     }
 
     /** Matches JS `Number(value.toFixed(6))` for the coordinates this factory accepts. */
-    internal fun roundCoordinate(value: Double): Double =
-        BigDecimal(value).setScale(6, RoundingMode.HALF_UP).toDouble()
+    internal fun roundCoordinate(value: Double): Double = CrowdCommon.roundCoordinate(value)
 }

@@ -2,6 +2,7 @@ package com.resilientgeo.mesh.report
 
 import com.resilientgeo.mesh.trust.Canonical
 import com.resilientgeo.mesh.trust.CrowdFixtures
+import com.resilientgeo.mesh.trust.CrowdLocationHint
 import com.resilientgeo.mesh.trust.EventVerifier
 import com.resilientgeo.mesh.trust.TrustedKeyStore
 import org.junit.Assert.assertEquals
@@ -21,8 +22,8 @@ class CrowdReportFactoryTest {
         lon: Double = 121.590304,
         lat: Double = 25.083506,
         source: String = "MAP_PICK",
-        hint: CrowdReportInput.LocationHint? =
-            CrowdReportInput.LocationHint("ADDRESS", "內湖區成功路", "成功路", "ROAD", "ROAD"),
+        hint: CrowdLocationHint? =
+            CrowdLocationHint("ADDRESS", "內湖區成功路", "成功路", "ROAD", "ROAD"),
     ) = CrowdReportInput(category, description, lon, lat, source, hint)
 
     @Test
@@ -59,7 +60,7 @@ class CrowdReportFactoryTest {
         assertFalse(CrowdReportFactory.validate(input(lon = Double.NaN)).isEmpty())
         assertFalse(
             CrowdReportFactory.validate(
-                input(hint = CrowdReportInput.LocationHint("ADDRESS", "x", "x", "STREET", "ROAD")),
+                input(hint = CrowdLocationHint("ADDRESS", "x", "x", "STREET", "ROAD")),
             ).isEmpty(),
         )
     }

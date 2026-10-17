@@ -115,3 +115,21 @@ test('Blob lease provider renews its lease and stops publication after lease los
   await lease.release();
   assert.equal(calls.at(-1)[0], 'release');
 });
+
+test('listBlobNames follows NextMarker pages', async () => {
+  const requests = [];
+  const pages = [
+    '<EnumerationResults><Blobs><Blob><Name>rescue/a.json</Name></Blob></Blobs><NextMarker>m1</NextMarker></EnumerationResults>',
+    '<EnumerationResults><Blobs><Blob><Name>rescue/b.json</Name></Blob></Blobs><NextMarker /></EnumerationResults>',
+  ];
+  const client = createAzureBlobClient({
+    endpoint: 'https://account.blob.core.windows.net',
+    tokenProvider: async () => 'token',
+    fetchImpl: async (url) => {
+      requests.push(new URL(url));
+      return new Response(pages[requests.length - 1], { status: 200 });
+    },
+  });
+  assert.deepEqual(await client.listBlobNames('resilientgeo-crowd', 'rescue/'), ['rescue/a.json', 'rescue/b.json']);
+  assert.equal(requests[1].searchParams.get('marker'), 'm1');
+});

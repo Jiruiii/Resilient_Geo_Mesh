@@ -147,3 +147,18 @@ test('Azure storage settings require HTTPS and expose only names and endpoints',
   assert.equal(api.signingPublicKeyPath, null);
   assert.equal(api.azureStorageBlobEndpoint, 'https://resilientgeo.blob.core.windows.net');
 });
+
+test('API config reads the optional rescue storage settings', () => {
+  const base = {
+    PUBLIC_RELEASE_ROOT: '/var/lib/resilientgeo-public',
+    SIGNING_PUBLIC_KEY_PEM: 'pem',
+    SIGNING_KEY_ID: 'government-feed-2026',
+  };
+  assert.equal(loadApiConfig(base).azureCrowdContainer, null);
+  assert.equal(loadApiConfig(base).crowdDataRoot, null);
+  const configured = loadApiConfig({ ...base, AZURE_CROWD_CONTAINER: 'resilientgeo-crowd', CROWD_DATA_ROOT: '/var/lib/resilientgeo-crowd' });
+  assert.equal(configured.azureCrowdContainer, 'resilientgeo-crowd');
+  assert.equal(configured.crowdDataRoot, '/var/lib/resilientgeo-crowd');
+  assert.throws(() => loadApiConfig({ ...base, AZURE_CROWD_CONTAINER: 'Bad_Name' }), /AZURE_CROWD_CONTAINER/);
+  assert.throws(() => loadApiConfig({ ...base, CROWD_DATA_ROOT: 'relative/path' }), /CROWD_DATA_ROOT/);
+});

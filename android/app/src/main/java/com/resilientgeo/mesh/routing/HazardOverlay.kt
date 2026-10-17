@@ -1,6 +1,7 @@
 package com.resilientgeo.mesh.routing
 
 import com.resilientgeo.mesh.ingest.ApplyState
+import com.resilientgeo.mesh.trust.RescueContract
 
 /** How one event changes one edge. */
 data class EdgeEffect(val event: RouteEvent, val kind: Kind, val factor: Double) {
@@ -23,6 +24,7 @@ data class RouteWarning(val code: String, val eventId: String?, val message: Str
  * | [AREA_HAZARD_TYPES] polygon, CRITICAL   | CURRENT    | intersecting edges blocked            |
  * | [AREA_HAZARD_TYPES] polygon, HIGH       | CURRENT    | intersecting edges penalty x5         |
  * | any crowd.*                             | UNVERIFIED | nearby edges penalty x2, never blocks |
+ * | crowd.rescue                            | —          | ignored (people needing help, not a hazard) |
  * | any of the above                        | EXPIRED    | ignored, counted in a warning         |
  *
  * Area hazards are an allowlist rather than "any CRITICAL polygon": the
@@ -157,6 +159,8 @@ class HazardOverlay private constructor(
         private enum class Role { ROAD_CLOSED, ROAD_PARTIAL, AREA_BLOCK, AREA_PENALTY, UNVERIFIED }
 
         private fun roleOf(event: RouteEvent): Role? = when {
+            // A rescue point marks people who need help, not a hazard to route around.
+            event.namespace == RescueContract.NAMESPACE -> null
             event.namespace.startsWith("crowd.") -> Role.UNVERIFIED
             event.eventType == "ROAD_STATUS" -> when (event.attributes.optString("status")) {
                 "CLOSED" -> Role.ROAD_CLOSED

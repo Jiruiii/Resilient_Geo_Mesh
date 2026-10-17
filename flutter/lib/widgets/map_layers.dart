@@ -9,7 +9,9 @@ import '../data/map_models.dart';
 import '../data/map_zoom.dart';
 import '../data/maplibre_map_config.dart';
 import '../data/ncdr_map_filter.dart';
+import '../data/rescue_request_models.dart';
 import '../data/supply_status.dart';
+import 'rescue_marker.dart';
 
 export '../data/supply_status.dart' show isSupplyStationEvent;
 
@@ -34,6 +36,16 @@ class MapIconCatalog {
   static const IconData shelter = LucideIcons.house;
   static const IconData shelterRecommendation = LucideIcons.mapPinHouse;
   static const IconData medical = LucideIcons.hospital;
+
+  static IconData rescueRequest(RescueRequestType type) => switch (type) {
+    RescueRequestType.firstAidNeeded => LucideIcons.heartPulse,
+    RescueRequestType.immobile => LucideIcons.accessibility,
+    RescueRequestType.trapped => LucideIcons.doorClosed,
+    RescueRequestType.trappedDebris => LucideIcons.brickWall,
+    RescueRequestType.otherRescue => LucideIcons.lifeBuoy,
+  };
+  static const IconData rescueEntry = LucideIcons.lifeBuoy;
+  static const IconData locatorSound = LucideIcons.volume2;
   static const IconData supplyStation = LucideIcons.packageOpen;
 
   static IconData forEvent(MeshEvent event) =>
@@ -71,6 +83,9 @@ class MapMarkerData {
     this.medicalCount = 0,
     this.eventCount = 0,
     this.hasCriticalEvent = false,
+    this.rescueCount = 0,
+    this.urgentRescueCount = 0,
+    this.hasUrgentRescue = false,
   });
 
   final Key key;
@@ -86,6 +101,9 @@ class MapMarkerData {
   final int medicalCount;
   final int eventCount;
   final bool hasCriticalEvent;
+  final int rescueCount;
+  final int urgentRescueCount;
+  final bool hasUrgentRescue;
 }
 
 class MapMarkerCluster {
@@ -107,6 +125,12 @@ class MapMarkerCluster {
       members.fold(0, (total, marker) => total + marker.eventCount);
 
   bool get hasCriticalEvent => members.any((marker) => marker.hasCriticalEvent);
+
+  int get rescueCount => members.fold(0, (total, marker) => total + marker.rescueCount);
+
+  int get urgentRescueCount => members.fold(0, (total, marker) => total + marker.urgentRescueCount);
+
+  bool get hasUrgentRescue => members.any((marker) => marker.hasUrgentRescue);
 }
 
 /// Converts provider-neutral map models to Flutter overlay markers.
@@ -128,6 +152,8 @@ class MapLayers {
   static const double _compactMarkerZoom = 12;
   static const double _compactMarkerSize = 18;
   static const double _fullMarkerSize = 28;
+  static const double _rescueMarkerSize = 34;
+  static const double _compactRescueMarkerSize = 20;
   static final double _defaultRevealAllZoom = ZoomPercentage.toZoom(
     percentage: MapLibreMapConfig.revealAllPercentage,
     minZoom: MapLibreMapConfig.minZoom,
@@ -380,6 +406,9 @@ class MapLayers {
       int medicalCount = 0,
       int eventCount = 0,
       bool hasCriticalEvent = false,
+      int rescueCount = 0,
+      int urgentRescueCount = 0,
+      bool hasUrgentRescue = false,
     }) {
       final area = _areaForPoint(point, index: index, level: level, hint: hint);
       if (area == null) return;
@@ -394,6 +423,9 @@ class MapLayers {
         medicalCount: medicalCount,
         eventCount: eventCount,
         hasCriticalEvent: hasCriticalEvent,
+        rescueCount: rescueCount,
+        urgentRescueCount: urgentRescueCount,
+        hasUrgentRescue: hasUrgentRescue,
       );
     }
 
@@ -411,12 +443,17 @@ class MapLayers {
     for (final event in events) {
       final point = meshEventFocusPoint(event);
       if (point == null) continue;
+      final rescue = RescueRequestView.fromEvent(event);
       addPoint(
         point,
         itemCount: 1,
         eventCount: 1,
-        hasCriticalEvent:
-            event.severity == 'CRITICAL' || event.severity == 'HIGH',
+        hasCriticalEvent: rescue != null
+            ? rescue.urgency != RescueUrgency.medium
+            : event.severity == 'CRITICAL' || event.severity == 'HIGH',
+        rescueCount: rescue != null ? 1 : 0,
+        urgentRescueCount: rescue != null && rescue.urgency != RescueUrgency.medium ? 1 : 0,
+        hasUrgentRescue: rescue != null && rescue.urgency != RescueUrgency.medium,
       );
     }
 
@@ -446,6 +483,9 @@ class MapLayers {
                 medicalCount: group.medicalCount,
                 eventCount: group.eventCount,
                 hasCriticalEvent: group.hasCriticalEvent,
+                rescueCount: group.rescueCount,
+                urgentRescueCount: group.urgentRescueCount,
+                hasUrgentRescue: group.hasUrgentRescue,
               ),
             ],
             point: group.pointForLevel(level),
@@ -719,6 +759,30 @@ class MapLayers {
     MeshEventSelection onSelected, {
     required bool compact,
   }) {
+    final rescue = RescueRequestView.fromEvent(event);
+    if (rescue != null) {
+      final point = meshEventFocusPoint(event)!;
+      final size = compact ? _compactRescueMarkerSize : _rescueMarkerSize;
+      return MapMarkerData(
+        key: ValueKey<String>('event-marker-${meshEventIdentity(event)}'),
+        point: point,
+        width: size,
+        height: size,
+        child: RescueMarker(
+          view: rescue,
+          verification: event.verification ?? CrowdVerification.unverified,
+          compact: compact,
+          onTap: () => onSelected(event),
+        ),
+        onTap: () => onSelected(event),
+        kind: MapMarkerKind.event,
+        eventCount: 1,
+        hasCriticalEvent: rescue.urgency != RescueUrgency.medium,
+        rescueCount: 1,
+        urgentRescueCount: rescue.urgency != RescueUrgency.medium ? 1 : 0,
+        hasUrgentRescue: rescue.urgency != RescueUrgency.medium,
+      );
+    }
     final point = meshEventFocusPoint(event)!;
     final name = eventName(event);
     return MapMarkerData(
@@ -802,6 +866,9 @@ class _AdministrativeSummaryGroup {
   int medicalCount = 0;
   int eventCount = 0;
   bool hasCriticalEvent = false;
+  int rescueCount = 0;
+  int urgentRescueCount = 0;
+  bool hasUrgentRescue = false;
   int pointCount = 0;
   double longitudeSum = 0;
   double latitudeSum = 0;
@@ -813,12 +880,18 @@ class _AdministrativeSummaryGroup {
     required int medicalCount,
     required int eventCount,
     required bool hasCriticalEvent,
+    required int rescueCount,
+    required int urgentRescueCount,
+    required bool hasUrgentRescue,
   }) {
     this.itemCount += itemCount;
     this.shelterCount += shelterCount;
     this.medicalCount += medicalCount;
     this.eventCount += eventCount;
     this.hasCriticalEvent |= hasCriticalEvent;
+    this.rescueCount += rescueCount;
+    this.urgentRescueCount += urgentRescueCount;
+    this.hasUrgentRescue |= hasUrgentRescue;
     pointCount += 1;
     longitudeSum += point.longitude;
     latitudeSum += point.latitude;
@@ -869,7 +942,7 @@ MapMarkerData _clusterMarker(
     return cluster.members.single;
   }
   final key = cluster.members.map((marker) => marker.key).join('|');
-  final label = _clusterLabel(cluster, areaName: areaName);
+  final label = clusterSemanticLabel(cluster, areaName: areaName);
   final showCount = zoomPercentage >= countThreshold;
   final diameter = _clusterDiameter(
     itemCount: cluster.itemCount,
@@ -882,6 +955,8 @@ MapMarkerData _clusterMarker(
     medicalCount: cluster.medicalCount,
     eventCount: cluster.eventCount,
     hasCriticalEvent: cluster.hasCriticalEvent,
+    rescueCount: cluster.rescueCount,
+    hasUrgentRescue: cluster.hasUrgentRescue,
     semanticLabel: label,
     onTap: () => onClusterSelected(cluster.point, targetZoom: targetZoom),
     diameter: diameter,
@@ -900,6 +975,9 @@ MapMarkerData _clusterMarker(
     medicalCount: cluster.medicalCount,
     eventCount: cluster.eventCount,
     hasCriticalEvent: cluster.hasCriticalEvent,
+    rescueCount: cluster.rescueCount,
+    urgentRescueCount: cluster.urgentRescueCount,
+    hasUrgentRescue: cluster.hasUrgentRescue,
   );
 }
 
@@ -1052,11 +1130,14 @@ GeoPoint _clusterPoint(List<MapMarkerData> members) {
   );
 }
 
-String _clusterLabel(MapMarkerCluster cluster, {String? areaName}) {
+String clusterSemanticLabel(MapMarkerCluster cluster, {String? areaName}) {
   final details = <String>[];
   if (cluster.shelterCount > 0) details.add('避難所${cluster.shelterCount}');
   if (cluster.medicalCount > 0) details.add('醫療${cluster.medicalCount}');
   if (cluster.eventCount > 0) details.add('事件${cluster.eventCount}');
+  if (cluster.rescueCount > 0) {
+    details.add('求救點${cluster.rescueCount}，其中${cluster.urgentRescueCount}個高或危急');
+  }
   final prefix = areaName == null ? '資料聚合' : '資料聚合：$areaName';
   return '$prefix，${cluster.itemCount}筆${details.isEmpty ? '' : '，${details.join('、')}'}';
 }
@@ -1090,6 +1171,8 @@ String eventName(MeshEvent event) {
     return '${SupplyStatus(event).drill ? '演練・' : ''}${SupplyStatus(event).name}';
   }
   final attributes = event.attributes;
+  final rescue = RescueRequestView.fromEvent(event);
+  if (rescue != null) return '求救點：${rescue.type.label}';
   if (event.eventType == 'CROWD_REPORT') {
     return '民眾回報：${crowdCategoryLabel(attributes?['category'])}';
   }
@@ -1216,6 +1299,8 @@ class _MapClusterBubble extends StatelessWidget {
     required this.medicalCount,
     required this.eventCount,
     required this.hasCriticalEvent,
+    required this.rescueCount,
+    required this.hasUrgentRescue,
     required this.semanticLabel,
     required this.onTap,
     required this.diameter,
@@ -1227,6 +1312,8 @@ class _MapClusterBubble extends StatelessWidget {
   final int medicalCount;
   final int eventCount;
   final bool hasCriticalEvent;
+  final int rescueCount;
+  final bool hasUrgentRescue;
   final String semanticLabel;
   final VoidCallback onTap;
   final double diameter;
@@ -1239,7 +1326,7 @@ class _MapClusterBubble extends StatelessWidget {
     label: semanticLabel,
     child: SizedBox.expand(
       child: Material(
-        color: hasCriticalEvent ? const Color(0xFFB42318) : shelterMarkerColor,
+        color: hasCriticalEvent || hasUrgentRescue ? const Color(0xFFB42318) : shelterMarkerColor,
         elevation: 2,
         shadowColor: Colors.black45,
         shape: const CircleBorder(
@@ -1285,19 +1372,26 @@ class _MapClusterBubble extends StatelessWidget {
                             ],
                           ),
                         ),
+                      if (rescueCount > 0)
+                        Text(
+                          'SOS $rescueCount',
+                          style: const TextStyle(color: Colors.white, fontSize: 8, fontWeight: FontWeight.w800, height: 1.1),
+                        ),
                     ],
                   )
                   : Center(
-                    child: SizedBox(
-                      width: math.min(7, diameter * 0.4),
-                      height: math.min(7, diameter * 0.4),
-                      child: const DecoratedBox(
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          shape: BoxShape.circle,
+                    child: rescueCount > 0
+                        ? const Text('!', style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w900, height: 1))
+                        : SizedBox(
+                          width: math.min(7, diameter * 0.4),
+                          height: math.min(7, diameter * 0.4),
+                          child: const DecoratedBox(
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
                         ),
-                      ),
-                    ),
                   ),
         ),
       ),

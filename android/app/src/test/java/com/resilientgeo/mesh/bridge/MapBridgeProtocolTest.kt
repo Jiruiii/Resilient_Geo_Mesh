@@ -200,6 +200,40 @@ class MapBridgeProtocolTest {
         assertNull(failure["distance_m"])
     }
 
+    @Test
+    fun `rescue request arguments are parsed into the contract input`() {
+        val input = MapBridgeProtocol.rescueRequestInput(
+            mapOf(
+                "request_type" to "TRAPPED_DEBRIS",
+                "subject" to "SELF",
+                "people_count" to 2,
+                "triage" to mapOf("immobile" to "YES", "breathing_difficulty" to "NO", "severe_bleeding" to "UNKNOWN", "conscious" to "YES"),
+                "description" to "一樓樓梯間",
+                "location" to mapOf("lon" to 121.5, "lat" to 25.0, "source" to "CURRENT_LOCATION"),
+            ),
+        )
+        assertEquals("TRAPPED_DEBRIS", input!!.requestType)
+        assertEquals(2, input.peopleCount)
+        assertEquals("UNKNOWN", input.triage["severe_bleeding"])
+        assertEquals(null, input.locationHint)
+    }
+
+    @Test
+    fun `malformed rescue arguments are refused before reaching the repository`() {
+        assertEquals(null, MapBridgeProtocol.rescueRequestInput(mapOf("request_type" to "TRAPPED")))
+        assertEquals(null, MapBridgeProtocol.rescueRequestInput(mapOf(
+            "request_type" to "TRAPPED", "subject" to "SELF", "people_count" to "2",
+            "triage" to emptyMap<String, String>(), "description" to "",
+            "location" to mapOf("lon" to 121.5, "lat" to 25.0, "source" to "MAP_PICK"),
+        )))
+    }
+
+    @Test
+    fun `rescue action parsing accepts only the four actions`() {
+        assertEquals(com.resilientgeo.mesh.report.RescueAction.EXTEND, MapBridgeProtocol.rescueAction("EXTEND"))
+        assertEquals(null, MapBridgeProtocol.rescueAction("DELETE"))
+    }
+
     private fun eventEntity() = EventEntity(
         namespace = "official.tdx",
         eventId = "road:dahu-01",

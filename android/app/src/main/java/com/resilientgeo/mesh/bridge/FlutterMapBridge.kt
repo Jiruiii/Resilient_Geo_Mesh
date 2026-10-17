@@ -1,11 +1,17 @@
 package com.resilientgeo.mesh.bridge
 
 import android.content.Context
+import com.resilientgeo.mesh.data.ChunkIngestResult
 import com.resilientgeo.mesh.data.CrowdReportResult
 import com.resilientgeo.mesh.data.GovernmentWarningResult
 import com.resilientgeo.mesh.data.MeshRepository
+import com.resilientgeo.mesh.data.RescueResult
 import com.resilientgeo.mesh.online.GovernmentSyncJob
 import com.resilientgeo.mesh.online.GovernmentSyncManager
+import com.resilientgeo.mesh.online.RescueServerSync
+import com.resilientgeo.mesh.online.RescueUploadStates
+import com.resilientgeo.mesh.online.SharedPreferencesRescueUploadStates
+import com.resilientgeo.mesh.online.UrlConnectionRescueHttp
 import com.resilientgeo.mesh.report.GovernmentWarningInput
 import com.resilientgeo.mesh.routing.EvacuationRouteService
 import com.resilientgeo.mesh.routing.RouteResult
@@ -41,6 +47,8 @@ import java.time.Instant
  * verifying it and storing it all happen in [MeshRepository.createCrowdReport]
  * through the same EventIngestor a report from a peer goes through, so Flutter
  * can neither choose a namespace, a key, an apply state nor skip verification.
+ * `submitRescueRequest`／`reviseRescueRequest` 同樣只是寫入請求，簽章與儲存在
+ * [MeshRepository] 內。
  *
  * `calculateEvacuationRoute` is read-only and fully offline: the bundled walk
  * graph plus verified Room events ([EvacuationRouteService]).
@@ -63,6 +71,8 @@ class FlutterMapBridge(
             repository.verifiedShelterDisasterCatalog(governmentSync.message()["url"] as? String)
         },
     ),
+    private val rescueUploadStates: RescueUploadStates = SharedPreferencesRescueUploadStates(context),
+    private val rescueSync: RescueServerSync = RescueServerSync(UrlConnectionRescueHttp, rescueUploadStates),
 ) : MethodChannel.MethodCallHandler, EventChannel.StreamHandler {
 
     private val appContext = context.applicationContext
@@ -137,6 +147,10 @@ class FlutterMapBridge(
             METHOD_LOAD_BUNDLED_FIXTURE -> loadBundledFixture(result)
             METHOD_SET_EMERGENCY_MODE -> setEmergencyMode(call, result)
             METHOD_SUBMIT_CROWD_REPORT -> submitCrowdReport(call, result)
+            METHOD_SUBMIT_RESCUE_REQUEST -> submitRescueRequest(call, result)
+            METHOD_REVISE_RESCUE_REQUEST -> reviseRescueRequest(call, result)
+            METHOD_GET_OWN_RESCUE_REQUESTS -> getOwnRescueRequests(result)
+            "syncRescueNearby" -> syncRescueNearby(call, result)
             "getGovernmentDevicePublicKey" -> getGovernmentDevicePublicKey(result)
             "storeGovernmentDeviceCertificate" -> storeGovernmentDeviceCertificate(call, result)
             "getGovernmentDeviceAuthorization" -> getGovernmentDeviceAuthorization(result)
@@ -264,6 +278,90 @@ class FlutterMapBridge(
                     result.error(SIGNING_UNAVAILABLE, created.message, null)
                 is CrowdReportResult.StorageUnavailable ->
                     result.error(STORAGE_UNAVAILABLE, created.message, null)
+            }
+        }
+    }
+
+    private fun submitRescueRequest(call: MethodCall, result: MethodChannel.Result) {
+        val input = MapBridgeProtocol.rescueRequestInput(call.arguments)
+        if (input == null) {
+            result.error(INVALID_INPUT, "submitRescueRequest arguments do not match the contract", null)
+            return
+        }
+        scope.launch { replyRescue(repository.createRescueRequest(input), result) }
+    }
+
+    private fun reviseRescueRequest(call: MethodCall, result: MethodChannel.Result) {
+        val arguments = call.arguments as? Map<*, *>
+        val eventId = arguments?.get("event_id") as? String
+        val action = MapBridgeProtocol.rescueAction(arguments?.get("action"))
+        val requestArguments = arguments?.get("request")
+        val input = requestArguments?.let { MapBridgeProtocol.rescueRequestInput(it) }
+        if (eventId == null || action == null || (requestArguments != null && input == null) ||
+            (action == com.resilientgeo.mesh.report.RescueAction.UPDATE && input == null)
+        ) {
+            result.error(INVALID_INPUT, "reviseRescueRequest arguments do not match the contract", null)
+            return
+        }
+        scope.launch { replyRescue(repository.reviseRescueRequest(eventId, action, input), result) }
+    }
+
+    private fun getOwnRescueRequests(result: MethodChannel.Result) {
+        scope.launch {
+            try {
+                val rows = repository.ownRescueRequests()
+                result.success(mapOf("requests" to rows.map { row ->
+                    val state = rescueUploadStates.get(row.eventId)?.takeIf { it.version == row.eventVersion }
+                    MapBridgeProtocol.rescueSaved(row, state?.state ?: "NOT_UPLOADED", state?.reason)
+                }))
+            } catch (error: Throwable) {
+                result.error(METHOD_ERROR, error.message, null)
+            }
+        }
+    }
+
+    private fun replyRescue(outcome: RescueResult, result: MethodChannel.Result) {
+        when (outcome) {
+            is RescueResult.Saved -> {
+                result.success(MapBridgeProtocol.rescueSaved(outcome.event))
+                scope.launch { uploadOwnRescue() }
+            }
+            is RescueResult.Invalid -> result.error(INVALID_INPUT, outcome.errors.joinToString("; "), null)
+            is RescueResult.Conflict -> result.error(CONFLICT, outcome.reason, null)
+            is RescueResult.RateLimited ->
+                result.error(RATE_LIMITED, "rescue revision cooldown", mapOf("retry_after_seconds" to outcome.retryAfterSeconds))
+            is RescueResult.SigningUnavailable -> result.error(SIGNING_UNAVAILABLE, outcome.message, null)
+            is RescueResult.StorageUnavailable -> result.error(STORAGE_UNAVAILABLE, outcome.message, null)
+        }
+    }
+
+    private suspend fun uploadOwnRescue() {
+        val base = governmentSync.message()["url"] as? String
+        if (base.isNullOrBlank()) return
+        runCatching { rescueSync.upload(base, repository.ownRescueChunks()) }
+    }
+
+    private fun syncRescueNearby(call: MethodCall, result: MethodChannel.Result) {
+        val bbox = ((call.arguments as? Map<*, *>)?.get("bbox") as? List<*>)?.mapNotNull { (it as? Number)?.toDouble() }
+        if (bbox == null || bbox.size != 4) {
+            result.error(INVALID_INPUT, "syncRescueNearby requires bbox", null)
+            return
+        }
+        val base = governmentSync.message()["url"] as? String
+        if (base.isNullOrBlank()) {
+            result.error("server_unavailable", "rescue server is not configured", null)
+            return
+        }
+        scope.launch {
+            try {
+                uploadOwnRescue()
+                val downloaded = withContext(Dispatchers.IO) {
+                    rescueSync.download(base, bbox) { chunk -> repository.ingestChunk(chunk) is ChunkIngestResult.Applied }
+                }
+                result.success(mapOf("downloaded" to downloaded))
+            } catch (error: Exception) {
+                // Offline is normal; never forward raw server bodies or URLs.
+                result.error("server_unavailable", "rescue sync unavailable", null)
             }
         }
     }
@@ -417,6 +515,11 @@ class FlutterMapBridge(
         const val METHOD_LOAD_BUNDLED_FIXTURE = "loadBundledFixture"
         const val METHOD_SET_EMERGENCY_MODE = "setEmergencyMode"
         const val METHOD_SUBMIT_CROWD_REPORT = "submitCrowdReport"
+        const val METHOD_SUBMIT_RESCUE_REQUEST = "submitRescueRequest"
+        const val METHOD_REVISE_RESCUE_REQUEST = "reviseRescueRequest"
+        const val METHOD_GET_OWN_RESCUE_REQUESTS = "getOwnRescueRequests"
+        const val CONFLICT = "conflict"
+        const val RATE_LIMITED = "rate_limited"
         const val METHOD_CALCULATE_EVACUATION_ROUTE = "calculateEvacuationRoute"
         const val INVALID_INPUT = "invalid_input"
         const val SIGNING_UNAVAILABLE = "signing_unavailable"

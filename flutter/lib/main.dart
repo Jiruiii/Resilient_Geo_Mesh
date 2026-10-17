@@ -10,6 +10,7 @@ import 'data/map_models.dart';
 import 'data/ncdr_map_filter.dart';
 import 'data/offline_map_web_protocol.dart';
 import 'data/maplibre_web_runtime.dart';
+import 'data/siren_controller.dart';
 import 'debug/route_validation_app.dart';
 import 'debug/mesh_drill_app.dart';
 import 'screens/map_screen.dart';
@@ -17,6 +18,7 @@ import 'screens/notifications_screen.dart';
 import 'screens/profile_screen.dart';
 import 'theme/app_theme.dart';
 import 'widgets/app_bottom_navigation.dart';
+import 'widgets/siren_panel.dart';
 import 'widgets/startup_splash.dart';
 
 Future<void> main() async {
@@ -57,15 +59,18 @@ class ResilientGeoApp extends StatefulWidget {
 
 class _ResilientGeoAppState extends State<ResilientGeoApp> {
   late final MapAppController _controller;
+  late final SirenController _siren;
 
   @override
   void initState() {
     super.initState();
     _controller = MapAppController()..load();
+    _siren = SirenController(SirenPlatform.forPlatform());
   }
 
   @override
   void dispose() {
+    _siren.dispose();
     _controller.dispose();
     super.dispose();
   }
@@ -79,15 +84,16 @@ class _ResilientGeoAppState extends State<ResilientGeoApp> {
           themeMode: _controller.themeMode,
           theme: AppTheme.light(),
           darkTheme: AppTheme.dark(),
-          home: _MapAppHome(controller: _controller),
+          home: _MapAppHome(controller: _controller, siren: _siren),
         ),
   );
 }
 
 class _MapAppHome extends StatefulWidget {
-  const _MapAppHome({required this.controller});
+  const _MapAppHome({required this.controller, required this.siren});
 
   final MapAppController controller;
+  final SirenController siren;
 
   @override
   State<_MapAppHome> createState() => _MapAppHomeState();
@@ -169,6 +175,9 @@ class _MapAppHomeState extends State<_MapAppHome> {
                   themeMode: controller.themeMode,
                   animationEnabled: controller.animationEnabled,
                   active: _selectedIndex == 0,
+                  rescueService: controller.rescueService,
+                  onViewportSettled: controller.setRescueViewport,
+                  sirenPanelBuilder: (context, _) => SirenPanel(controller: widget.siren),
                   notificationFocusEvent: _notificationFocusEvent,
                   notificationFocusRequestId: _notificationFocusRequestId,
                 ),

@@ -9,4 +9,7 @@ sealed class IngestResult {
     data class RejectedVersionRollback(val storedVersion: Int, val incomingVersion: Int) : IngestResult()
     data class RejectedSameVersionConflict(val storedVersion: Int, val incomingVersion: Int) : IngestResult()
     data class RejectedVerification(val stage: VerificationResult.Stage, val errors: List<String>) : IngestResult()
+
+    /** Rejected by the crowd update rules: signer_mismatch or a rescue lifecycle code. */
+    data class RejectedTransition(val reason: String) : IngestResult()
 }

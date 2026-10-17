@@ -13,6 +13,10 @@ COPY server ./server
 COPY deploy/collector-entrypoint.mjs ./deploy/collector-entrypoint.mjs
 COPY deploy/api-entrypoint.mjs ./deploy/api-entrypoint.mjs
 
+# Writable by the non-root API user; docker-compose mounts the crowd_data
+# volume here and copies this ownership into the new volume.
+RUN mkdir -p /var/lib/resilientgeo-crowd && chown node:node /var/lib/resilientgeo-crowd
+
 USER root
 
 CMD ["npm", "run", "server:start"]

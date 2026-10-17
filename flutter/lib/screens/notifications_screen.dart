@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../data/attestation_index.dart';
 import '../data/government_announcement_time.dart';
 import '../data/map_models.dart';
+import '../data/rescue_request_models.dart';
 import '../widgets/map_layers.dart';
 
 class NotificationsScreen extends StatelessWidget {
@@ -180,6 +181,7 @@ class _EventCard extends StatelessWidget {
             ? (event.geometry! as PointGeometry).point
             : null;
     final title = eventName(event);
+    final rescue = RescueRequestView.fromEvent(event);
     final supplyStation = isSupplyStationEvent(event);
     return Card(
       child: Column(
@@ -203,6 +205,8 @@ class _EventCard extends StatelessWidget {
                   child: Icon(
                     event.isExpired
                         ? MapIconCatalog.expiredEvent
+                        : rescue != null
+                        ? MapIconCatalog.rescueRequest(rescue.type)
                         : MapIconCatalog.forEvent(event),
                     color:
                         supplyStation
@@ -217,12 +221,18 @@ class _EventCard extends StatelessWidget {
                 child: Text(
                   [
                     if (demo) '模擬事件，非即時官方災情',
-                    '事件類型：${event.eventType ?? '無資料'}',
-                    if (announcement)
-                      '公告類別：${governmentAnnouncementCategoryLabel(event.attributes?['category'])}',
-                    '來源：${event.source ?? '無資料'}',
-                    if (!supplyStation)
-                      '嚴重度：${event.severity ?? '無資料'}',
+                    if (rescue != null) ...<String>[
+                      '求救狀態：${rescue.status.label}',
+                      '急迫程度：${rescue.urgency.label}',
+                      '人數：${rescue.peopleCount} 人',
+                    ] else ...<String>[
+                      '事件類型：${event.eventType ?? '無資料'}',
+                      if (announcement)
+                        '公告類別：${governmentAnnouncementCategoryLabel(event.attributes?['category'])}',
+                      '來源：${event.source ?? '無資料'}',
+                      if (!supplyStation)
+                        '嚴重度：${event.severity ?? '無資料'}',
+                    ],
                     isCrowdEvent(event) && !event.isExpired
                         ? '狀態：${crowdVerificationLabel(event.verification ?? CrowdVerification.unverified)}'
                         : event.namespace == 'official.announcement'

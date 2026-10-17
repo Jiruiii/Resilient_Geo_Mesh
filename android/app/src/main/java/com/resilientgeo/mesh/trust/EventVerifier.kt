@@ -119,6 +119,13 @@ object EventVerifier {
             return VerificationResult.Invalid(VerificationResult.Stage.SIGNATURE, listOf("signature_invalid"))
         }
 
+        if (event.optString("namespace") == RescueContract.NAMESPACE) {
+            val contractErrors = RescueContract.eventErrors(event)
+            if (contractErrors.isNotEmpty()) {
+                return VerificationResult.Invalid(VerificationResult.Stage.CONTRACT, contractErrors)
+            }
+        }
+
         val expiresAt = EventShapeValidator.parseTimeOrNull(event.getString("expires_at"))
             ?: return VerificationResult.Invalid(VerificationResult.Stage.SCHEMA, listOf("expires_at must be an RFC 3339 timestamp"))
         val expired = !now.isBefore(expiresAt)

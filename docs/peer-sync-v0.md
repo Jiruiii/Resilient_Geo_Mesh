@@ -46,6 +46,22 @@ sequenceDiagram
 - HELLO 永遠宣告 `crowd-reports` dataset（沒有回報時 chunk 清單為空），所以新節點也會向鄰居要回報；因為所有節點的 `manifest_id` 都是 `crowd:none`，`computeDiff` 走同 manifest 的逐 chunk 比對，不需要改動。
 - 儲存上限：自己的有效回報最多 20 筆；他人的回報最多 200 筆。每次收到 crowd chunk 與每次組 HELLO 時，已過期的回報先退出轉傳清單（事件列仍保留，顯示為 EXPIRED），之後超過上限的部分由最舊的他人回報開始整筆刪除。
 
+## 求救分片（crowd-rescue，2026-10-12 實作）
+
+求救（`crowd.rescue`）走與群眾回報相同的「裝置簽章 chunk」路徑，但是獨立的 dataset，不會和 `crowd-reports` 混在同一個 manifest 或清理規則下：
+
+| 欄位 | 值 |
+|---|---|
+| `dataset_id` / `namespace` | `crowd-rescue` / `crowd.rescue` |
+| `chunk_id` | `crowd-rescue:<event_id>` |
+| `manifest_id` | 固定 `crowd-rescue:none` |
+| `area_id` / `theme` | `crowd` / `rescue` |
+
+- 同一筆求救被延長、更新或結束時沿用同一個 `chunk_id`（因為 `event_id` 不變），只有 `chunk_hash` 跟著新版本內容改變；鄰居在 `DIFF` 階段比對 `chunk_hash` 發現不同，即視為 stale 並重新 `REQUEST` 該 chunk，取得的新版本仍要通過完整的 chunk／事件驗證才能覆蓋本機版本。
+- 他人（非本機裝置）求救的保留上限是 300 筆；超過時與群眾回報一樣，從最舊的他人求救開始整筆淘汰，已過期的求救先退出轉傳清單（但本機自己的進行中求救不計入他人上限，另外以「同時最多 1 筆 ACTIVE」限制，見 `docs/data-contract-v0.md`）。
+- 舊版 App（在 `crowd.rescue` 推出前編譯）不認得 `crowd-rescue` 這個 dataset id，HELLO 不會為它宣告 chunk 清單，因此也不會轉傳；求救只能在已更新到此版本的節點之間流通，對舊版節點而言如同不存在，不會造成解析錯誤或崩潰。
+- 伺服器（見 `docs/mvp-remaining-tasks.md` 隱私段落）以相同 chunk 格式原樣轉發：Android 上傳自己的 crowd-rescue chunk、下載附近節點的 chunk 後，交給與 mesh 相同的 `ingestChunk` 驗證路徑，所以 Web 發出的求救可以進入 mesh、Android 的求救也能被伺服器中繼給其他使用者。
+
 ## bbox 相關性過濾（資料層已支援，排程器屬階段 3）
 
 每個 chunk 與 manifest 條目都帶 `area_id` 與 `bbox`（`[minLon, minLat, maxLon, maxLat]`）。節點在 `DIFF` 之後、`REQUEST` 之前可以先做地理過濾：

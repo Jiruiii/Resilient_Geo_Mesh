@@ -11,6 +11,7 @@ import com.resilientgeo.mesh.bridge.FlutterMapBridge
 import com.resilientgeo.mesh.bridge.OfflineMapAssetBridge
 import com.resilientgeo.mesh.bridge.GovernmentSessionKeyStore
 import com.resilientgeo.mesh.bridge.SharedPreferencesEmergencyModeState
+import com.resilientgeo.mesh.bridge.SirenBridge
 import com.resilientgeo.mesh.trust.GovernmentDeviceKeyStore
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -35,6 +36,7 @@ class MainActivity : FlutterFragmentActivity() {
 
     private var mapBridge: FlutterMapBridge? = null
     private var offlineMapAssetBridge: OfflineMapAssetBridge? = null
+    private var sirenBridge: SirenBridge? = null
     private var governmentCheck: Job? = null
     private var governmentAuthChannel: MethodChannel? = null
     private val governmentSessionStore by lazy { GovernmentSessionKeyStore(applicationContext) }
@@ -97,6 +99,12 @@ class MainActivity : FlutterFragmentActivity() {
             applicationContext,
             flutterEngine.dartExecutor.binaryMessenger,
         )
+        sirenBridge?.close()
+        sirenBridge = SirenBridge(
+            applicationContext,
+            flutterEngine.dartExecutor.binaryMessenger,
+            requestNotificationPermission = ::requestNotificationPermissionIfNeeded,
+        )
         governmentAuthChannel?.setMethodCallHandler(null)
         governmentAuthChannel = MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
@@ -130,6 +138,8 @@ class MainActivity : FlutterFragmentActivity() {
         mapBridge = null
         offlineMapAssetBridge?.close()
         offlineMapAssetBridge = null
+        sirenBridge?.close()
+        sirenBridge = null
         governmentAuthChannel?.setMethodCallHandler(null)
         governmentAuthChannel = null
         super.onDestroy()

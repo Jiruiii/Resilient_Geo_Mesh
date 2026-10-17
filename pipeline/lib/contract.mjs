@@ -11,7 +11,8 @@ import {
 } from './canonical.mjs';
 import { signCanonical } from './crypto.mjs';
 import { bboxOfEvents } from './geo.mjs';
-import { deviceKeyIdFromSpkiBase64, isDeviceKeyId, resolveDeviceKey } from './device-key.mjs';
+import { deviceKeyIdFromSpkiBase64, isCrowdNamespace, isDeviceKeyId, resolveDeviceKey } from './device-key.mjs';
+import { RESCUE_NAMESPACE, rescueEventErrors, rescueTransitionErrors } from './rescue-contract.mjs';
 import { verifyGovernmentDeviceCertificate } from './government-device-certificate.mjs';
 
 const EVENT_REQUIRED = [
@@ -209,6 +210,10 @@ export function verifyEvent(event, publicKey, options = {}) {
   if (!verificationKey || !verifyCanonical(eventSignatureInput(event), event.signature, verificationKey)) {
     return { valid: false, stage: 'signature', errors: ['signature_invalid'], current: false };
   }
+  if (event.namespace === RESCUE_NAMESPACE) {
+    const contractErrors = rescueEventErrors(event);
+    if (contractErrors.length > 0) return { valid: false, stage: 'contract', errors: contractErrors, current: false };
+  }
   const now = options.now ? new Date(options.now) : new Date();
   const expired = now >= parseTime(event.expires_at, 'expires_at');
   return { valid: true, expired, current: !expired, errors: [] };
@@ -349,6 +354,21 @@ export function ingestEvent(store, event, publicKey, options = {}) {
     };
   }
   if (event.event_version > current.event_version) {
+    const transitionErrors = event.namespace === RESCUE_NAMESPACE
+      ? rescueTransitionErrors(current, event)
+      : isCrowdNamespace(event.namespace) && current.signing_key_id !== event.signing_key_id
+        ? ['signer_mismatch']
+        : [];
+    if (transitionErrors.length > 0) {
+      return {
+        key,
+        result: 'rejected',
+        stored_version_before: current.event_version,
+        incoming_version: event.event_version,
+        reason: transitionErrors[0],
+        verification,
+      };
+    }
     store.set(identity, event);
     return {
       key,

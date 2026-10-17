@@ -77,6 +77,43 @@ resource controlContainer 'Microsoft.Storage/storageAccounts/blobServices/contai
   properties: { publicAccess: 'None' }
 }
 
+// Rescue requests from the public API. Private, written only by the API
+// identity, and deleted seven days after their last write.
+resource crowdContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = {
+  parent: blobService
+  name: 'resilientgeo-crowd'
+  properties: { publicAccess: 'None' }
+}
+
+resource storageLifecycle 'Microsoft.Storage/storageAccounts/managementPolicies@2023-05-01' = {
+  parent: storage
+  name: 'default'
+  properties: {
+    policy: {
+      rules: [
+        {
+          enabled: true
+          name: 'delete-rescue-requests'
+          type: 'Lifecycle'
+          definition: {
+            filters: {
+              blobTypes: [ 'blockBlob' ]
+              prefixMatch: [
+                'resilientgeo-crowd/rescue/'
+              ]
+            }
+            actions: {
+              baseBlob: {
+                delete: { daysAfterModificationGreaterThan: 7 }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}
+
 resource registry 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
   name: registryName
   location: location
@@ -223,7 +260,7 @@ var emergencyMedicalEnv = emergencyMedicalRosterConfigured ? [
 resource api 'Microsoft.App/containerApps@2024-03-01' = if (enableApps) {
   name: '${namePrefix}-api'
   location: location
-  dependsOn: [apiAcrPull, apiBlobRead, apiVaultSecrets]
+  dependsOn: [apiAcrPull, apiBlobRead, apiCrowdBlobWrite, apiVaultSecrets]
   identity: {
     type: 'UserAssigned'
     userAssignedIdentities: { '${apiIdentity.id}': {} }
@@ -262,6 +299,7 @@ resource api 'Microsoft.App/containerApps@2024-03-01' = if (enableApps) {
           { name: 'AZURE_CONTROL_CONTAINER', value: controlContainer.name }
           { name: 'AZURE_RELEASE_POINTER_BLOB', value: 'current/release-pointer.json' }
           { name: 'AZURE_COLLECTOR_LOCK_BLOB', value: 'locks/collector.lock' }
+          { name: 'AZURE_CROWD_CONTAINER', value: crowdContainer.name }
           { name: 'SIGNING_PUBLIC_KEY_PEM', secretRef: 'signing-public-key' }
         ]
         volumeMounts: [{ volumeName: 'public-share', mountPath: publicSharePath }]
@@ -411,6 +449,12 @@ resource apiBlobRead 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (
   name: guid(controlContainer.id, apiIdentity.id, roleBlobReader)
   scope: controlContainer
   properties: { roleDefinitionId: roleBlobReader, principalId: apiIdentity.properties.principalId, principalType: 'ServicePrincipal' }
+}
+
+resource apiCrowdBlobWrite 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (enableApps) {
+  name: guid(crowdContainer.id, apiIdentity.id, roleBlobContributor)
+  scope: crowdContainer
+  properties: { roleDefinitionId: roleBlobContributor, principalId: apiIdentity.properties.principalId, principalType: 'ServicePrincipal' }
 }
 
 resource apiVaultSecrets 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (enableApps) {

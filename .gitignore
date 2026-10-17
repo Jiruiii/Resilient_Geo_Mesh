@@ -28,6 +28,9 @@ node_modules/
 __pycache__/
 *.py[cod]
 
+# Dart/Flutter package cache. Local to each machine, not shared state.
+/.pub-cache/
+
 # Android
 /android/.gradle/
 /android/.kotlin/

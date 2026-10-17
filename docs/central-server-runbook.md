@@ -82,3 +82,11 @@ docker compose -f deploy/docker-compose.yml logs --since=30m collector
 ## 安全界線
 
 collector 是唯一收集上游資料並寫入 private source cache 的 service。政府工作台發布 worker 可讀 PostgreSQL outbox、讀取中央 signing key，並和 collector 共用 public release 及發布鎖；government-api 只有資料庫連線，不持有 signing key，也無法寫入 public release。公開資料 API 只 read-only mount public release，沒有上游 API key 或 signing private key；Caddy 提供 Flutter Web 外殼、版本化門牌資產，並代理 `/healthz`、`/readyz`、`/feed.json`、`/releases/*`、`/v1/*` 及 `/api/v1/*`。
+
+## 求救接收（`/v1/crowd/rescue-events`）
+
+- API 只對 `resilientgeo-crowd` container（Azure）或 `crowd_data` volume（docker compose）有寫入權；`resilientgeo-control` 與 public release 仍唯讀。
+- 收到的是裝置簽章的 crowd-rescue chunk，API 不簽章、不改寫內容；GET 原樣回傳進行中求救的 chunk，bbox 每邊上限 0.05 度。
+- 速率限制在各 replica 記憶體中計算；ACA `maxReplicas: 2` 時實際上限最多為設定值的 2 倍。
+- `rescue/` blob 在最後修改 7 天後由 lifecycle policy 刪除；docker compose 版本沒有自動刪除，需定期執行 `find /var/lib/resilientgeo-crowd/rescue -mtime +7 -delete`。
+- log 不記錄描述與座標。

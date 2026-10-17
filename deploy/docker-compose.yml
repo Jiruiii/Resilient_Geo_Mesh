@@ -139,11 +139,13 @@ services:
       ADDRESS_PACKS_ROOT: /app/deploy/public/address-packs
       SIGNING_PUBLIC_KEY_PATH: /run/secrets/signing_public_key
       SIGNING_KEY_ID: ${SIGNING_KEY_ID:?set SIGNING_KEY_ID}
+      CROWD_DATA_ROOT: /var/lib/resilientgeo-crowd
     secrets:
       - signing_public_key
     volumes:
       - public_release:/var/lib/resilientgeo-public:ro
       - ../deploy/public/address-packs:/app/deploy/public/address-packs:ro
+      - crowd_data:/var/lib/resilientgeo-crowd
     read_only: true
     tmpfs:
       - /tmp
@@ -176,6 +178,7 @@ services:
 volumes:
   private_data:
   public_release:
+  crowd_data:
   government_db:
   caddy_data:
   caddy_config:

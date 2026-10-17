@@ -4,6 +4,7 @@ import '../data/attestation_index.dart';
 import '../data/crowd_report_models.dart';
 import '../data/display_time.dart';
 import '../data/map_models.dart';
+import '../data/rescue_request_models.dart';
 import '../data/supply_status.dart';
 import 'map_layers.dart';
 
@@ -16,13 +17,15 @@ class FeatureDetailsSheet extends StatelessWidget {
     this.onPlanEvacuationRoute,
   }) : _feature = feature,
        _event = null,
-       corroboration = null;
+       corroboration = null,
+       confirmedEarlierVersion = false;
 
   const FeatureDetailsSheet.event({
     super.key,
     required MeshEvent event,
     required this.onClose,
     this.corroboration,
+    this.confirmedEarlierVersion = false,
   }) : _event = event,
        _feature = null,
        snapshotAt = null,
@@ -36,6 +39,10 @@ class FeatureDetailsSheet extends StatelessWidget {
 
   /// 「N 人回報」 for a crowd report several devices agree on; never a verdict.
   final String? corroboration;
+
+  /// True when the official attestation confirmed an earlier version of this
+  /// request, so the current verification badge should not be read as current.
+  final bool confirmedEarlierVersion;
 
   @override
   Widget build(BuildContext context) {
@@ -142,47 +149,73 @@ class FeatureDetailsSheet extends StatelessWidget {
     ];
   }
 
-  List<Widget> _eventBody(MeshEvent event) => <Widget>[
-    if (event.attributes?['exercise'] == true ||
-        event.namespace?.startsWith('drill.') == true)
-      const Text(
-        '演練資料，非真實災情或政府公告',
-        style: TextStyle(fontWeight: FontWeight.bold),
+  List<Widget> _eventBody(MeshEvent event) {
+    final rescue = RescueRequestView.fromEvent(event);
+    if (rescue != null) return _rescueBody(event, rescue);
+    return <Widget>[
+      if (event.attributes?['exercise'] == true ||
+          event.namespace?.startsWith('drill.') == true)
+        const Text(
+          '演練資料，非真實災情或政府公告',
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
+      if (isSupplyEvent(event)) ...[
+        _DetailLine('發放狀態', SupplyStatus(event).statusAt()),
+        _DetailLine(
+          '物資',
+          SupplyStatus(event).items.isEmpty ? '未知' : SupplyStatus(event).items,
+        ),
+        _DetailLine('剩餘數量', SupplyStatus(event).quantity),
+        _DetailLine('發放時間', SupplyStatus(event).openingHours),
+        _DetailLine('地址', SupplyStatus(event).address),
+        _DetailLine('發布單位', SupplyStatus(event).issuer),
+        const Text('供應資訊可能已變更；未知數量不代表沒有物資。'),
+      ],
+      if (isCrowdEvent(event)) ...<Widget>[
+        _VerificationNotice(event.verification ?? CrowdVerification.unverified),
+        _DetailLine('回報類別', crowdCategoryLabel(event.attributes?['category'])),
+        _DetailLine('描述', _text(event.attributes?['description'])),
+        if (corroboration != null) _DetailLine('附近回報', corroboration!),
+      ],
+      if (event.namespace == 'official.announcement') ...<Widget>[
+        _DetailLine(
+          '公告類別',
+          governmentAnnouncementCategoryLabel(event.attributes?['category']),
+        ),
+        if (event.attributes?['content'] is String)
+          _DetailLine('公告內容', _text(event.attributes?['content'])),
+      ],
+      _DetailLine('事件類型', _text(event.eventType)),
+      if (!isSupplyStationEvent(event))
+        _DetailLine('嚴重度', _text(event.severity)),
+      _DetailLine('位置／範圍', _geometryText(event.geometry)),
+      _DetailLine('來源', _text(event.source)),
+      _DetailLine('發佈時間', _text(event.issuedAt)),
+      _DetailLine('到期時間', _text(event.expiresAt)),
+      _DetailLine('資料狀態', _eventState(event)),
+    ];
+  }
+
+  List<Widget> _rescueBody(MeshEvent event, RescueRequestView rescue) => <Widget>[
+    _VerificationNotice(event.verification ?? CrowdVerification.unverified),
+    if (confirmedEarlierVersion)
+      const Padding(
+        padding: EdgeInsets.only(bottom: 2),
+        child: Text('官方確認的是先前版本，最新內容未經查證', key: ValueKey<String>('rescue-confirmed-earlier-version')),
       ),
-    if (isSupplyEvent(event)) ...[
-      _DetailLine('發放狀態', SupplyStatus(event).statusAt()),
-      _DetailLine(
-        '物資',
-        SupplyStatus(event).items.isEmpty ? '未知' : SupplyStatus(event).items,
-      ),
-      _DetailLine('剩餘數量', SupplyStatus(event).quantity),
-      _DetailLine('發放時間', SupplyStatus(event).openingHours),
-      _DetailLine('地址', SupplyStatus(event).address),
-      _DetailLine('發布單位', SupplyStatus(event).issuer),
-      const Text('供應資訊可能已變更；未知數量不代表沒有物資。'),
-    ],
-    if (isCrowdEvent(event)) ...<Widget>[
-      _VerificationNotice(event.verification ?? CrowdVerification.unverified),
-      _DetailLine('回報類別', crowdCategoryLabel(event.attributes?['category'])),
-      _DetailLine('描述', _text(event.attributes?['description'])),
-      if (corroboration != null) _DetailLine('附近回報', corroboration!),
-    ],
-    if (event.namespace == 'official.announcement') ...<Widget>[
-      _DetailLine(
-        '公告類別',
-        governmentAnnouncementCategoryLabel(event.attributes?['category']),
-      ),
-      if (event.attributes?['content'] is String)
-        _DetailLine('公告內容', _text(event.attributes?['content'])),
-    ],
-    _DetailLine('事件類型', _text(event.eventType)),
-    if (!isSupplyStationEvent(event))
-      _DetailLine('嚴重度', _text(event.severity)),
-    _DetailLine('位置／範圍', _geometryText(event.geometry)),
-    _DetailLine('來源', _text(event.source)),
-    _DetailLine('發佈時間', _text(event.issuedAt)),
-    _DetailLine('到期時間', _text(event.expiresAt)),
-    _DetailLine('資料狀態', _eventState(event)),
+    _DetailLine('求救類型', rescue.type.label),
+    _DetailLine('急迫程度', '${rescue.urgency.label}（${rescueUrgencyReason(rescue.type, rescue.triage, rescue.subject)}）'),
+    _DetailLine('求救狀態', rescue.status.label),
+    _DetailLine('求救對象', rescue.subject.label),
+    _DetailLine('人數', '${rescue.peopleCount} 人'),
+    _DetailLine('描述', _text(rescue.description)),
+    _DetailLine('位置來源', event.attributes?['location_source'] == 'MAP_PICK' ? '地圖選點' : '目前位置'),
+    _DetailLine('最後更新', formatUpdateTime(event.issuedAt)),
+    _DetailLine('到期時間', formatUpdateTime(event.expiresAt)),
+    const Padding(
+      padding: EdgeInsets.only(top: 8),
+      child: Text('未經查證，不代表已派遣救援', key: ValueKey<String>('rescue-not-dispatched')),
+    ),
   ];
 }
 

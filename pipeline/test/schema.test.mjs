@@ -386,3 +386,11 @@ test('crowd-reports-v0.json is byte-identical to the copy the Android tests read
     readFileSync(path.join(ROOT, 'android/app/src/test/resources/fixtures/crowd-reports-v0.json'), 'utf8'),
   );
 });
+
+const rescueFixture = readJson('fixtures/rescue-requests-v0.json');
+
+test('valid rescue requests conform to event-v0', () => {
+  for (const entry of rescueFixture.event_cases.filter((item) => item.expect.valid)) {
+    assert.deepEqual(validate(entry.event, eventSchema), [], entry.name);
+  }
+});

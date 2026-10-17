@@ -44,6 +44,13 @@ function optionalAbsolutePath(env, name) {
   return path.normalize(value);
 }
 
+function optionalContainer(env, name) {
+  const value = env[name];
+  if (value === undefined || value === '') return null;
+  if (!/^[a-z0-9-]{3,63}$/u.test(value)) throw new TypeError(`${name} is invalid`);
+  return value;
+}
+
 function positiveInteger(env, name, fallback) {
   const raw = env[name] ?? String(fallback);
   if (!/^\d+$/u.test(raw)) throw new TypeError(`${name} must be a positive integer`);
@@ -182,6 +189,8 @@ export function loadApiConfig(env = process.env) {
     signingPublicKeyPath,
     signingKeyId,
     ...azureStorageSettings(env),
+    azureCrowdContainer: optionalContainer(env, 'AZURE_CROWD_CONTAINER'),
+    crowdDataRoot: optionalAbsolutePath(env, 'CROWD_DATA_ROOT'),
     host: env.HOST || '0.0.0.0',
     port: port(env),
     serverVersion: env.SERVER_VERSION ?? null,

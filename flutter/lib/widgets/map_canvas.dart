@@ -41,6 +41,7 @@ class MapCanvas extends StatefulWidget {
     required this.onMapTap,
     this.onCoordinatePicked,
     this.onReportCameraIdle,
+    this.onCameraSettled,
     this.showReportLocationPicker = false,
     this.route,
     this.administrativeIndex,
@@ -70,6 +71,7 @@ class MapCanvas extends StatefulWidget {
   final VoidCallback onMapTap;
   final ValueChanged<GeoPoint>? onCoordinatePicked;
   final ValueChanged<GeoPoint>? onReportCameraIdle;
+  final ValueChanged<GeoPoint>? onCameraSettled;
   final bool showReportLocationPicker;
   final EvacuationRouteResult? route;
   final MapAdministrativeIndex? administrativeIndex;
@@ -479,6 +481,11 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
         latitude: position.target.latitude,
       ),
     );
+    if (cameraChanged) {
+      widget.onCameraSettled?.call(
+        GeoPoint(longitude: position.target.longitude, latitude: position.target.latitude),
+      );
+    }
     final boundsZoom = _cameraBoundsZoomOverride;
     if (boundsZoom == null || (position.zoom - boundsZoom).abs() >= 0.05) {
       _cameraBoundsZoomOverride = position.zoom;
