@@ -10,7 +10,10 @@ import '../data/map_zoom.dart';
 import '../data/maplibre_map_config.dart';
 import '../data/ncdr_map_filter.dart';
 import '../data/rescue_request_models.dart';
+import '../data/supply_status.dart';
 import 'rescue_marker.dart';
+
+export '../data/supply_status.dart' show isSupplyStationEvent;
 
 typedef StaticFeatureSelection = void Function(List<StaticFeature> features);
 typedef MeshEventSelection = void Function(MeshEvent event);
@@ -19,6 +22,7 @@ typedef MapClusterSelection =
 
 const Color shelterMarkerColor = Color(0xFF0F766E);
 const Color medicalMarkerColor = Color(0xFF4F46E5);
+const Color supplyStationMarkerColor = Color(0xFFF57C00);
 
 enum MapMarkerKind { facility, event, currentLocation, cluster }
 
@@ -42,7 +46,27 @@ class MapIconCatalog {
   };
   static const IconData rescueEntry = LucideIcons.lifeBuoy;
   static const IconData locatorSound = LucideIcons.volume2;
+  static const IconData supplyStation = LucideIcons.packageOpen;
+
+  static IconData forEvent(MeshEvent event) =>
+      isSupplyStationEvent(event)
+          ? supplyStation
+          : isSupplyEvent(event)
+          ? LucideIcons.box
+          : disaster;
 }
+
+String governmentAnnouncementCategoryLabel(Object? category) =>
+    switch (category) {
+      'SAFETY' => '安全提醒',
+      'WEATHER' => '天氣',
+      'ROAD' => '道路',
+      'SHELTER' => '避難收容',
+      'SUPPLY_STATION' => '物資站',
+      'OTHER' => '其他',
+      String value => value,
+      _ => '未分類',
+    };
 
 class MapMarkerData {
   const MapMarkerData({
@@ -778,7 +802,7 @@ class MapLayers {
                 icon:
                     event.isExpired
                         ? MapIconCatalog.expiredEvent
-                        : MapIconCatalog.disaster,
+                        : MapIconCatalog.forEvent(event),
                 color: eventColor(event),
                 shape:
                     event.isExpired
@@ -1143,6 +1167,9 @@ String featureName(StaticFeature feature) {
 }
 
 String eventName(MeshEvent event) {
+  if (isSupplyEvent(event)) {
+    return '${SupplyStatus(event).drill ? '演練・' : ''}${SupplyStatus(event).name}';
+  }
   final attributes = event.attributes;
   final rescue = RescueRequestView.fromEvent(event);
   if (rescue != null) return '求救點：${rescue.type.label}';
@@ -1169,10 +1196,14 @@ const confirmedCrowdEventColor = Color(0xFF0F766E);
 
 Color eventColor(MeshEvent event) {
   if (event.isExpired) return const Color(0xFF64748B);
+  if (isSupplyStationEvent(event)) {
+    return supplyStationMarkerColor;
+  }
   if (event.verification == CrowdVerification.confirmed) {
     return confirmedCrowdEventColor;
   }
   if (event.isUnverified) return unverifiedEventColor;
+  if (isSupplyEvent(event)) return const Color(0xFF0369A1);
   return switch (event.severity) {
     'CRITICAL' => const Color(0xFFD92D20),
     'HIGH' => const Color(0xFFF97316),

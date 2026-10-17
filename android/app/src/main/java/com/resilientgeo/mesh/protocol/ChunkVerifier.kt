@@ -1,6 +1,7 @@
 package com.resilientgeo.mesh.protocol
 
 import com.resilientgeo.mesh.report.CrowdChunkCodec
+import com.resilientgeo.mesh.report.GovernmentWarningChunkCodec
 import com.resilientgeo.mesh.trust.Canonical
 import com.resilientgeo.mesh.trust.Ed25519Verifier
 import com.resilientgeo.mesh.trust.TrustedKeyStore
@@ -32,11 +33,19 @@ object ChunkVerifier {
         "area_id", "theme", "bbox", "content_type", "content_encoding", "events",
     )
 
-    fun verify(chunk: JSONObject, trustStore: TrustedKeyStore, now: Instant = Instant.now()): Result {
+    fun verify(
+        chunk: JSONObject,
+        trustStore: TrustedKeyStore,
+        now: Instant = Instant.now(),
+        revokedAtByCertificateId: Map<String, Instant> = emptyMap(),
+    ): Result {
         // Crowd reports travel one per chunk, signed by the reporting device
         // rather than by a bundled official key; see CrowdChunkCodec.
         if (chunk.optString("dataset_id") in CrowdChunkCodec.DATASET_IDS) {
             return CrowdChunkCodec.verify(chunk, trustStore, now)
+        }
+        if (chunk.optString("dataset_id") == GovernmentWarningChunkCodec.DATASET_ID) {
+            return GovernmentWarningChunkCodec.verify(chunk, trustStore, now, revokedAtByCertificateId)
         }
         val expectedHash = Canonical.sha256Canonical(chunkContent(chunk))
         val actualHash = chunk.optString("chunk_hash", "")

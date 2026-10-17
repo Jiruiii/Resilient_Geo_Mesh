@@ -63,7 +63,8 @@ function requireInt(options, name, fallback) {
 }
 
 async function runCommand(options) {
-  const config = await loadConfig();
+  const config = options.config ? JSON.parse(await readFile(options.config, 'utf8')) : await loadConfig();
+  const transportProfile = options.transport_profile ? JSON.parse(await readFile(options.transport_profile, 'utf8')) : null;
   const nodeCount = requireInt(options, 'nodes');
   if (!options.allow_any && !config.node_counts.includes(nodeCount)) {
     throw new Error(`--nodes must be one of ${config.node_counts.join(', ')} (or pass --allow-any)`);
@@ -89,6 +90,7 @@ async function runCommand(options) {
     rounds,
     secondsPerRound,
     rarityScope,
+    transportProfile,
   });
   const metrics = computeMetrics(run, scenario, config);
   const record = { key: runKey(nodeCount, strategy, geoFilter), git_rev: gitRev(), ...metrics };
@@ -116,6 +118,7 @@ async function runCommand(options) {
 }
 
 async function matrixCommand(options) {
+  if (options.transport_profile || options.config) throw new Error('Custom profiles/configs use the run command; the committed matrix is the legacy baseline.');
   const config = await loadConfig();
   const seed = requireInt(options, 'seed', DEFAULT_SEED);
   const geoFilterMode = options.geo ?? 'both';
@@ -177,7 +180,7 @@ async function matrixCommand(options) {
 
 function printHelp() {
   console.log(`Usage:
-  node simulator/cli.mjs run --nodes N --strategy S --seed K [--geo-filter]
+  node simulator/cli.mjs run --nodes N --strategy S --seed K [--geo-filter] [--config FILE] [--transport-profile FILE]
        [--out DIR] [--rounds R] [--seconds-per-round SEC]
        [--rarity-scope global|neighbourhood] [--allow-any]
   node simulator/cli.mjs matrix [--seed K] [--out experiments/results]

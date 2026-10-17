@@ -7,10 +7,12 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [EventEntity::class, ChunkEntity::class, EventTombstoneEntity::class], version = 4, exportSchema = false)
+@Database(entities = [EventEntity::class, ChunkEntity::class, EventTombstoneEntity::class, GovernmentWarningUploadEntity::class, GovernmentDeviceRevocationEntity::class], version = 6, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun eventDao(): EventDao
     abstract fun chunkDao(): ChunkDao
+    abstract fun governmentWarningUploadDao(): GovernmentWarningUploadDao
+    abstract fun governmentDeviceRevocationDao(): GovernmentDeviceRevocationDao
 
     companion object {
 
@@ -71,6 +73,44 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** v4 -> v5 adds a durable, retryable cloud-upload queue for device-signed warnings. */
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `government_warning_uploads` (
+                        `eventId` TEXT NOT NULL,
+                        `payloadHash` TEXT NOT NULL,
+                        `eventJson` TEXT NOT NULL,
+                        `createdAtEpochMillis` INTEGER NOT NULL,
+                        `uploadStatus` TEXT NOT NULL,
+                        `uploadedAtEpochMillis` INTEGER,
+                        PRIMARY KEY(`eventId`)
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_government_warning_uploads_uploadStatus_createdAtEpochMillis` " +
+                    "ON `government_warning_uploads` (`uploadStatus`, `createdAtEpochMillis`)")
+            }
+        }
+
+        /** v5 -> v6 stores signed device certificate revocations for offline event verification. */
+        val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `government_device_revocations` (
+                        `certificateId` TEXT NOT NULL,
+                        `revokedAtEpochMillis` INTEGER NOT NULL,
+                        `eventId` TEXT NOT NULL,
+                        `eventVersion` INTEGER NOT NULL,
+                        PRIMARY KEY(`certificateId`)
+                    )
+                    """.trimIndent(),
+                )
+            }
+        }
+
         @Volatile
         private var instance: AppDatabase? = null
 
@@ -79,7 +119,7 @@ abstract class AppDatabase : RoomDatabase() {
                 context.applicationContext,
                 AppDatabase::class.java,
                 "resilientgeo-mesh.db",
-            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).build().also { instance = it }
+            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6).build().also { instance = it }
         }
     }
 }

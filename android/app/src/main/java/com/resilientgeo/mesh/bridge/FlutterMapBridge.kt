@@ -3,17 +3,21 @@ package com.resilientgeo.mesh.bridge
 import android.content.Context
 import com.resilientgeo.mesh.data.ChunkIngestResult
 import com.resilientgeo.mesh.data.CrowdReportResult
+import com.resilientgeo.mesh.data.GovernmentWarningResult
 import com.resilientgeo.mesh.data.MeshRepository
 import com.resilientgeo.mesh.data.RescueResult
+import com.resilientgeo.mesh.online.GovernmentSyncJob
 import com.resilientgeo.mesh.online.GovernmentSyncManager
 import com.resilientgeo.mesh.online.RescueServerSync
 import com.resilientgeo.mesh.online.RescueUploadStates
 import com.resilientgeo.mesh.online.SharedPreferencesRescueUploadStates
 import com.resilientgeo.mesh.online.UrlConnectionRescueHttp
+import com.resilientgeo.mesh.report.GovernmentWarningInput
 import com.resilientgeo.mesh.routing.EvacuationRouteService
 import com.resilientgeo.mesh.routing.RouteResult
 import com.resilientgeo.mesh.routing.RouteStatus
 import com.resilientgeo.mesh.transport.MeshTransportSettings
+import com.resilientgeo.mesh.trust.GovernmentDeviceKeyStore
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
@@ -52,7 +56,8 @@ import java.time.Instant
 class FlutterMapBridge(
     context: Context,
     messenger: BinaryMessenger,
-    private val repository: MeshRepository = MeshRepository(context),
+    private val governmentDeviceKeyStore: GovernmentDeviceKeyStore = GovernmentDeviceKeyStore(context),
+    private val repository: MeshRepository = MeshRepository(context, governmentDeviceKeyStore = governmentDeviceKeyStore),
     private val emergencyMode: EmergencyModeController = EmergencyModeController(
         AndroidEmergencyModeServiceCommand(context),
         SharedPreferencesEmergencyModeState(context),
@@ -70,6 +75,7 @@ class FlutterMapBridge(
     private val rescueSync: RescueServerSync = RescueServerSync(UrlConnectionRescueHttp, rescueUploadStates),
 ) : MethodChannel.MethodCallHandler, EventChannel.StreamHandler {
 
+    private val appContext = context.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val methodChannel = MethodChannel(messenger, METHOD_CHANNEL_NAME)
     private val eventChannel = EventChannel(messenger, EVENT_CHANNEL_NAME)
@@ -100,6 +106,20 @@ class FlutterMapBridge(
         when (call.method) {
             METHOD_GET_INITIAL_STATE -> getInitialState(result)
             "getSyncStatus" -> result.success(syncStatus.message())
+            "setDiscoveryMode" -> {
+                val mode = (call.arguments as? Map<*, *>)?.get("mode") as? String
+                if (mode !in listOf("balanced", "adaptive")) result.error(INVALID_ARGUMENTS, "Unknown discovery mode", null)
+                else if (emergencyMode.isEnabled) result.error(METHOD_ERROR, "請先關閉緊急模式再切換搜尋模式", null)
+                else { transportSettings.discoveryMode = mode!!; result.success(syncStatus.message()) }
+            }
+            "searchPeersNow" -> {
+                if (!emergencyMode.isEnabled || transportSettings.mode != "wifi_direct" || syncStatus.message()["service_running"] != true)
+                    result.error(METHOD_ERROR, "請先開啟 Wi-Fi Direct 緊急模式", null)
+                else {
+                    com.resilientgeo.mesh.transport.WifiDiscoveryControl.requests.incrementAndGet()
+                    result.success(syncStatus.message())
+                }
+            }
             "setSyncTransport" -> {
                 val mode = (call.arguments as? Map<*, *>)?.get("transport") as? String
                 if (mode !in MeshTransportSettings.MODES) {
@@ -131,6 +151,15 @@ class FlutterMapBridge(
             METHOD_REVISE_RESCUE_REQUEST -> reviseRescueRequest(call, result)
             METHOD_GET_OWN_RESCUE_REQUESTS -> getOwnRescueRequests(result)
             "syncRescueNearby" -> syncRescueNearby(call, result)
+            "getGovernmentDevicePublicKey" -> getGovernmentDevicePublicKey(result)
+            "storeGovernmentDeviceCertificate" -> storeGovernmentDeviceCertificate(call, result)
+            "getGovernmentDeviceAuthorization" -> getGovernmentDeviceAuthorization(result)
+            "configureGovernmentWarningUpload" -> configureGovernmentWarningUpload(call, result)
+            "createGovernmentWarning" -> createGovernmentWarning(call, result)
+            "listPendingGovernmentWarningUploads" -> listPendingGovernmentWarningUploads(result)
+            "listGovernmentWarningStatuses" -> listGovernmentWarningStatuses(result)
+            "markGovernmentWarningUploaded" -> markGovernmentWarningUploaded(call, result)
+            "markGovernmentWarningExpired" -> markGovernmentWarningExpired(call, result)
             METHOD_CALCULATE_EVACUATION_ROUTE -> calculateEvacuationRoute(call, result)
             else -> result.notImplemented()
         }
@@ -242,7 +271,7 @@ class FlutterMapBridge(
         scope.launch {
             when (val created = repository.createCrowdReport(input)) {
                 is CrowdReportResult.Created ->
-                    result.success(MapBridgeProtocol.crowdReportCreated(created.eventId, created.applyState.name))
+                    result.success(MapBridgeProtocol.crowdReportCreated(created.eventId, created.applyState.name, created.eventJson))
                 is CrowdReportResult.Invalid ->
                     result.error(INVALID_INPUT, created.errors.joinToString("; "), null)
                 is CrowdReportResult.SigningUnavailable ->
@@ -337,6 +366,130 @@ class FlutterMapBridge(
         }
     }
 
+    private fun getGovernmentDevicePublicKey(result: MethodChannel.Result) {
+        scope.launch {
+            try { result.success(MapBridgeProtocol.governmentDeviceKeyReply(repository.governmentDevicePublicKey())) }
+            catch (error: Throwable) { result.error(SIGNING_UNAVAILABLE, error.message, null) }
+        }
+    }
+
+    private fun storeGovernmentDeviceCertificate(call: MethodCall, result: MethodChannel.Result) {
+        val certificateJson = (call.arguments as? Map<*, *>)?.get("certificate_json") as? String
+        if (certificateJson == null) {
+            result.error(INVALID_ARGUMENTS, "certificate_json is required", null)
+            return
+        }
+        scope.launch {
+            try {
+                result.success(MapBridgeProtocol.governmentDeviceAuthorizationReply(
+                    repository.storeGovernmentDeviceCertificate(org.json.JSONObject(certificateJson)),
+                ))
+            } catch (error: Throwable) {
+                result.error(INVALID_INPUT, error.message, null)
+            }
+        }
+    }
+
+    private fun getGovernmentDeviceAuthorization(result: MethodChannel.Result) {
+        scope.launch {
+            try { result.success(MapBridgeProtocol.governmentDeviceAuthorizationReply(repository.governmentDeviceAuthorization())) }
+            catch (error: Throwable) { result.error(SIGNING_UNAVAILABLE, error.message, null) }
+        }
+    }
+
+    private fun createGovernmentWarning(call: MethodCall, result: MethodChannel.Result) {
+        val request = MapBridgeProtocol.governmentWarningRequest(call.arguments)
+        if (request == null) {
+            result.error(INVALID_INPUT, "createGovernmentWarning arguments do not match the contract", null)
+            return
+        }
+        scope.launch {
+            when (val created = repository.createGovernmentWarning(request.input, request.eventId)) {
+                is GovernmentWarningResult.Created -> {
+                    runCatching { GovernmentSyncJob.schedulePendingUpload(appContext) }
+                    result.success(MapBridgeProtocol.governmentWarningCreated(
+                        created.eventId, created.payloadHash, created.eventJson, created.duplicate,
+                    ))
+                }
+                is GovernmentWarningResult.Invalid -> result.error(INVALID_INPUT, created.errors.joinToString("; "), null)
+                is GovernmentWarningResult.Unauthorized -> result.error(DEVICE_NOT_AUTHORIZED, created.message, null)
+                is GovernmentWarningResult.SigningUnavailable -> result.error(SIGNING_UNAVAILABLE, created.message, null)
+                is GovernmentWarningResult.StorageUnavailable -> result.error(STORAGE_UNAVAILABLE, created.message, null)
+            }
+        }
+    }
+
+    private fun configureGovernmentWarningUpload(call: MethodCall, result: MethodChannel.Result) {
+        val baseUrl = (call.arguments as? Map<*, *>)?.get("base_url") as? String
+        if (baseUrl.isNullOrBlank()) {
+            result.error(INVALID_ARGUMENTS, "configureGovernmentWarningUpload requires base_url", null)
+            return
+        }
+        try {
+            governmentSync.configureWarningUploadBaseUrl(baseUrl)
+            result.success(mapOf("configured" to true))
+        } catch (error: Exception) {
+            result.error(INVALID_ARGUMENTS, error.message, null)
+        }
+    }
+
+    private fun listPendingGovernmentWarningUploads(result: MethodChannel.Result) {
+        scope.launch {
+            try {
+                result.success(repository.pendingGovernmentWarningUploads().map { upload ->
+                    mapOf("event_id" to upload.eventId, "payload_hash" to upload.payloadHash,
+                        "event_json" to upload.eventJson, "created_at_epoch_millis" to upload.createdAtEpochMillis)
+                })
+            } catch (error: Throwable) { result.error(STORAGE_UNAVAILABLE, error.message, null) }
+        }
+    }
+
+    private fun listGovernmentWarningStatuses(result: MethodChannel.Result) {
+        scope.launch {
+            try {
+                result.success(repository.governmentWarningUploadStatuses().map { upload ->
+                    mapOf(
+                        "event_id" to upload.eventId,
+                        "payload_hash" to upload.payloadHash,
+                        "event_json" to upload.eventJson,
+                        "created_at_epoch_millis" to upload.createdAtEpochMillis,
+                        "upload_status" to upload.uploadStatus,
+                    )
+                })
+            } catch (error: Throwable) { result.error(STORAGE_UNAVAILABLE, error.message, null) }
+        }
+    }
+
+    private fun markGovernmentWarningUploaded(call: MethodCall, result: MethodChannel.Result) {
+        val args = call.arguments as? Map<*, *>
+        val eventId = args?.get("event_id") as? String
+        val payloadHash = args?.get("payload_hash") as? String
+        if (eventId.isNullOrBlank() || payloadHash.isNullOrBlank()) {
+            result.error(INVALID_ARGUMENTS, "event_id and payload_hash are required", null)
+            return
+        }
+        scope.launch {
+            try {
+                result.success(mapOf("uploaded" to repository.markGovernmentWarningUploaded(eventId, payloadHash)))
+            } catch (error: Throwable) { result.error(STORAGE_UNAVAILABLE, error.message, null) }
+        }
+    }
+
+    private fun markGovernmentWarningExpired(call: MethodCall, result: MethodChannel.Result) {
+        val args = call.arguments as? Map<*, *>
+        val eventId = args?.get("event_id") as? String
+        val payloadHash = args?.get("payload_hash") as? String
+        if (eventId.isNullOrBlank() || payloadHash.isNullOrBlank()) {
+            result.error(INVALID_ARGUMENTS, "event_id and payload_hash are required", null)
+            return
+        }
+        scope.launch {
+            try {
+                result.success(mapOf("expired" to repository.markGovernmentWarningExpired(eventId, payloadHash)))
+            } catch (error: Throwable) { result.error(STORAGE_UNAVAILABLE, error.message, null) }
+        }
+    }
+
     private fun calculateEvacuationRoute(call: MethodCall, result: MethodChannel.Result) {
         scope.launch {
             try {
@@ -370,6 +523,7 @@ class FlutterMapBridge(
         const val METHOD_CALCULATE_EVACUATION_ROUTE = "calculateEvacuationRoute"
         const val INVALID_INPUT = "invalid_input"
         const val SIGNING_UNAVAILABLE = "signing_unavailable"
+        const val DEVICE_NOT_AUTHORIZED = "government_device_not_authorized"
         const val STORAGE_UNAVAILABLE = "storage_unavailable"
         const val ROUTE_ENGINE_ERROR = "route_engine_error"
         const val INVALID_ARGUMENTS = "invalid_arguments"

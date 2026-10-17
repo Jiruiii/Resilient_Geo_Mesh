@@ -79,3 +79,5 @@ __pycache__/
 output
 # Local session transcript
 /transcript.md
+/.drill-state/
+/.playwright-cli/

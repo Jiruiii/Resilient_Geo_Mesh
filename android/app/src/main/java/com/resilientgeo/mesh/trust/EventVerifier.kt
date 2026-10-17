@@ -37,22 +37,71 @@ object EventVerifier {
         return input
     }
 
-    fun verify(event: JSONObject, trustStore: TrustedKeyStore, now: Instant = Instant.now()): VerificationResult {
+    fun verify(
+        event: JSONObject,
+        trustStore: TrustedKeyStore,
+        now: Instant = Instant.now(),
+        revokedAtByCertificateId: Map<String, Instant> = emptyMap(),
+    ): VerificationResult {
         val shapeErrors = EventShapeValidator.validate(event)
         if (shapeErrors.isNotEmpty()) {
             return VerificationResult.Invalid(VerificationResult.Stage.SCHEMA, shapeErrors)
         }
 
-        // Two trust paths, matching verifyEvent() in contract.mjs line for line.
-        // A `device:` key is self-certifying and accepted only for crowd.*
-        // (DeviceKeys.resolve); it never falls through to the bundled trust
-        // store, so adding crowd reports cannot loosen official.* trust.
+        // Device keys remain self-certifying only for crowd.*. Official
+        // announcements require a central certificate bound to the same key.
         val signingKeyId = event.getString("signing_key_id")
         val publicKey = if (DeviceKeys.isDeviceKeyId(signingKeyId)) {
-            when (val device = DeviceKeys.resolve(event)) {
-                is DeviceKeys.Resolution.Resolved -> device.publicKey
-                is DeviceKeys.Resolution.Rejected ->
-                    return VerificationResult.Invalid(VerificationResult.Stage.TRUST, listOf(device.error))
+            when {
+                DeviceKeys.isCrowdNamespace(event.getString("namespace")) -> {
+                    when (val device = DeviceKeys.resolve(event)) {
+                        is DeviceKeys.Resolution.Resolved -> device.publicKey
+                        is DeviceKeys.Resolution.Rejected ->
+                            return VerificationResult.Invalid(VerificationResult.Stage.TRUST, listOf(device.error))
+                    }
+                }
+                event.getString("namespace") == "official.announcement"
+                    && event.getString("source") == "GOVERNMENT" -> {
+                    val certificate = event.optJSONObject("attributes")
+                        ?.optJSONObject("government_device_certificate")
+                        ?: return VerificationResult.Invalid(
+                            VerificationResult.Stage.TRUST,
+                            listOf("government device certificate is required"),
+                        )
+                    if (certificate.optString("signing_key_id") != signingKeyId
+                        || certificate.optString("signer_public_key") != event.optString("signer_public_key")) {
+                        return VerificationResult.Invalid(
+                            VerificationResult.Stage.TRUST,
+                            listOf("event signing key does not match government device certificate"),
+                        )
+                    }
+                    val issuedAt = EventShapeValidator.parseTimeOrNull(event.getString("issued_at"))
+                        ?: return VerificationResult.Invalid(
+                            VerificationResult.Stage.SCHEMA,
+                            listOf("issued_at must be an RFC 3339 timestamp"),
+                        )
+                    val certificateResult = GovernmentDeviceCertificate.verify(certificate, trustStore, issuedAt)
+                    if (!certificateResult.valid) {
+                        return VerificationResult.Invalid(VerificationResult.Stage.TRUST, certificateResult.errors)
+                    }
+                    val certificateId = certificate.optString("certificate_id")
+                    val revokedAt = revokedAtByCertificateId[certificateId]
+                    if (revokedAt != null && !issuedAt.isBefore(revokedAt)) {
+                        return VerificationResult.Invalid(
+                            VerificationResult.Stage.TRUST,
+                            listOf("government device certificate was revoked before or at event issue time"),
+                        )
+                    }
+                    certificateResult.signerPublicKey
+                        ?: return VerificationResult.Invalid(
+                            VerificationResult.Stage.TRUST,
+                            listOf("certificate signer key is unavailable"),
+                        )
+                }
+                else -> return VerificationResult.Invalid(
+                    VerificationResult.Stage.TRUST,
+                    listOf("device keys may only sign crowd.* or certified official.announcement events"),
+                )
             }
         } else {
             trustStore.publicKeyFor(signingKeyId)

@@ -1,6 +1,6 @@
 # Central Server 政府資料更新
 
-目前唯一的正式收集／發布流程是：
+中央來源資料的收集／發布流程是：
 
 ```text
 政府 API → collector → private source cache → signed immutable release
@@ -8,7 +8,17 @@
                          Fastify read-only API / Caddy
 ```
 
-`collector:start` 是唯一會寫入 source cache 與 public release 的排程入口。舊的 `government-publisher`／worker 與 Cloudflare Pages 發布流程已淘汰；`pipeline/cli.mjs` 只保留一次性 normalize、build、verify、attest 工具。Web 與 Android 的 signed feed／static layer client 已加入；Caddy／API 尚未部署到正式 HTTPS 網域，Android 資產內的預設網址仍需切換。
+政府工作台另外使用獨立的 PostgreSQL outbox 與內部發布 worker：
+
+```text
+Flutter Web／Android → government-api → PostgreSQL outbox
+                                           ↓
+                            government-publisher → signed immutable release
+```
+
+`collector:start` 負責中央來源排程與 source cache。`government-publisher` 只處理工作台公告及查證事件，與 collector 共用發布鎖及同一中央 Ed25519 feed；工作台 API 不持有簽章私鑰，公開資料 API 仍唯讀。舊的 `pipeline/government-publisher`／worker 與 Cloudflare Pages 發布流程已淘汰；`pipeline/cli.mjs` 保留一次性 normalize、build、verify、attest 工具。工作台部署、管理者啟用及 API 合約見[政府工作台操作說明](government-workbench.md)。
+
+Web 與 Android 的 signed feed／static layer client 已加入；Caddy／API 尚未部署到正式 HTTPS 網域，Android 資產內的預設網址仍需切換。
 
 ## 本機啟動
 
@@ -87,6 +97,16 @@ npm run server:cleanup -- --public-root /var/lib/resilientgeo-public --execute
 - 門牌索引另以 22 縣市 catalog 與縣市壓縮包發布，不混入醫療 layer。現有 17 個縣市包已用 `central-server-2026` 簽章；基隆市官方 11509 CSV 已下載並完成座標／縣界試跑，但簽章私鑰路徑未設定，尚未重簽 catalog，因此現有版本仍將基隆列為 `unavailable`。連江、宜蘭、南投與嘉義市仍沒有已確認的公開完整座標來源。App 的 Web／Android 信任資產都保留舊 key 並加入該 public key；catalog 和資料位於 `deploy/public/address-packs/`，尚未部署到正式 HTTPS 網域。逐縣市來源與數量見[門牌索引涵蓋](../data_description.md#門牌索引涵蓋)。
 - Web service worker 快取 Flutter 程式外殼與內建 OSM 資產；簽章資料另存在 OPFS／Android 私有目錄。
 - 告警 feed 依 `expires_at`／撤銷狀態從目前活躍畫面與 Android 儲存移除；來源成功且目前沒有告警時可發布簽章空 feed，來源失敗則沿用上一個可信版本。
+
+### 政府手機警告與憑證撤銷
+
+政府 Android 裝置憑證與警告也進入同一中央簽章 feed。`government-api` 驗證帳號、設備憑證及原始警告簽章後寫入 PostgreSQL outbox；內部 `government-publisher` 負責簽發 7 天設備憑證、將警告原始簽章保留在 `government-announcements`，並產生 `government-device-revocations` 內部來源。中央私鑰不進 API 或手機。
+
+Android 會先下載並保存撤銷來源，再處理公告來源。裝置在 `revoked_at` 之後簽署的警告不會被接受；時間早於撤銷的警告仍可驗簽與轉傳。Web 驗證器遵循相同規則，並在 IndexedDB 離線快取中保存撤銷事件供舊警告驗證；內部撤銷事件不會送入通知或地圖。離線期間看不到尚未同步到該裝置的最新撤銷，介面會顯示最近一次撤銷同步時間。
+
+Android 簽好的警告先原子保存於 Room 事件、mesh chunk 與上傳佇列，建立者手機隨 Room 本機事件更新立即顯示，不需先下載 feed 或手動執行「政府資料更新」。政府工作台連線時及開啟期間每五分鐘以原 event JSON 重試 `POST /api/v1/government/warnings`；另有受網路條件限制的 Android 背景工作，在公告建立後排程，並於網路恢復或 App 回到前景時重試。Android 系統控制背景工作的實際執行時間；網路失敗不會變更已簽內容或 event id。API 回覆排入佇列不等於 feed 已發布；裝置同步到中央簽章 feed 並確認同一 event id 與 payload hash 後，才將本機狀態更新為已發布。
+
+緊急模式已開啟時，Room 中已驗證 chunk inventory 的新增或更新會要求現行 Mesh 服務儘快與近期 peer 同步，並在傳輸中發生 inventory 更新時於當前工作結束後再同步一次。緊急模式關閉時不會啟動服務或無線電；公告留在本機並由工作台提供明確啟用入口。Mesh 目前沒有 peer 收件回執，畫面不宣稱已送達特定手機。其他 Android 裝置先從中央簽章 feed 驗證及保存事件，再由已啟用的 Mesh 服務轉傳；Web 維持簽章 feed 驗證與 IndexedDB 快取，不執行 BLE Mesh。
 
 資料版本、醫療定位限制與逐縣市狀態見[資料說明](../data_description.md)及[點位涵蓋報告](data-coverage-2026-10-04.md)。目前底圖限制見根目錄 [Map_description.md](../Map_description.md)。
 

@@ -111,9 +111,46 @@ class MapBridgeProtocolTest {
     }
 
     @Test
+    fun `government warning request parses nationwide content expiry and optional point`() {
+        val request = MapBridgeProtocol.governmentWarningRequest(mapOf(
+            "event_id" to "announcement:device:test-1",
+            "title" to "颱風警戒",
+            "content" to "請留意官方資訊",
+            "category" to "WEATHER",
+            "severity" to "HIGH",
+            "expires_at" to "2026-10-13T00:00:00Z",
+            "longitude" to 121.5,
+            "latitude" to 25.0,
+        ))!!
+        assertEquals("announcement:device:test-1", request.eventId)
+        assertEquals("WEATHER", request.input.category)
+        assertEquals(121.5, request.input.location!!.longitude, 0.0)
+        assertNull(MapBridgeProtocol.governmentWarningRequest(mapOf(
+            "title" to "標題", "content" to "內容", "category" to "OTHER", "severity" to "LOW",
+            "expires_at" to "not-an-instant", "longitude" to 121.5,
+        )))
+    }
+
+    @Test
+    fun `government device bridge replies preserve certificate and upload identity fields`() {
+        val auth = MapBridgeProtocol.governmentDeviceAuthorizationReply(org.json.JSONObject()
+            .put("status", "AUTHORIZED")
+            .put("signing_key_id", "device:key")
+            .put("signer_public_key", "public")
+            .put("certificate_json", "{\"signature\":\"signed\"}")
+            .put("certificate_expires_at", "2026-10-19T00:00:00Z"))
+        assertEquals("AUTHORIZED", auth["status"])
+        assertEquals("{\"signature\":\"signed\"}", auth["certificate_json"])
+        assertEquals(mapOf("event_id" to "announcement:1", "payload_hash" to "sha256:abc",
+            "event_json" to "{}", "apply_state" to "CURRENT", "upload_state" to "PENDING", "duplicate" to false),
+            MapBridgeProtocol.governmentWarningCreated("announcement:1", "sha256:abc", "{}", false))
+    }
+
+    @Test
     fun `crowd report reply carries exactly what Flutter accepts as success`() {
-        val reply = MapBridgeProtocol.crowdReportCreated("report:abcd1234:uuid", "UNVERIFIED")
-        assertEquals(mapOf("event_id" to "report:abcd1234:uuid", "apply_state" to "UNVERIFIED", "delivery_state" to "PENDING"), reply)
+        val reply = MapBridgeProtocol.crowdReportCreated("report:abcd1234:uuid", "UNVERIFIED", "{\"signature\":\"signed\"}")
+        assertEquals(mapOf("event_id" to "report:abcd1234:uuid", "apply_state" to "UNVERIFIED",
+            "delivery_state" to "PENDING", "event_json" to "{\"signature\":\"signed\"}"), reply)
     }
 
     @Test

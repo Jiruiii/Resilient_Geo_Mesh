@@ -1,0 +1,17 @@
+<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>應變演練工作台</title><link rel="stylesheet" href="/style.css"></head><body>
+<header><p>RESILIENT GEO MESH · EXERCISE</p><h1>應變演練工作台</h1><strong>演練資料，非真實災情或政府公告</strong><p>發布更新，讓攜帶資料的手機傳給離線同伴。回報筆數不代表受災人數。</p></header>
+<main><section><h2>發布或更新</h2><form id="publish">
+<label>資料類別<select name="type"><option value="SHELTER_STATUS">避難所狀態</option><option value="SUPPLY_STATUS">物資發放點</option><option value="ROAD_STATUS">道路狀態</option></select></label>
+<label>識別碼（更新時沿用）<input name="id" value="exercise:b" required maxlength="80"></label><small>道路需填 road:w 加上離線路網中的 OSM way ID；位置標記本身不會封路。</small>
+<label>名稱<input name="name" value="演練避難所 B" required maxlength="160"></label>
+<label>區域代碼<input name="area" value="neihu.wende" required></label>
+<div class="pair"><label>經度<input name="lon" type="number" step="any" value="121.5920" required></label><label>緯度<input name="lat" type="number" step="any" value="25.0600" required></label></div>
+<label>狀態<select name="status"></select></label>
+<label>剩餘數量／可收容人數（未知請留空）<input name="quantity" type="number" min="0" max="1000000"></label>
+<label>物資種類（用逗號分隔）<input name="items" placeholder="飲用水, 乾糧"></label>
+<label>地址<input name="address" placeholder="未填則使用演練座標"></label>
+<label>發放時間<input name="opening_hours" placeholder="例如 09:00–17:00"></label>
+<label>有效分鐘<input name="ttl_minutes" type="number" min="1" max="1440" value="60" required></label>
+<button type="submit">發布演練更新</button><p id="message" role="status" aria-live="polite"></p></form></section>
+<section><h2>目前發布資料</h2><label>依區域篩選<input id="filter" placeholder="區域代碼"></label><p id="count"></p><div id="events"></div><p>手機 A 載入新版後，手機 B 可透過獨立演練頻道接收。發布成功不代表手機已收到。</p></section></main>
+<script src="/app.js"></script></body></html>

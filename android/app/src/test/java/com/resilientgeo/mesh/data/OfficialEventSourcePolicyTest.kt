@@ -1,6 +1,7 @@
 package com.resilientgeo.mesh.data
 
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -23,9 +24,24 @@ class OfficialEventSourcePolicyTest {
 
     @Test
     fun `supports NCDR and all three CWA government feed datasets`() {
-        listOf("ncdr", "cwa-earthquake", "cwa-warning", "cwa-typhoon")
+        listOf("ncdr", "cwa-earthquake", "cwa-warning", "cwa-typhoon", "government-announcements", "government-attestations",
+            "government-device-announcements", "government-device-revocations")
             .forEach { assertTrue(it, supportsOfficialFeedDataset(it)) }
         assertFalse(supportsOfficialFeedDataset("tdx-road"))
+        assertEquals("official.announcement", officialFeedNamespace("government-announcements"))
+        assertEquals("official.verified", officialFeedNamespace("government-attestations"))
+        assertEquals("official.announcement", officialFeedNamespace("government-device-announcements"))
+        assertEquals("official.device-revocation", officialFeedNamespace("government-device-revocations"))
+    }
+
+    @Test
+    fun `supports signed government announcements and verification events only from their source`() {
+        assertTrue(supportsOfficialNamespace("official.announcement"))
+        assertTrue(supportsOfficialEvent("official.announcement", "GOVERNMENT"))
+        assertTrue(supportsOfficialNamespace("official.verified"))
+        assertTrue(supportsOfficialEvent("official.verified", "GOV_ATTEST"))
+        assertFalse(supportsOfficialEvent("official.announcement", "CROWD"))
+        assertFalse(supportsOfficialEvent("official.verified", "CROWD"))
     }
 
     @Test
@@ -35,5 +51,14 @@ class OfficialEventSourcePolicyTest {
         assertFalse(supportsOfficialEvent("official.live.ncdr", "CWA"))
         assertFalse(supportsOfficialEvent("official.live.tdx-road", "NCDR"))
         assertFalse(supportsOfficialNamespace("official.live.tdx-road"))
+    }
+
+    @Test
+    fun `accepts central and device signed warnings plus internal revocation events`() {
+        assertTrue(supportsOfficialNamespace("official.device-revocation"))
+        assertTrue(supportsOfficialEvent("official.announcement", "GOVERNMENT"))
+        assertTrue(supportsOfficialEvent("official.device-revocation", "GOVERNMENT"))
+        assertFalse(supportsOfficialEvent("official.device-revocation", "CROWD"))
+        assertFalse(supportsOfficialNamespace("official.device-revocation.private"))
     }
 }

@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:resilientgeo_flutter/data/map_administrative.dart';
 import 'package:resilientgeo_flutter/data/map_models.dart';
 import 'package:resilientgeo_flutter/data/map_zoom.dart';
@@ -70,6 +71,63 @@ void main() {
       markers.single.key,
       ValueKey<String>('event-marker-${meshEventIdentity(actionable)}'),
     );
+  });
+
+  testWidgets('supply stations use a distinct package icon on the map', (
+    tester,
+  ) async {
+    final station = MeshEvent(
+      namespace: 'official.announcement',
+      eventId: 'announcement:supply-station',
+      eventVersion: 1,
+      eventType: 'GOVERNMENT_ANNOUNCEMENT',
+      severity: 'MEDIUM',
+      source: 'GOVERNMENT',
+      issuedAt: '2026-10-12T00:00:00Z',
+      expiresAt: '2099-01-01T00:00:00Z',
+      applyState: null,
+      geometry: const PointGeometry(GeoPoint(longitude: 121.5, latitude: 25)),
+      attributes: const <String, dynamic>{
+        'title': '三重物資站',
+        'category': 'SUPPLY_STATION',
+        'has_map_location': true,
+      },
+    );
+    final markers = MapLayers.buildMarkers(
+      features: const <StaticFeature>[],
+      events: <MeshEvent>[station],
+      showShelters: false,
+      showMedical: false,
+      showEvents: true,
+      onStaticFeatureSelected: (_) {},
+      onEventSelected: (_) {},
+      zoom: 17,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(home: SizedBox(child: markers.single.child)),
+    );
+
+    expect(find.byIcon(LucideIcons.packageOpen), findsOneWidget);
+  });
+
+  test('citizen reports cannot acquire the official supply station icon', () {
+    final report = MeshEvent(
+      namespace: 'crowd.reports',
+      eventId: 'report:untrusted-category',
+      eventVersion: 1,
+      eventType: 'CROWD_REPORT',
+      severity: 'MEDIUM',
+      source: 'CITIZEN',
+      issuedAt: '2026-10-12T00:00:00Z',
+      expiresAt: '2099-01-01T00:00:00Z',
+      applyState: 'UNVERIFIED',
+      geometry: const PointGeometry(GeoPoint(longitude: 121.5, latitude: 25)),
+      attributes: const <String, dynamic>{'category': 'SUPPLY_STATION'},
+    );
+
+    expect(MapIconCatalog.forEvent(report), MapIconCatalog.disaster);
+    expect(eventColor(report), unverifiedEventColor);
   });
 
   test('uses compact marker bounds and keeps the tap action on the marker', () {

@@ -70,7 +70,7 @@ flowchart LR
 
 Android host 直接載入原生已驗證的靜態地物與事件，不依賴 Flutter 預覽 JSON。Web 在缺少 native bridge 時，會從同源服務驗證並快取簽章 layer 與告警 feed。任一端沒有已驗證資料或驗證失敗時，保留底圖並顯示資料不可用，不回退到打包的舊展示快照。
 
-App 使用單一 `MapLibreMap` renderer。OSM／Protomaps 底圖、glyph、sprite、樣式、行政區／地標與道路搜尋索引隨 App 提供；政府簽章 feed、靜態圖層與門牌包另走 Server/API 資料流程並在用戶端驗證和快取。底圖與資料各自的範圍、來源及限制分別見 [Map_description.md](Map_description.md) 和[資料說明](data_description.md)。ADR-001 否決的 Nearby Connections 與 Wi-Fi Direct 實作已連同它們所需的 Wi-Fi／Play Services 權限一併移除，只保留在 git 歷史與 ADR 記錄中。
+App 使用單一 `MapLibreMap` renderer。OSM／Protomaps 底圖、glyph、sprite、樣式、行政區／地標與道路搜尋索引隨 App 提供；政府簽章 feed、靜態圖層與門牌包另走 Server/API 資料流程並在用戶端驗證和快取。底圖與資料各自的範圍、來源及限制分別見 [Map_description.md](Map_description.md) 和[資料說明](data_description.md)。傳輸層目前有 Nearby Connections（需 Google Play services）、Wi-Fi Direct 與 BLE GATT 三種，自動模式依序嘗試（見[自動交換文件](docs/nearby-auto-transport.md)）；ADR-001 在 2026-09-05 否決的是當時的實測結果，之後已重新實作。因此 manifest 不再只有藍牙權限：mesh 交換需要藍牙、附近 Wi-Fi 裝置、定位（部分 Android 版本）與 Android 17 的區域網路權限；`INTERNET`／`ACCESS_NETWORK_STATE` 用於連線時同步 Server 簽章資料與政府工作台，mesh 交換本身不經網際網路。
 
 ## 使用技術
 
@@ -88,7 +88,7 @@ App 使用單一 `MapLibreMap` renderer。OSM／Protomaps 底圖、glyph、sprit
 | 測試               | Flutter test、JUnit 4、AndroidX Test、`node:test`、Python `unittest`                  | 覆蓋地圖介面、資料契約、驗證、同步與模擬；測試數量及結果以各 runner 的當次輸出為準                                               |
 | Sponsor 技術       | 未使用                                                                                | 本次未使用主辦方或贊助商提供的服務；pipeline 與 simulator 零第三方相依，Android 端僅用 AndroidX 與 Bouncy Castle                  |
 
-> 2026-09-05 的候選評估與失敗紀錄保留在 [`docs/adr/ADR-001-transport-layer.md`](docs/adr/ADR-001-transport-layer.md)。Nearby Connections 仍未採用；Wi-Fi Direct 已於 2026-10-04 重新實作並通過雙機資料交換，當時的 TCP 逾時不代表技術不可用。新版本的搜尋延遲、實測條件與限制見 [Wi-Fi Direct 文件](docs/wifi-direct.md)。
+> 2026-09-05 的候選評估與失敗紀錄保留在 [`docs/adr/ADR-001-transport-layer.md`](docs/adr/ADR-001-transport-layer.md)。本段是 09-05 的歷史結論，已被取代：Wi-Fi Direct 於 2026-10-04 重新實作並通過雙機資料交換，當時的 TCP 逾時不代表技術不可用；Nearby Connections 於 2026-10-10 加入並成為自動模式的第一優先（需 Google Play services，詳見 [Nearby 與自動備援](docs/nearby-auto-transport.md)）。新版本的搜尋延遲、實測條件與限制見 [Wi-Fi Direct 文件](docs/wifi-direct.md)。
 
 ## 安裝與執行
 
@@ -143,7 +143,7 @@ cd ../android
 ./gradlew installDebug                     # 安裝到已連線的裝置
 
 # ---------- 6. Android／資料層測試 ----------
-./gradlew testDebugUnitTest                # 目前 168 項 JVM 單元測試
+./gradlew :app:testDebugUnitTest           # 目前 226 項 JVM 單元測試（2026-10-16）；不加 :app 會連第三方 plugin 的測試一起跑，geolocator_android 有 3 項失敗
 ./gradlew connectedDebugAndroidTest        # API 36 模擬器目前 37 項 instrumented 測試
 ```
 

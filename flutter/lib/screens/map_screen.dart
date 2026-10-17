@@ -8,6 +8,7 @@ import 'package:pointer_interceptor/pointer_interceptor.dart';
 
 import '../app/rescue_flow_controller.dart';
 import '../data/map_bridge.dart';
+import '../data/supply_status.dart';
 import '../data/offline_search_worker.dart';
 import '../data/app_performance.dart';
 import '../data/attestation_index.dart';
@@ -16,6 +17,7 @@ import '../data/corroboration.dart';
 import '../data/crowd_report_models.dart';
 import '../data/display_time.dart';
 import '../data/evacuation_models.dart';
+import '../data/government_api.dart';
 import '../data/location_controller.dart';
 import '../data/map_administrative.dart';
 import '../data/map_models.dart';
@@ -55,6 +57,8 @@ class MapScreen extends StatefulWidget {
     this.rescueService,
     this.onViewportSettled,
     this.sirenPanelBuilder,
+    this.notificationFocusEvent,
+    this.notificationFocusRequestId = 0,
   });
 
   /// Optional deterministic inputs keep widget tests independent of channels.
@@ -77,6 +81,8 @@ class MapScreen extends StatefulWidget {
 
   /// Deterministic expiry clock for widget tests.
   final DateTime Function()? routeClock;
+  final MeshEvent? notificationFocusEvent;
+  final int notificationFocusRequestId;
 
   /// Defaults to [RescueService.forPlatform] when omitted.
   final RescueService? rescueService;
@@ -122,6 +128,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   bool _showShelters = true;
   bool _showMedical = true;
   bool _showEvents = true;
+  bool _showSupplies = true;
   bool _emergencyModeEnabled = false;
   StaticFeature? _selectedFeature;
   MeshEvent? _selectedEvent;
@@ -197,6 +204,21 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   void didUpdateWidget(covariant MapScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.active != widget.active) _refreshRouteVisibility();
+    if (oldWidget.notificationFocusRequestId !=
+        widget.notificationFocusRequestId) {
+      final event = widget.notificationFocusEvent;
+      final point = event == null ? null : meshEventFocusPoint(event);
+      if (event != null && point != null) {
+        _selectedFeature = null;
+        _selectedEvent = event;
+        _searchSelection = null;
+        _searchText = '';
+        _searchController.clear();
+        _mapSearchResults = const <MapSearchResult>[];
+        _focusPoint = point;
+        _focusRequestId += 1;
+      }
+    }
     final nextFeatures = widget.staticFeatures;
     if (nextFeatures != null &&
         !identical(oldWidget.staticFeatures, nextFeatures)) {
@@ -1172,6 +1194,11 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                 showShelters: _showShelters,
                 showMedical: _showMedical,
                 showEvents: _showEvents,
+                showSupplies: _showSupplies,
+                onSuppliesChanged: (value) {
+                  setState(() => _showSupplies = value);
+                  modalSetState(() {});
+                },
                 emergencyModeEnabled: _emergencyModeEnabled,
                 disasterType: _disasterType,
                 onDisasterTypeChanged:
@@ -1577,7 +1604,11 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
         _reportSheetVisible = false;
         _reportStep = CrowdReportSheetStep.edit;
       });
-      _showMessage('警示已建立：未驗證／待同步');
+      _showMessage(
+        submission.deliveryState == 'UPLOADED'
+            ? '回報已上傳，尚未經查證，僅供參考'
+            : '回報已保存在本機，未經查證；連線後會重試上傳',
+      );
     } on Object catch (error) {
       if (!mounted) return;
       setState(() => _reportSubmitting = false);
@@ -1586,6 +1617,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   }
 
   String _reportErrorMessage(Object error) => switch (error) {
+    GovernmentApiException(:final message) => '回報已留在本機，但線上上傳未完成：$message',
     BridgeFailure(:final code) => switch (code) {
       BridgeFailureCode.unavailable => '此功能需要 Android App，Chrome 僅供地圖與資料預覽',
       BridgeFailureCode.signingUnavailable => '裝置安全簽署不可用，警示未送出',
@@ -1710,6 +1742,8 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
     final visibleEvents = _visibleEvents;
+    final mapEventsReady = !widget.staticFeaturesPending;
+    final mapEvents = mapEventsReady ? visibleEvents : const <MeshEvent>[];
     final visibleFacilityCount =
         staticFeatures.features
             .where(
@@ -1720,8 +1754,8 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
             )
             .length;
     final visibleEventCount =
-        _showEvents
-            ? visibleEvents
+        mapEventsReady && _showEvents
+            ? mapEvents
                 .where((event) => meshEventFocusPoint(event) != null)
                 .length
             : 0;
@@ -1742,10 +1776,14 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
             runtimeState: _runtimeState,
             staticFeatures: staticFeatures.features,
             administrativeIndex: _administrativeIndex,
-            visibleEvents: visibleEvents,
+            visibleEvents: filterMapEventLayers(
+              mapEvents,
+              incidents: _showEvents,
+              supplies: _showSupplies,
+            ),
             showShelters: _showShelters,
             showMedical: _showMedical,
-            showEvents: _showEvents,
+            showEvents: _showEvents || _showSupplies,
             onStaticFeatureSelected: _showStaticSelection,
             onEventSelected: _showEvent,
             onZoomPercentageChanged: _setZoomPercentage,
@@ -2054,7 +2092,7 @@ class _StatusOverlay extends StatelessWidget {
               ),
             ),
           ),
-          Text('警報標記：$visibleEventCount'),
+          if (!staticFeaturesPending) Text('事件標記：$visibleEventCount'),
           if (snapshotAt != null && snapshotAt!.isNotEmpty)
             Text('靜態資料更新：${formatUpdateTime(snapshotAt)}'),
           Text('目前位置：${hasCurrentLocation ? '已取得' : '尚未取得'}'),

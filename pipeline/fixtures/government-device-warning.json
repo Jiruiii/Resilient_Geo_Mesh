@@ -1,0 +1,420 @@
+{
+  "schema_version": "government-device-warning-fixture-v1",
+  "now": "2026-10-07T00:00:00.000Z",
+  "issuer_key_id": "central-server-2026",
+  "issuer_public_key_spki_base64": "MCowBQYDK2VwAyEAYbaRM6iN97Ibak8lHTbKwIyhnSePvWsooCX0W2pZADY=",
+  "certificate": {
+    "schema_version": "government-device-certificate-v1",
+    "certificate_id": "gov-cert:fixture-0001",
+    "device_id": "gov-device:fixture-0001",
+    "subject_id": "government-user:fixture-0001",
+    "signing_key_id": "device:bf28fe24d329effe28e81237b51612dc",
+    "signer_public_key": "MCowBQYDK2VwAyEA3JXHC24E8k+a/48v0qytqt29TZ/Q+ITOmv71FC5P3tg=",
+    "agency": "測試機關",
+    "permissions": [
+      "official.announcement.publish"
+    ],
+    "issued_at": "2026-10-01T00:00:00.000Z",
+    "expires_at": "2026-10-08T00:00:00.000Z",
+    "issuer_key_id": "central-server-2026",
+    "signature_algorithm": "Ed25519",
+    "signature": "4wcb5RJT5UnbYLCSRioueWOA1uMBCTooD2YNaZcq3BoM8XZVm9AK3jMXPiSV44HXOVUw2XgKT5Zc7jbvh902Dg=="
+  },
+  "event": {
+    "schema_version": "event-v0",
+    "namespace": "official.announcement",
+    "event_id": "announcement:device:fixture-0001",
+    "event_type": "GOVERNMENT_ANNOUNCEMENT",
+    "geometry": {
+      "type": "Point",
+      "coordinates": [
+        121.5,
+        25
+      ]
+    },
+    "severity": "HIGH",
+    "source": "GOVERNMENT",
+    "source_version": "fixture-1",
+    "event_version": 1,
+    "issued_at": "2026-10-05T00:00:00.000Z",
+    "expires_at": "2026-11-07T00:00:00.000Z",
+    "attributes": {
+      "title": "離線政府警告測試",
+      "content": "這是跨平台簽章驗證測試資料。",
+      "category": "SAFETY",
+      "area_id": "tw.national",
+      "theme": "announcement",
+      "has_map_location": true,
+      "government_device_certificate": {
+        "schema_version": "government-device-certificate-v1",
+        "certificate_id": "gov-cert:fixture-0001",
+        "device_id": "gov-device:fixture-0001",
+        "subject_id": "government-user:fixture-0001",
+        "signing_key_id": "device:bf28fe24d329effe28e81237b51612dc",
+        "signer_public_key": "MCowBQYDK2VwAyEA3JXHC24E8k+a/48v0qytqt29TZ/Q+ITOmv71FC5P3tg=",
+        "agency": "測試機關",
+        "permissions": [
+          "official.announcement.publish"
+        ],
+        "issued_at": "2026-10-01T00:00:00.000Z",
+        "expires_at": "2026-10-08T00:00:00.000Z",
+        "issuer_key_id": "central-server-2026",
+        "signature_algorithm": "Ed25519",
+        "signature": "4wcb5RJT5UnbYLCSRioueWOA1uMBCTooD2YNaZcq3BoM8XZVm9AK3jMXPiSV44HXOVUw2XgKT5Zc7jbvh902Dg=="
+      }
+    },
+    "signing_key_id": "device:bf28fe24d329effe28e81237b51612dc",
+    "signer_public_key": "MCowBQYDK2VwAyEA3JXHC24E8k+a/48v0qytqt29TZ/Q+ITOmv71FC5P3tg=",
+    "provenance": {
+      "original_source": "government-device",
+      "received_at": "2026-10-05T00:00:00.000Z",
+      "transport_source": {
+        "kind": "android_mesh"
+      }
+    },
+    "payload_hash": "sha256:d602ff5ef8205e944325c223ae8f46b96fb41667b7e275348242b77bea407a44",
+    "signature_algorithm": "Ed25519",
+    "signature": "Lgx7EABre87AHELriDGxbpXwSzDN29GQ/3MrVqSg8XUexSCKK9tyIVZ+/0sz+Un0hchm6DNpwdusWY4LEdo2BA=="
+  },
+  "revocation_event": {
+    "schema_version": "event-v0",
+    "namespace": "official.device-revocation",
+    "event_id": "device-revocation:gov-cert:fixture-0001",
+    "event_type": "GOVERNMENT_DEVICE_REVOKED",
+    "geometry": {
+      "type": "Point",
+      "coordinates": [
+        121,
+        23.5
+      ]
+    },
+    "severity": "LOW",
+    "source": "GOVERNMENT",
+    "source_version": "2026-10-06T00:00:00.000Z",
+    "event_version": 1,
+    "issued_at": "2026-10-06T00:00:00.000Z",
+    "expires_at": "2100-01-01T00:00:00.000Z",
+    "attributes": {
+      "certificate_id": "gov-cert:fixture-0001",
+      "device_id": "gov-device:fixture-0001",
+      "revoked_at": "2026-10-06T00:00:00.000Z",
+      "area_id": "tw.national",
+      "theme": "device-revocation",
+      "internal_only": true
+    },
+    "provenance": {
+      "original_source": "government-device-registry",
+      "received_at": "2026-10-06T00:00:00.000Z",
+      "transport_source": {
+        "kind": "server",
+        "node_id": "government-fixture"
+      }
+    },
+    "payload_hash": "sha256:ffd6ec17809e4744c92855cd152078d9e52d80cb9f8e16329f6918e139778da8",
+    "signature_algorithm": "Ed25519",
+    "signature": "HR+/JKNOBkhHE3jbmY7Zk4XId7Zd0VsNyocForu7RAG+P6TJpjXxJtFqatBLSHXcdp7Z4glXPFAknpSY9gQwDQ=="
+  },
+  "release": {
+    "feed": {
+      "schema_version": "government-feed-v1",
+      "revision": 1,
+      "created_at": "2026-10-07T00:00:00.000Z",
+      "expires_at": "2026-10-08T00:00:00.000Z",
+      "signing_key_id": "central-server-2026",
+      "signature_algorithm": "Ed25519",
+      "sources": [
+        {
+          "id": "government-announcements",
+          "status": "ok",
+          "event_count": 1,
+          "last_success_at": "2026-10-07T00:00:00.000Z",
+          "checked_at": "2026-10-07T00:00:00.000Z",
+          "unresolved_count": 0
+        },
+        {
+          "id": "government-device-revocations",
+          "status": "ok",
+          "event_count": 1,
+          "last_success_at": "2026-10-07T00:00:00.000Z",
+          "checked_at": "2026-10-07T00:00:00.000Z",
+          "unresolved_count": 0
+        }
+      ],
+      "datasets": [
+        {
+          "source_id": "government-announcements",
+          "manifest": {
+            "schema_version": "manifest-v0",
+            "manifest_id": "government-government-announcements:manifest:1",
+            "dataset_id": "government-government-announcements",
+            "namespace": "official.announcement",
+            "source": "government-announcements",
+            "source_version": "2026-10-07T00:00:00.000Z",
+            "dataset_version": 1,
+            "created_at": "2026-10-07T00:00:00.000Z",
+            "expires_at": "2026-11-07T00:00:00.000Z",
+            "chunking": {
+              "algorithm": "fixed-size",
+              "target_size_bytes": 4096,
+              "hash_algorithm": "SHA-256"
+            },
+            "total_event_count": 1,
+            "total_size_bytes": 2059,
+            "chunks": [
+              {
+                "chunk_id": "government-government-announcements:chunk:1:national:announcement:000",
+                "sequence": 0,
+                "chunk_hash": "sha256:cdadbdd1c3fed27b126203ae7a0db826f34f3952f3117fab95e0a91bccf69f45",
+                "size_bytes": 2059,
+                "event_count": 1,
+                "priority": "HIGH",
+                "area_id": "tw.national",
+                "theme": "announcement",
+                "bbox": [
+                  121.5,
+                  25,
+                  121.5,
+                  25
+                ],
+                "event_ids": [
+                  "announcement:device:fixture-0001"
+                ]
+              }
+            ],
+            "signature_algorithm": "Ed25519",
+            "signing_key_id": "central-server-2026",
+            "manifest_hash": "sha256:a19c9272b4884dc712d6270edf46dc46b9d19028a95ec022e1ce64867d5e36a4",
+            "signature": "2lYlrkE+XSOzP48S4BfpaRt+2r/aK0MMepBXOTTfTvSgCzRfSdIARPkiyyv8LyeYVLoKk/KnhwTcvYfnQXRHCw=="
+          },
+          "chunk_paths": [
+            "releases/1/government-announcements/0.json"
+          ]
+        },
+        {
+          "source_id": "government-device-revocations",
+          "manifest": {
+            "schema_version": "manifest-v0",
+            "manifest_id": "government-government-device-revocations:manifest:1",
+            "dataset_id": "government-government-device-revocations",
+            "namespace": "official.device-revocation",
+            "source": "government-device-revocations",
+            "source_version": "2026-10-07T00:00:00.000Z",
+            "dataset_version": 1,
+            "created_at": "2026-10-07T00:00:00.000Z",
+            "expires_at": "2100-01-01T00:00:00.000Z",
+            "chunking": {
+              "algorithm": "fixed-size",
+              "target_size_bytes": 4096,
+              "hash_algorithm": "SHA-256"
+            },
+            "total_event_count": 1,
+            "total_size_bytes": 1346,
+            "chunks": [
+              {
+                "chunk_id": "government-government-device-revocations:chunk:1:national:device-revocation:000",
+                "sequence": 0,
+                "chunk_hash": "sha256:78f423b35794df042a9ba95dc8c5494e1614d5b09b1c5008e331efa245dd8cb0",
+                "size_bytes": 1346,
+                "event_count": 1,
+                "priority": "LOW",
+                "area_id": "tw.national",
+                "theme": "device-revocation",
+                "bbox": [
+                  121,
+                  23.5,
+                  121,
+                  23.5
+                ],
+                "event_ids": [
+                  "device-revocation:gov-cert:fixture-0001"
+                ]
+              }
+            ],
+            "signature_algorithm": "Ed25519",
+            "signing_key_id": "central-server-2026",
+            "manifest_hash": "sha256:d5dd3d9940fcc431f9e9781ebf6e29d09d8d76840cf7d9f6bb222959b73e9720",
+            "signature": "IRLbKaRp1B1Iyog8FUh4NabEBuj5t1WlsT6o98q52OGpmcPMoORf0VSiPQMZ3bJ8qRvosuikRQwryyRE99YRBA=="
+          },
+          "chunk_paths": [
+            "releases/1/government-device-revocations/0.json"
+          ]
+        }
+      ],
+      "event_versions": {
+        "official.announcement/announcement:device:fixture-0001": {
+          "version": 1,
+          "fingerprint": "sha256:1e0dbb5f9e453cdafe19b9dc53dc2597cb034386063e593ab913f8c46f150e67"
+        },
+        "official.device-revocation/device-revocation:gov-cert:fixture-0001": {
+          "version": 1,
+          "fingerprint": "sha256:324787c1174fe37bfe03ad9b126b12f3c3758f207c34d13016785a880f83f283"
+        }
+      },
+      "signature": "pFzBpAeR5B5q+SxxXIyTxJUcex19+PH/FXby+ZGcs1yA5EQErf2mq4/pt0oaCxdHts7IIGFNE2nOkUvveAoODA=="
+    },
+    "documents": [
+      {
+        "path": "releases/1/government-announcements/0.json",
+        "chunk": {
+          "schema_version": "chunk-v0",
+          "chunk_id": "government-government-announcements:chunk:1:national:announcement:000",
+          "manifest_id": "government-government-announcements:manifest:1",
+          "dataset_id": "government-government-announcements",
+          "namespace": "official.announcement",
+          "dataset_version": 1,
+          "sequence": 0,
+          "priority": "HIGH",
+          "area_id": "tw.national",
+          "theme": "announcement",
+          "bbox": [
+            121.5,
+            25,
+            121.5,
+            25
+          ],
+          "created_at": "2026-10-07T00:00:00.000Z",
+          "content_type": "application/json",
+          "content_encoding": "identity",
+          "event_count": 1,
+          "events": [
+            {
+              "schema_version": "event-v0",
+              "namespace": "official.announcement",
+              "event_id": "announcement:device:fixture-0001",
+              "event_type": "GOVERNMENT_ANNOUNCEMENT",
+              "geometry": {
+                "type": "Point",
+                "coordinates": [
+                  121.5,
+                  25
+                ]
+              },
+              "severity": "HIGH",
+              "source": "GOVERNMENT",
+              "source_version": "fixture-1",
+              "event_version": 1,
+              "issued_at": "2026-10-05T00:00:00.000Z",
+              "expires_at": "2026-11-07T00:00:00.000Z",
+              "attributes": {
+                "title": "離線政府警告測試",
+                "content": "這是跨平台簽章驗證測試資料。",
+                "category": "SAFETY",
+                "area_id": "tw.national",
+                "theme": "announcement",
+                "has_map_location": true,
+                "government_device_certificate": {
+                  "schema_version": "government-device-certificate-v1",
+                  "certificate_id": "gov-cert:fixture-0001",
+                  "device_id": "gov-device:fixture-0001",
+                  "subject_id": "government-user:fixture-0001",
+                  "signing_key_id": "device:bf28fe24d329effe28e81237b51612dc",
+                  "signer_public_key": "MCowBQYDK2VwAyEA3JXHC24E8k+a/48v0qytqt29TZ/Q+ITOmv71FC5P3tg=",
+                  "agency": "測試機關",
+                  "permissions": [
+                    "official.announcement.publish"
+                  ],
+                  "issued_at": "2026-10-01T00:00:00.000Z",
+                  "expires_at": "2026-10-08T00:00:00.000Z",
+                  "issuer_key_id": "central-server-2026",
+                  "signature_algorithm": "Ed25519",
+                  "signature": "4wcb5RJT5UnbYLCSRioueWOA1uMBCTooD2YNaZcq3BoM8XZVm9AK3jMXPiSV44HXOVUw2XgKT5Zc7jbvh902Dg=="
+                }
+              },
+              "signing_key_id": "device:bf28fe24d329effe28e81237b51612dc",
+              "signer_public_key": "MCowBQYDK2VwAyEA3JXHC24E8k+a/48v0qytqt29TZ/Q+ITOmv71FC5P3tg=",
+              "provenance": {
+                "original_source": "government-device",
+                "received_at": "2026-10-07T00:00:00.000Z",
+                "transport_source": {
+                  "kind": "server",
+                  "node_id": "government-collector"
+                }
+              },
+              "payload_hash": "sha256:d602ff5ef8205e944325c223ae8f46b96fb41667b7e275348242b77bea407a44",
+              "signature_algorithm": "Ed25519",
+              "signature": "Lgx7EABre87AHELriDGxbpXwSzDN29GQ/3MrVqSg8XUexSCKK9tyIVZ+/0sz+Un0hchm6DNpwdusWY4LEdo2BA=="
+            }
+          ],
+          "signature_algorithm": "Ed25519",
+          "signing_key_id": "central-server-2026",
+          "byte_length": 2059,
+          "chunk_hash": "sha256:cdadbdd1c3fed27b126203ae7a0db826f34f3952f3117fab95e0a91bccf69f45",
+          "manifest_hash": "sha256:a19c9272b4884dc712d6270edf46dc46b9d19028a95ec022e1ce64867d5e36a4",
+          "signature": "FUvC1H4S1Beu2mqIC+nA/rVrGlEFyANBfJpalrkGluMCcEmCb9YXrBrWp7ZKjSBU7C9WWdkXQ2laqYsu3N+hDg=="
+        }
+      },
+      {
+        "path": "releases/1/government-device-revocations/0.json",
+        "chunk": {
+          "schema_version": "chunk-v0",
+          "chunk_id": "government-government-device-revocations:chunk:1:national:device-revocation:000",
+          "manifest_id": "government-government-device-revocations:manifest:1",
+          "dataset_id": "government-government-device-revocations",
+          "namespace": "official.device-revocation",
+          "dataset_version": 1,
+          "sequence": 0,
+          "priority": "LOW",
+          "area_id": "tw.national",
+          "theme": "device-revocation",
+          "bbox": [
+            121,
+            23.5,
+            121,
+            23.5
+          ],
+          "created_at": "2026-10-07T00:00:00.000Z",
+          "content_type": "application/json",
+          "content_encoding": "identity",
+          "event_count": 1,
+          "events": [
+            {
+              "schema_version": "event-v0",
+              "namespace": "official.device-revocation",
+              "event_id": "device-revocation:gov-cert:fixture-0001",
+              "event_type": "GOVERNMENT_DEVICE_REVOKED",
+              "geometry": {
+                "type": "Point",
+                "coordinates": [
+                  121,
+                  23.5
+                ]
+              },
+              "severity": "LOW",
+              "source": "GOVERNMENT",
+              "source_version": "2026-10-06T00:00:00.000Z",
+              "event_version": 1,
+              "issued_at": "2026-10-06T00:00:00.000Z",
+              "expires_at": "2100-01-01T00:00:00.000Z",
+              "attributes": {
+                "certificate_id": "gov-cert:fixture-0001",
+                "device_id": "gov-device:fixture-0001",
+                "revoked_at": "2026-10-06T00:00:00.000Z",
+                "area_id": "tw.national",
+                "theme": "device-revocation",
+                "internal_only": true
+              },
+              "provenance": {
+                "original_source": "government-device-revocations",
+                "received_at": "2026-10-07T00:00:00.000Z",
+                "transport_source": {
+                  "kind": "server",
+                  "node_id": "government-collector"
+                }
+              },
+              "payload_hash": "sha256:ffd6ec17809e4744c92855cd152078d9e52d80cb9f8e16329f6918e139778da8",
+              "signature_algorithm": "Ed25519",
+              "signature": "HR+/JKNOBkhHE3jbmY7Zk4XId7Zd0VsNyocForu7RAG+P6TJpjXxJtFqatBLSHXcdp7Z4glXPFAknpSY9gQwDQ==",
+              "signing_key_id": "central-server-2026"
+            }
+          ],
+          "signature_algorithm": "Ed25519",
+          "signing_key_id": "central-server-2026",
+          "byte_length": 1346,
+          "chunk_hash": "sha256:78f423b35794df042a9ba95dc8c5494e1614d5b09b1c5008e331efa245dd8cb0",
+          "manifest_hash": "sha256:d5dd3d9940fcc431f9e9781ebf6e29d09d8d76840cf7d9f6bb222959b73e9720",
+          "signature": "rpUFjESWegnN2N+CFiSUd8FMvLqG93k/4yVzYGN1AkMR9MkCLuEb0m13G3Kn9s9cg5OZycDji40X3FoRqTw1Aw=="
+        }
+      }
+    ]
+  }
+}

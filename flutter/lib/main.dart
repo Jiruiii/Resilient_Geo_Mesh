@@ -6,10 +6,13 @@ import 'package:maplibre_gl/maplibre_gl.dart';
 
 import 'app/map_app_controller.dart';
 import 'data/app_performance.dart';
+import 'data/map_models.dart';
+import 'data/ncdr_map_filter.dart';
 import 'data/offline_map_web_protocol.dart';
 import 'data/maplibre_web_runtime.dart';
 import 'data/siren_controller.dart';
 import 'debug/route_validation_app.dart';
+import 'debug/mesh_drill_app.dart';
 import 'screens/map_screen.dart';
 import 'screens/notifications_screen.dart';
 import 'screens/profile_screen.dart';
@@ -31,6 +34,13 @@ Future<void> main() async {
     await registerOfflineMapProtocol();
   }
   runApp(const ResilientGeoApp());
+}
+
+@pragma('vm:entry-point')
+void meshDrillMain() {
+  if (kReleaseMode) return;
+  WidgetsFlutterBinding.ensureInitialized();
+  runMeshDrillApp();
 }
 
 @pragma('vm:entry-point')
@@ -91,6 +101,24 @@ class _MapAppHome extends StatefulWidget {
 
 class _MapAppHomeState extends State<_MapAppHome> {
   int _selectedIndex = 0;
+  MeshEvent? _notificationFocusEvent;
+  int _notificationFocusRequestId = 0;
+
+  void _openNotificationOnMap(MeshEvent event) {
+    unawaited(widget.controller.markEventRead(event));
+    final point = meshEventFocusPoint(event);
+    if (!isMapVisibleEvent(event) || point == null) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(const SnackBar(content: Text('此通知沒有地圖位置')));
+      return;
+    }
+    setState(() {
+      _selectedIndex = 0;
+      _notificationFocusEvent = event;
+      _notificationFocusRequestId += 1;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -150,13 +178,22 @@ class _MapAppHomeState extends State<_MapAppHome> {
                   rescueService: controller.rescueService,
                   onViewportSettled: controller.setRescueViewport,
                   sirenPanelBuilder: (context, _) => SirenPanel(controller: widget.siren),
+                  notificationFocusEvent: _notificationFocusEvent,
+                  notificationFocusRequestId: _notificationFocusRequestId,
                 ),
                 NotificationsScreen(
-                  events: controller.unreadEvents,
+                  events: controller.notificationEvents,
+                  readEventKeys: controller.readEventKeys,
                   attestationSource: controller.events,
                   onEventRead: controller.markEventRead,
+                  onEventMapRequested: _openNotificationOnMap,
+                  onMarkAllRead: controller.markAllNotificationsRead,
+                  onEventDeleted: controller.deleteNotification,
+                  onDeleteAll: controller.deleteAllNotifications,
+                  onUndoDelete: controller.restoreNotification,
                 ),
                 ProfileScreen(
+                  governmentAuth: controller.governmentAuth,
                   bridge: controller.bridge,
                   themeMode: controller.themeMode,
                   animationEnabled: controller.animationEnabled,

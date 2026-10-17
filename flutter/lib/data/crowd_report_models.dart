@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'map_models.dart';
 
 enum CrowdReportCategory {
@@ -170,29 +172,48 @@ final class CrowdReportSubmission {
     required this.eventId,
     required this.applyState,
     required this.deliveryState,
+    this.event,
   });
 
   final String eventId;
   final String applyState;
   final String deliveryState;
+  final Map<String, dynamic>? event;
 
   factory CrowdReportSubmission.fromMessage(Map<String, dynamic> message) {
     final eventId = message['event_id'];
     final applyState = message['apply_state'];
     final deliveryState = message['delivery_state'];
+    final rawEvent = message['event_json'];
+    final event =
+        rawEvent is String
+            ? _decodeEvent(rawEvent)
+            : rawEvent is Map
+            ? Map<String, dynamic>.from(rawEvent)
+            : null;
     if (eventId is! String ||
         eventId.isEmpty ||
         !eventId.startsWith('report:') ||
         applyState != 'UNVERIFIED' ||
-        deliveryState != 'PENDING') {
+        !<String>{'PENDING', 'UPLOADED'}.contains(deliveryState)) {
       throw const FormatException(
-        'submitCrowdReport response is not UNVERIFIED/PENDING',
+        'submitCrowdReport response is not UNVERIFIED with a delivery state',
       );
     }
     return CrowdReportSubmission(
       eventId: eventId,
       applyState: applyState as String,
       deliveryState: deliveryState as String,
+      event: event,
     );
+  }
+
+  static Map<String, dynamic>? _decodeEvent(String raw) {
+    try {
+      final decoded = jsonDecode(raw);
+      return decoded is Map ? Map<String, dynamic>.from(decoded) : null;
+    } on Object {
+      return null;
+    }
   }
 }

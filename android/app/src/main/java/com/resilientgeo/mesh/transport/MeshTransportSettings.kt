@@ -14,6 +14,12 @@ import com.google.android.gms.common.ConnectionResult
 
 class MeshTransportSettings(private val context: Context) {
     private val preferences = context.getSharedPreferences("emergency_mode", Context.MODE_PRIVATE)
+    var discoveryMode: String
+        get() = preferences.getString("discovery_mode", "balanced") ?: "balanced"
+        set(value) {
+            require(value in setOf("balanced", "adaptive"))
+            preferences.edit().putString("discovery_mode", value).apply()
+        }
     var mode: String
         // Old manual choices migrate to automatic; explicit diagnostic overrides use a new key.
         get() = preferences.getString("transport_v2", AUTO) ?: AUTO
@@ -58,6 +64,11 @@ class MeshTransportSettings(private val context: Context) {
         ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
     }
     fun wifiReady() = wifiAvailable() && wifiEnabled() && wifiGranted() && locationEnabled()
+    /** Human-readable reason Wi-Fi Direct cannot start, or null when it is ready. */
+    fun wifiNotReadyMessage(): String? = WifiReadiness.message(WifiReadiness.problems(
+        wifiAvailable(), wifiEnabled(), locationEnabled(),
+        wifiPermissions().filter { ContextCompat.checkSelfPermission(context, it) != PackageManager.PERMISSION_GRANTED },
+    ))
 
     companion object {
         const val AUTO = "auto"

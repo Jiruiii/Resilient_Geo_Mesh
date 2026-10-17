@@ -343,6 +343,37 @@ test('event-v0 forbids device keys outside crowd.* namespaces', () => {
     .some((error) => error.includes('namespace')));
 });
 
+test('event-v0 permits device keys for official announcements only with a government certificate', () => {
+  const event = structuredClone(crowdCase('valid_report'));
+  event.namespace = 'official.announcement';
+  event.source = 'GOVERNMENT';
+  event.attributes = {
+    area_id: 'tw.national',
+    title: '全台警告',
+    content: '測試警告',
+    government_device_certificate: {
+      schema_version: 'government-device-certificate-v1',
+      certificate_id: 'gov-cert:11111111-1111-4111-8111-111111111111',
+      device_id: 'gov-device:22222222-2222-4222-8222-222222222222',
+      subject_id: '33333333-3333-4333-8333-333333333333',
+      signing_key_id: event.signing_key_id,
+      signer_public_key: event.signer_public_key,
+      agency: '測試機關',
+      permissions: ['official.announcement.publish'],
+      issued_at: '2026-09-24T00:00:00Z',
+      expires_at: '2026-10-01T00:00:00Z',
+      issuer_key_id: 'government-feed-2026',
+      signature_algorithm: 'Ed25519',
+      signature: SIGNATURE,
+    },
+  };
+
+  assert.deepEqual(validate(event, eventSchema), []);
+
+  delete event.attributes.government_device_certificate;
+  assert.ok(validate(event, eventSchema).some((error) => error.includes('government_device_certificate')));
+});
+
 test('official attestations conform to event-v0', () => {
   for (const attestation of crowdFixture.attestations) {
     assert.deepEqual(validate(attestation, eventSchema), []);

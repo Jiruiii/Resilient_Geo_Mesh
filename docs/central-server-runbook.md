@@ -1,10 +1,10 @@
 # ResilientGeo Central Server Runbook
 
-這份 runbook 說明中央 Server 與同步交付 Web／Android 的部署邊界。Flutter Web 及 Android 已接入簽章 feed、靜態圖層與縣市門牌包，並使用隨 App 提供的 OSM 離線底圖；Server 或用戶端資料契約變更需在同一批次建置及驗收。此 runbook 提供 VPS/Caddy 部署流程；Azure workflow 目前只部署 API 與排程工作，不部署 Flutter Web 靜態檔。
+這份 runbook 說明中央 Server 與同步交付 Web／Android 的部署邊界。Flutter Web 及 Android 已接入簽章 feed、靜態圖層與縣市門牌包，並使用隨 App 提供的 OSM 離線底圖；Server 或用戶端資料契約變更需在同一批次建置及驗收。此 runbook 提供 VPS/Caddy 部署流程；Azure workflow 目前只部署 feed API 與排程工作，不部署 Flutter Web 靜態檔或政府工作台 API、publisher 與 PostgreSQL。
 
 ## 部署前準備
 
-在 VPS 建立 private cache 與 public release 的持久化 Docker volumes。準備一組 Ed25519 key pair，private key 只放在 collector 使用的 secret mount；public key 可提供給 API 做 `/readyz` 驗證。設定 `SIGNING_KEY_ID`，並準備不含 credentials 的 `data/area-catalog.json`。
+在 VPS 建立 private cache、public release 與 PostgreSQL 的持久化 Docker volumes。準備一組 Ed25519 key pair，private key 放在 collector 及政府工作台發布 worker 使用的 secret mount；public key可提供給公開 API 做 `/readyz` 驗證。設定 `SIGNING_KEY_ID`，並準備不含 credentials 的 `data/area-catalog.json`。政府工作台的帳號啟用、備份與 API 合約見[政府工作台操作說明](government-workbench.md)。
 
 Compose 所需的上游 credentials（`CWA_API_KEY`、`NCDR_ALERT_API_KEY`）以及 `SIGNING_PRIVATE_KEY_FILE`、`SIGNING_PUBLIC_KEY_FILE`、`SERVER_DOMAIN` 由 VPS environment 或 secret manager 提供，不要寫進 Git、image、Raw snapshot 或 log。TDX 目前是 opt-in source，不是預設核心災害 feed；只有手動啟用 TDX 時才需要 `TDX_CLIENT_ID`、`TDX_CLIENT_SECRET`。
 
@@ -37,7 +37,7 @@ collector 會以排程呼叫官方來源、寫入 private source cache，再將�
 
 既有 feed 若含舊版 `shelter-status` dataset，collector 部署後的下一次完整成功發布會從 current feed 移除它；舊 immutable revisions 與 private cache 仍保留作歷史稽核。靜態避難所 layer 仍會照原排程更新。
 
-Collector 的排程會將同時到期的來源排入單一序列佇列，避免來源競爭全域 lock 而被靜默跳過。每次排程會以本次成功結果加上其他來源的 last-known-good cache 組成完整結果集；來源缺少 cache，或狀態為 `partial`／`stale`／`unavailable`／`blocked_by_auth` 時，會保留目前 `current/feed.json`，不發布不完整版本。來源檢查成功且當下沒有有效告警時，零資料集仍可通過 schema、hash、signature 與 chunk 驗證並發布有效的簽章空 feed；來源失敗時則沿用上一個可信版本。發布器完成 staging 與簽章驗證後才切換 current pointer。
+Collector 的排程會將同時到期的來源排入單一序列佇列，避免來源競爭全域 lock 而被靜默跳過。每次排程會以本次成功結果加上其他來源的 last-known-good cache 組成完整結果集；來源缺少 cache，或狀態為 `partial`／`stale`／`unavailable`／`blocked_by_auth` 時，會保留目前 `current/feed.json`，不發布不完整版本。來源檢查成功且當下沒有有效告警時，零資料集仍可通過 schema、hash、signature 與 chunk 驗證並發布有效的簽章空 feed；來源失敗時則沿用上一個可信版本。Collector 與政府工作台發布 worker 都會取得共用發布鎖，並在 staging 完成驗證後才切換 current pointer。
 
 要只在重建後的首次 run 收集指定來源，可於 Compose 命令前設定 `COLLECTOR_INITIAL_SOURCE_IDS`。例如先只收醫療：
 
@@ -66,7 +66,7 @@ docker compose -f deploy/docker-compose.yml restart collector api proxy
 docker compose -f deploy/docker-compose.yml logs --since=15m collector api proxy
 ```
 
-backup 必須包含 `private_data`（source state 與 last-known-good cache）和 `public_release`（immutable releases 與 current pointer），private key 則使用 VPS secret manager 的獨立備份政策。不要將 raw snapshot 或 private key 放進 public release backup、HTTP response 或 issue。
+backup 必須包含 `private_data`（source state 與 last-known-good cache）、`public_release`（immutable releases 與 current pointer）及 `government_db`（政府帳號、回報、公告、outbox 與 audit）。資料庫另以 `pg_dump` 匯出；操作方式見[政府工作台操作說明](government-workbench.md#備份與還原)。private key 使用 VPS secret manager 的獨立備份政策。不要將 raw snapshot 或 private key 放進 public release backup、HTTP response 或 issue。
 
 ## Rollback
 
@@ -81,7 +81,7 @@ docker compose -f deploy/docker-compose.yml logs --since=30m collector
 
 ## 安全界線
 
-collector 是唯一可寫入 private cache 與 public release 的 service；API 只 read-only mount public release，沒有上游 API key 或 signing private key；Caddy 提供 Flutter Web 外殼、版本化門牌資產，並代理 `/healthz`、`/readyz`、`/feed.json`、`/releases/*` 和 `/v1/*`。
+collector 是唯一收集上游資料並寫入 private source cache 的 service。政府工作台發布 worker 可讀 PostgreSQL outbox、讀取中央 signing key，並和 collector 共用 public release 及發布鎖；government-api 只有資料庫連線，不持有 signing key，也無法寫入 public release。公開資料 API 只 read-only mount public release，沒有上游 API key 或 signing private key；Caddy 提供 Flutter Web 外殼、版本化門牌資產，並代理 `/healthz`、`/readyz`、`/feed.json`、`/releases/*`、`/v1/*` 及 `/api/v1/*`。
 
 ## 求救接收（`/v1/crowd/rescue-events`）
 

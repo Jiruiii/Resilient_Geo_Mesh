@@ -211,6 +211,43 @@ void main() {
     }
   });
 
+  testWidgets('map station details show category, content and effective time', (
+    tester,
+  ) async {
+    final station = MeshEvent(
+      namespace: 'official.announcement',
+      eventId: 'announcement:station',
+      eventVersion: 1,
+      eventType: 'GOVERNMENT_ANNOUNCEMENT',
+      severity: 'MEDIUM',
+      source: 'GOVERNMENT',
+      issuedAt: '2026-10-12T00:00:00Z',
+      expiresAt: '2099-01-01T00:00:00Z',
+      applyState: 'CURRENT',
+      geometry: const PointGeometry(
+        GeoPoint(longitude: 121.590304, latitude: 25.083506),
+      ),
+      attributes: const <String, dynamic>{
+        'title': '三重物資站',
+        'category': 'SUPPLY_STATION',
+        'content': '提供飲水與乾糧',
+        'has_map_location': true,
+      },
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: FeatureDetailsSheet.event(event: station, onClose: () {}),
+        ),
+      ),
+    );
+
+    expect(find.text('公告類別：物資站'), findsOneWidget);
+    expect(find.text('公告內容：提供飲水與乾糧'), findsOneWidget);
+    expect(find.text('位置／範圍：點位（25.083506, 121.590304）'), findsOneWidget);
+  });
+
   testWidgets('notifications label verified reports and hide attestations', (
     tester,
   ) async {

@@ -25,6 +25,67 @@ Map<String, dynamic> message() => {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  testWidgets(
+    'adaptive setting and manual search call native bridge, with mode locked while running',
+    (tester) async {
+      const channel = MethodChannel('test/discovery-controls');
+      var enabled = false, searches = 0;
+      var mode = 'balanced';
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        if (call.method == 'setDiscoveryMode') {
+          mode = (call.arguments as Map)['mode'] as String;
+        }
+        if (call.method == 'searchPeersNow') searches++;
+        if (call.method == 'setEmergencyMode') {
+          enabled = (call.arguments as Map)['enabled'] as bool;
+          return {'enabled': enabled};
+        }
+        return {
+          ...message(),
+          'transport': 'wifi_direct',
+          'discovery_mode': mode,
+          'emergency_mode_enabled': enabled,
+          'service_running': enabled,
+          'wifi_direct_available': true,
+          'wifi_enabled': true,
+          'wifi_permissions_granted': true,
+          'location_enabled': true,
+        };
+      });
+      addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SyncStatusScreen(bridge: MapBridge(methodChannel: channel)),
+        ),
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('discovery-mode')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('自適應間歇搜尋（實驗）').last);
+      await tester.pumpAndSettle();
+      expect(mode, 'adaptive');
+      await tester.ensureVisible(find.byType(Switch));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byType(Switch));
+      await tester.pump();
+      expect(
+        tester
+            .widget<DropdownButtonFormField<String>>(
+              find.byKey(const ValueKey('discovery-mode')),
+            )
+            .onChanged,
+        isNull,
+      );
+      await tester.ensureVisible(find.text('立即搜尋'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('立即搜尋'));
+      await tester.pump();
+      expect(searches, 1);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
   test('Wi-Fi Direct readiness does not depend on Bluetooth', () {
     final wifi =
         message()..addAll({
@@ -91,12 +152,13 @@ void main() {
       await tester.pumpAndSettle();
       expect(mode, 'wifi_direct');
       await tester.ensureVisible(find.byType(Switch));
+      await tester.pumpAndSettle();
       await tester.tap(find.byType(Switch));
       await tester.pump();
       expect(
         tester
             .widget<DropdownButtonFormField<String>>(
-              find.byType(DropdownButtonFormField<String>),
+              find.byKey(const ValueKey('sync-transport')),
             )
             .onChanged,
         isNull,

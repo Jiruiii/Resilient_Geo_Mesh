@@ -5,6 +5,7 @@ import '../data/crowd_report_models.dart';
 import '../data/display_time.dart';
 import '../data/map_models.dart';
 import '../data/rescue_request_models.dart';
+import '../data/supply_status.dart';
 import 'map_layers.dart';
 
 class FeatureDetailsSheet extends StatelessWidget {
@@ -152,14 +153,41 @@ class FeatureDetailsSheet extends StatelessWidget {
     final rescue = RescueRequestView.fromEvent(event);
     if (rescue != null) return _rescueBody(event, rescue);
     return <Widget>[
+      if (event.attributes?['exercise'] == true ||
+          event.namespace?.startsWith('drill.') == true)
+        const Text(
+          '演練資料，非真實災情或政府公告',
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
+      if (isSupplyEvent(event)) ...[
+        _DetailLine('發放狀態', SupplyStatus(event).statusAt()),
+        _DetailLine(
+          '物資',
+          SupplyStatus(event).items.isEmpty ? '未知' : SupplyStatus(event).items,
+        ),
+        _DetailLine('剩餘數量', SupplyStatus(event).quantity),
+        _DetailLine('發放時間', SupplyStatus(event).openingHours),
+        _DetailLine('地址', SupplyStatus(event).address),
+        _DetailLine('發布單位', SupplyStatus(event).issuer),
+        const Text('供應資訊可能已變更；未知數量不代表沒有物資。'),
+      ],
       if (isCrowdEvent(event)) ...<Widget>[
         _VerificationNotice(event.verification ?? CrowdVerification.unverified),
         _DetailLine('回報類別', crowdCategoryLabel(event.attributes?['category'])),
         _DetailLine('描述', _text(event.attributes?['description'])),
         if (corroboration != null) _DetailLine('附近回報', corroboration!),
       ],
+      if (event.namespace == 'official.announcement') ...<Widget>[
+        _DetailLine(
+          '公告類別',
+          governmentAnnouncementCategoryLabel(event.attributes?['category']),
+        ),
+        if (event.attributes?['content'] is String)
+          _DetailLine('公告內容', _text(event.attributes?['content'])),
+      ],
       _DetailLine('事件類型', _text(event.eventType)),
-      _DetailLine('嚴重度', _text(event.severity)),
+      if (!isSupplyStationEvent(event))
+        _DetailLine('嚴重度', _text(event.severity)),
       _DetailLine('位置／範圍', _geometryText(event.geometry)),
       _DetailLine('來源', _text(event.source)),
       _DetailLine('發佈時間', _text(event.issuedAt)),
