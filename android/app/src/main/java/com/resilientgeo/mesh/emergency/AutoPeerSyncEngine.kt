@@ -297,7 +297,7 @@ class AutoPeerSyncEngine(
                 session.retryNotBeforeMillis = 0L
                 true
             }
-            if (requestedAgain && workers.isActive &&
+            if (requestedAgain && workers.coroutineContext[Job]?.isActive == true &&
                 clock() - session.lastSeenAtMillis <= RECENT_PEER_WINDOW_MS &&
                 (mayInitiate() || session.hasUnconsumedHello())
             ) {

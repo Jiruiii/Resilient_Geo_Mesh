@@ -1569,6 +1569,8 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
     final visibleEvents = _visibleEvents;
+    final mapEventsReady = !widget.staticFeaturesPending;
+    final mapEvents = mapEventsReady ? visibleEvents : const <MeshEvent>[];
     final visibleFacilityCount =
         staticFeatures.features
             .where(
@@ -1579,8 +1581,8 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
             )
             .length;
     final visibleEventCount =
-        _showEvents
-            ? visibleEvents
+        mapEventsReady && _showEvents
+            ? mapEvents
                 .where((event) => meshEventFocusPoint(event) != null)
                 .length
             : 0;
@@ -1601,7 +1603,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
             staticFeatures: staticFeatures.features,
             administrativeIndex: _administrativeIndex,
             visibleEvents: filterMapEventLayers(
-              visibleEvents,
+              mapEvents,
               incidents: _showEvents,
               supplies: _showSupplies,
             ),
@@ -1825,7 +1827,7 @@ class _StatusOverlay extends StatelessWidget {
               ),
             ),
           ),
-          Text('警報標記：$visibleEventCount'),
+          if (!staticFeaturesPending) Text('事件標記：$visibleEventCount'),
           if (snapshotAt != null && snapshotAt!.isNotEmpty)
             Text('靜態資料更新：${formatUpdateTime(snapshotAt)}'),
           Text('目前位置：${hasCurrentLocation ? '已取得' : '尚未取得'}'),

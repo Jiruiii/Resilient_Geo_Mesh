@@ -7,6 +7,9 @@ import 'map_models.dart';
 @JS('loadNLSCGovernmentFeed')
 external JSPromise<JSString> _loadNLSCGovernmentFeed();
 
+@JS('getNLSCGovernmentFeedRevision')
+external JSPromise<JSNumber> _getNLSCGovernmentFeedRevision();
+
 Future<WebGovernmentFeedSnapshot> loadWebGovernmentFeed() async {
   final raw = (await _loadNLSCGovernmentFeed().toDart).toDart;
   final decoded = jsonDecode(raw);
@@ -30,3 +33,6 @@ Future<WebGovernmentFeedSnapshot> loadWebGovernmentFeed() async {
         .toList(growable: false),
   );
 }
+
+Future<int> loadWebGovernmentFeedRevision() async =>
+    (await _getNLSCGovernmentFeedRevision().toDart).toDartDouble.toInt();

@@ -114,7 +114,9 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen> {
       if (!mounted) return;
       setState(() {
         _reports = values[0] as List<Map<String, dynamic>>;
-        _announcements = values[1] as List<Map<String, dynamic>>;
+        _announcements = (values[1] as List<Map<String, dynamic>>)
+            .where((announcement) => announcement['retracted'] != true)
+            .toList(growable: false);
         if (_isAdmin) _users = values[2] as List<Map<String, dynamic>>;
       });
       if (widget.auth.androidDeviceMode &&
@@ -309,7 +311,7 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen> {
       Expanded(
         child:
             _announcements.isEmpty && !_loading
-                ? const Center(child: Text('尚未發布公告'))
+                ? const Center(child: Text('目前沒有有效公告'))
                 : RefreshIndicator(
                   onRefresh: _refresh,
                   child: ListView.separated(
@@ -346,7 +348,7 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen> {
                                           ),
                                           PopupMenuItem(
                                             value: 'retract',
-                                            child: Text('撤回'),
+                                            child: Text('撤回並隱藏'),
                                           ),
                                         ],
                                   ),
@@ -801,10 +803,10 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen> {
             widget.auth.user?.role == 'GOVERNMENT') {
           await widget.auth.createDeviceGovernmentWarning(input);
         } else {
-          await widget.auth.api.createAnnouncement(input);
+          await widget.auth.createAnnouncement(input);
         }
       } else {
-        await widget.auth.api.reviseAnnouncement(
+        await widget.auth.reviseAnnouncement(
           existing['event_id'] as String,
           input,
         );
@@ -974,8 +976,10 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen> {
       context: context,
       builder:
           (context) => AlertDialog(
-            title: const Text('撤回公告？'),
-            content: const Text('撤回會發布新的官方簽章版本，並在同步後更新使用者通知。'),
+            title: const Text('撤回並隱藏公告？'),
+            content: const Text(
+              '公告將從工作台清單隱藏，並發布新的官方簽章撤回版本。已發布的簽章歷史與稽核紀錄會保留；使用者端會在同步撤回版本後更新。',
+            ),
             actions: <Widget>[
               TextButton(
                 onPressed: () => Navigator.pop(context, false),
@@ -983,14 +987,21 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen> {
               ),
               FilledButton(
                 onPressed: () => Navigator.pop(context, true),
-                child: const Text('撤回公告'),
+                child: const Text('撤回並隱藏'),
               ),
             ],
           ),
     );
     if (confirmed != true) return;
     await _perform(() async {
-      await widget.auth.api.retractAnnouncement(item['event_id'] as String);
+      final eventId = item['event_id'] as String;
+      await widget.auth.retractAnnouncement(eventId);
+      if (!mounted) return;
+      setState(() {
+        _announcements = _announcements
+            .where((announcement) => announcement['event_id'] != eventId)
+            .toList(growable: false);
+      });
       await _refresh();
     });
   }

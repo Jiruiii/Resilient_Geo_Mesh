@@ -7,3 +7,6 @@ export 'government_feed_models.dart';
 
 Future<WebGovernmentFeedSnapshot> loadWebGovernmentFeed() =>
     implementation.loadWebGovernmentFeed();
+
+Future<int> loadWebGovernmentFeedRevision() =>
+    implementation.loadWebGovernmentFeedRevision();

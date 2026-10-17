@@ -573,10 +573,17 @@
     }
   }
 
+  async function getNLSCGovernmentFeedRevision() {
+    const feed = await requestJson('/feed.json', 8 * 1024 * 1024);
+    await verifyFeedMetadata(feed);
+    return feed.revision;
+  }
+
   global.ResilientGeoGovernmentFeed = {
     verifyFeedMetadata,
     verifyGovernmentFeedRelease,
     verifyGovernmentEvent,
   };
+  global.getNLSCGovernmentFeedRevision = getNLSCGovernmentFeedRevision;
   global.loadNLSCGovernmentFeed = loadNLSCGovernmentFeed;
 })(globalThis);

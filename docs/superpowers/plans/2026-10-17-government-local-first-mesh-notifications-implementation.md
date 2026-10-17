@@ -114,3 +114,34 @@
 - [x] Review every changed call path against the spec, confirm only the plan's files changed, and inspect `git diff --check` plus `git status --short`.
 - [x] Do not report device/runtime acceptance: no connected Android hardware or `adb` is available in this environment.
 - [ ] Automated test and hardware acceptance steps remain pending unless the user explicitly asks to run them.
+
+---
+
+## Follow-up: Refresh signed notifications after cloud announcement mutations
+
+**Root cause:** The workbench screenshot includes the `帳號管理` tab, which `ProfileScreen` shows only for `SYSTEM_ADMIN`. That role uses the cloud `createAnnouncement` API instead of the Android device-signing path. The server responds `publication_status: QUEUED`; the central publisher emits a signed feed on its poll loop (5 seconds by default). The existing local refresh callback only covers device-signed creates, while cloud create/revise/retract only refreshes the workbench. Therefore the notification controller remains stale until the user runs Government Data Update.
+
+**Goal:** After a successful cloud announcement create, revision, or retraction, automatically receive the resulting signed feed on Android and Web. Keep the signed-feed verification boundary; never insert the unsigned API response into notifications or Mesh.
+
+**Files:**
+- Modify: `flutter/lib/data/government_api.dart`
+- Modify: `flutter/lib/app/map_app_controller.dart`
+- Modify: `flutter/lib/screens/government_workbench_screen.dart`
+- Modify: `flutter/lib/data/offline_government_feed.dart`
+- Modify: `flutter/lib/data/offline_government_feed_stub.dart`
+- Modify: `flutter/lib/data/offline_government_feed_web.dart`
+- Modify: `flutter/web/nlsc_government_feed.js`
+
+**Implementation:**
+- Wrap cloud create/revise/retract mutations in `GovernmentAuthController` and notify the app controller with the returned `event_id`, `event_version`, and whether the event was retracted.
+- Android triggers `syncGovernmentNow()`, reads the verified Room snapshot, and retries briefly while the publisher is processing the queued mutation.
+- Web polls the signed feed metadata revision (signature-verified, without downloading chunks on every poll), then loads and verifies the full signed feed when a newer release appears.
+- Stop when create/revision reaches the expected event version, or when a newer signed release removes the retracted event from the active local snapshot. Keep the existing periodic sync as recovery if the bounded foreground retry expires.
+- Preserve the current immediate Room snapshot callback for device-signed Android creates; do not change Emergency Mode or Mesh opt-in behavior.
+
+**Acceptance:**
+- [ ] Runtime: `SYSTEM_ADMIN` Android create/revise/retract updates the local notification list automatically after the signed release is available; no manual Government Data Update is needed.
+- [ ] Runtime: Web refreshes after the signed release is available and only displays the verified signed feed.
+- [ ] Runtime: device-signed Android creates remain visible immediately from Room.
+- [x] Source/build: `flutter analyze`, Android debug build and emulator APK install, Web build, and `git diff --check` succeeded. No tests were added or run.
+- [ ] Runtime acceptance on the emulator and Web remains pending; source/build verification does not prove a live announcement mutation.

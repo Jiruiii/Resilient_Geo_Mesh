@@ -21,7 +21,7 @@ government-api ───── PostgreSQL
 
 - `government-api` 只持有 PostgreSQL 連線，不讀取簽章私鑰，也不寫 public release。
 - `government-publisher` 在內部讀取 outbox，以中央 Ed25519 金鑰發布 `official.announcement` 與 `official.verified`。它和中央 collector 共用發布鎖及 release 儲存區。
-- 公開資料 API 仍只讀取已發布資料。Web 線上公告與查證結論會在下一次簽章 feed 重新整理後出現；Android 裝置簽署的公告會在 Room 本機提交後立即出現在建立者手機，其他裝置則在取得已發布 feed 後顯示。
+- 公開資料 API 仍只讀取已發布資料。Web 與 Android `SYSTEM_ADMIN` 透過線上工作台建立、修訂或撤回公告後，App 會自動檢查簽章 feed，並在中央 Publisher 發布新版本後更新本機通知；不必手動執行「政府資料更新」。Publisher 非同步處理 outbox，因此雲端公告不是 API 成功回應當下就能顯示。Android 裝置簽署的公告則在 Room 本機提交後立即出現在建立者手機，其他裝置在取得已發布 feed 或 Mesh 資料後顯示。
 - 裝置簽章證明回報來自該裝置金鑰且內容未被改動；中央簽章證明官方發布來源與內容完整性。簽章本身不代表系統已獨立證明回報或公告的事實正確。
 - 未查證回報仍顯示「未經查證，僅供參考」。`REFUTED` 會顯示官方否定結論，不會改成已確認。
 
@@ -86,7 +86,8 @@ Web 以同源 `HttpOnly`、`SameSite=Strict` session cookie 登入，變更請�
 - 所有官方公告固定以全台灣為範圍（`area_id=tw.national`），工作台不提供行政區域代碼欄位；後端也會忽略舊版客戶端傳入的縣市代碼。
 - 建立或修訂欄位：標題、內容、類別、嚴重程度與有效期限。有效期限以台灣時間透過日期／時間選擇器輸入，畫面使用 `yyyy/MM/dd HH:mm:ss`，API 與簽章事件仍保存 ISO 8601 UTC，期限最多 90 天。
 - 地圖位置選填。人員可搜尋 App 隨附的台灣離線地名索引，或移動地圖中心圖釘選點；選取後只發布座標，未指定位置時公告只出現在通知列表。
-- API 將變更寫入 PostgreSQL 與 outbox。Publisher 用中央簽章發布 event-v0 `official.announcement`；修改沿用同一 `event_id` 並遞增版本，撤回則發布新的撤回版本。
+- API 將變更寫入 PostgreSQL 與 outbox。Publisher 用中央簽章發布 event-v0 `official.announcement`；修改沿用同一 `event_id` 並遞增版本，撤回則發布新的撤回版本。工作台的「撤回並隱藏」會將已撤回公告從清單移除，但保留資料庫稽核紀錄與簽章發布歷史。
+- 雲端工作台變更成功後，Android 會自動同步並讀取已驗證的 Room 快照；Web 會檢查已驗證的 feed metadata revision，發現新版本後才載入完整 feed。新增與修訂等中央簽章版本出現後更新通知；撤回版本出現後，已撤回公告從有效通知中消失。若 Publisher 尚未完成發布，App 會短暫重試；不會把未簽章的 API 回應直接顯示為官方通知。
 - 有座標的公告可出現在地圖；沒有座標的公告只顯示在通知列表。
 
 ### Android 政府手機離線警告
