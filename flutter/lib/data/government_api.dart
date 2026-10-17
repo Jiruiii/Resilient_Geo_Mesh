@@ -102,9 +102,14 @@ class GovernmentApiClient {
 
   Future<String?> _readToken() async => _token ??= await _sessionStore.read();
 
-  Future<Uri> _uri(String path) async {
+  Future<Uri> resolveBaseUri() async {
     var base = await _baseUri();
     if (!base.path.endsWith('/')) base = base.replace(path: '${base.path}/');
+    return base;
+  }
+
+  Future<Uri> _uri(String path) async {
+    final base = await resolveBaseUri();
     return base.resolve(path.replaceFirst(RegExp(r'^/'), ''));
   }
 
@@ -383,6 +388,7 @@ class GovernmentAuthController extends ChangeNotifier {
   Object? error;
   bool _restoreStarted = false;
   bool _disposed = false;
+  Future<void> Function()? onDeviceWarningCreated;
 
   void _notifyIfAlive() {
     if (!_disposed) notifyListeners();
@@ -547,7 +553,20 @@ class GovernmentAuthController extends ChangeNotifier {
         403,
       );
     }
-    return mapBridge.createGovernmentWarning(input);
+    try {
+      await mapBridge.configureGovernmentWarningUpload(
+        await api.resolveBaseUri(),
+      );
+    } on Object {
+      // Local creation remains available if native background scheduling cannot be configured.
+    }
+    final created = await mapBridge.createGovernmentWarning(input);
+    try {
+      await onDeviceWarningCreated?.call();
+    } on Object {
+      // The Room event stream remains authoritative if the snapshot fallback fails.
+    }
+    return created;
   }
 
   Future<void> _refreshLastRevocationSync() async {

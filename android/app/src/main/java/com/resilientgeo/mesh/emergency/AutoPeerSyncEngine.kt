@@ -115,6 +115,7 @@ class AutoPeerSyncEngine(
         @Volatile var connection: Connection? = null
         @Volatile var retryNotBeforeMillis: Long = 0L
         @Volatile var lastSeenAtMillis: Long = 0L
+        @Volatile var syncRequestedAfterCurrent: Boolean = false
 
         @Volatile private var latestRemoteSummary: RemoteHello? = null
         @Volatile var requestsDoneSessionId: String? = null
@@ -210,6 +211,33 @@ class AutoPeerSyncEngine(
         return sightings.entries.map { it.value.identity ?: it.key }.distinct().size
     }
 
+    /**
+     * Expedites a fresh inventory exchange with peers seen recently. This is
+     * called only by the active Emergency Mode service after Room inventory
+     * changes; ordinary syncs continue to observe the per-peer cooldown.
+     */
+    fun requestSyncSoon() {
+        val workers = runningScope ?: return
+        val now = clock()
+        sessions.values
+            .filter { session ->
+                session.connectionAddress != null &&
+                    now - session.lastSeenAtMillis <= RECENT_PEER_WINDOW_MS &&
+                    (mayInitiate() || session.hasUnconsumedHello())
+            }
+            .forEach { session ->
+                val active = synchronized(session) {
+                    if (session.phase.isBusy() || session.connection != null) {
+                        session.syncRequestedAfterCurrent = true
+                        true
+                    } else {
+                        false
+                    }
+                }
+                if (!active) startSync(session, workers, bypassCooldown = true)
+            }
+    }
+
     private fun onPeerSeen(advertisement: PeerAdvertisement) {
         val workers = runningScope ?: return
         if (advertisement.transportIdentity == transport.localIdentity && transport.localIdentity != null) return
@@ -231,8 +259,20 @@ class AutoPeerSyncEngine(
         val session = sessions.computeIfAbsent(peerId) { PeerSession(it) }
         session.connectionAddress = advertisement.peerId
         session.lastSeenAtMillis = clock()
+        startSync(session, workers)
+    }
+
+    private fun startSync(
+        session: PeerSession,
+        workers: CoroutineScope,
+        bypassCooldown: Boolean = false,
+    ) {
         val started = synchronized(session) {
-            if (!shouldAttemptSync(clock(), session.retryNotBeforeMillis, session.phase.isBusy())) return@synchronized false
+            val retryNotBefore = if (bypassCooldown) 0L else session.retryNotBeforeMillis
+            if (session.connection != null ||
+                !shouldAttemptSync(clock(), retryNotBefore, session.phase.isBusy())
+            ) return@synchronized false
+            if (bypassCooldown) session.retryNotBeforeMillis = 0L
             session.phase = Phase.CONNECTING
             true
         }
@@ -251,6 +291,18 @@ class AutoPeerSyncEngine(
             // Also releases the slot when stop() cancels a queued coroutine
             // before its body ever starts.
             semaphore.release()
+            val requestedAgain = synchronized(session) {
+                if (!session.syncRequestedAfterCurrent) return@synchronized false
+                session.syncRequestedAfterCurrent = false
+                session.retryNotBeforeMillis = 0L
+                true
+            }
+            if (requestedAgain && workers.isActive &&
+                clock() - session.lastSeenAtMillis <= RECENT_PEER_WINDOW_MS &&
+                (mayInitiate() || session.hasUnconsumedHello())
+            ) {
+                startSync(session, workers, bypassCooldown = true)
+            }
         }
     }
 
@@ -545,6 +597,7 @@ class AutoPeerSyncEngine(
 
         /** Shorter than [SYNC_COOLDOWN_MS]: a failed attempt (unreachable peer, timeout) is worth retrying sooner. */
         private const val FAILURE_COOLDOWN_MS = 15_000L
+        private const val RECENT_PEER_WINDOW_MS = 30_000L
 
         /**
          * Decides whether a (re)discovered peer is worth attempting now. Pure

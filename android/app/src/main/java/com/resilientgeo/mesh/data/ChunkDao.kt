@@ -4,9 +4,13 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface ChunkDao {
+
+    @Query("SELECT * FROM chunks ORDER BY datasetId, namespace, chunkId")
+    fun observeAll(): Flow<List<ChunkEntity>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     fun upsertSync(entity: ChunkEntity)

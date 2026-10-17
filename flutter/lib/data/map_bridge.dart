@@ -63,6 +63,13 @@ class MapBridge {
     Map<String, Object?> input,
   ) => _invokeRequiredMap('createGovernmentWarning', input);
 
+  Future<void> configureGovernmentWarningUpload(Uri apiBaseUri) async {
+    await _invokeRequiredMap(
+      'configureGovernmentWarningUpload',
+      <String, Object?>{'base_url': apiBaseUri.toString()},
+    );
+  }
+
   Future<List<Map<String, dynamic>>> listPendingGovernmentWarningUploads() =>
       _invokeRequiredMapList('listPendingGovernmentWarningUploads');
 

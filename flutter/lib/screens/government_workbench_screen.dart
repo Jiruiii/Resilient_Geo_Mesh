@@ -41,6 +41,7 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen> {
   List<Map<String, dynamic>> _announcements = const <Map<String, dynamic>>[];
   List<Map<String, dynamic>> _users = const <Map<String, dynamic>>[];
   List<Map<String, dynamic>> _deviceWarnings = const <Map<String, dynamic>>[];
+  bool? _emergencyModeEnabled;
   bool _loading = true;
   bool _busy = false;
   bool _warningUploadActive = false;
@@ -94,6 +95,16 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen> {
         final localWarnings =
             await widget.auth.mapBridge.listGovernmentWarningStatuses();
         if (mounted) setState(() => _deviceWarnings = localWarnings);
+        try {
+          final localState = await widget.auth.mapBridge.getInitialState();
+          if (mounted) {
+            setState(
+              () => _emergencyModeEnabled = localState.emergencyModeEnabled,
+            );
+          }
+        } on Object {
+          // Unknown mode is not reported as enabled or disabled.
+        }
       }
       final values = await Future.wait<Object>(<Future<Object>>[
         widget.auth.api.listReports(),
@@ -388,6 +399,21 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen> {
               const Divider(height: 16),
               ..._deviceWarnings.map(_deviceWarningStatusRow),
             ],
+            if (_emergencyModeEnabled == false &&
+                _deviceWarnings.any(
+                  (row) => row['upload_status'] != 'EXPIRED',
+                )) ...<Widget>[
+              const SizedBox(height: 8),
+              const Text('緊急模式未開啟；公告已保存在本機，Mesh 尚未啟動。'),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  onPressed: _busy ? null : _enableEmergencyMode,
+                  icon: const Icon(Icons.wifi_tethering),
+                  label: const Text('啟用緊急模式以進行 Mesh 傳播'),
+                ),
+              ),
+            ],
             if (_deviceWarnings.any((row) => row['upload_status'] == 'PENDING'))
               Align(
                 alignment: Alignment.centerRight,
@@ -428,7 +454,13 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen> {
                 ),
               ),
               if (row['upload_status'] != 'EXPIRED')
-                const Chip(label: Text('待 mesh 同步')),
+                Chip(
+                  label: Text(switch (_emergencyModeEnabled) {
+                    true => '待 Mesh 同步',
+                    false => 'Mesh 未啟用',
+                    null => 'Mesh 狀態未知',
+                  }),
+                ),
             ],
           ),
         ],
@@ -494,6 +526,11 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen> {
       _warningUploadActive = false;
     }
   }
+
+  Future<void> _enableEmergencyMode() => _perform(() async {
+    final enabled = await widget.auth.mapBridge.setEmergencyMode(enabled: true);
+    if (mounted) setState(() => _emergencyModeEnabled = enabled);
+  });
 
   Future<void> _editAnnouncement([Map<String, dynamic>? existing]) async {
     final title =

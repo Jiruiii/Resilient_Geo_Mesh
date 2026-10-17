@@ -40,6 +40,8 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
        _webGovernmentFeedLoader =
            webGovernmentFeedLoader ?? loadWebGovernmentFeed {
     WidgetsBinding.instance.addObserver(this);
+    governmentAuth.onDeviceWarningCreated =
+        _refreshNativeEventsAfterGovernmentWarning;
   }
 
   static const _themePreference = 'map.theme_mode';
@@ -297,6 +299,26 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
     );
   }
 
+  /// Re-read the local Room snapshot after a government device write.
+  /// The EventChannel normally delivers this update; the snapshot also covers
+  /// a listener that was interrupted while the warning was committed.
+  Future<void> _refreshNativeEventsAfterGovernmentWarning() async {
+    if (_disposed || !nativeBridgeAvailable) return;
+    try {
+      final state = await bridge.getInitialState();
+      if (_disposed) return;
+      persistedEvents = _withoutUnsupportedEvents(state.events);
+      eventUpdateError = null;
+      _eventUpdates.add(List<MeshEvent>.unmodifiable(persistedEvents));
+      _scheduleExpiryRefresh();
+      _notifyIfAlive();
+    } on Object catch (error) {
+      if (_disposed) return;
+      eventUpdateError = error;
+      _notifyIfAlive();
+    }
+  }
+
   Future<void> retryEventUpdates() async {
     if (_disposed || retryingEvents) return;
     if (_isWeb && !nativeBridgeAvailable) {
@@ -496,6 +518,7 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
   @override
   void dispose() {
     _disposed = true;
+    governmentAuth.onDeviceWarningCreated = null;
     WidgetsBinding.instance.removeObserver(this);
     _expiryTimer?.cancel();
     _webFeedRefreshTimer?.cancel();

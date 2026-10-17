@@ -85,6 +85,9 @@ class MeshRepository(
     fun observeEvents(): Flow<List<EventEntity>> = db.eventDao().observeAll()
         .map { events -> events.filterNot { isUnsupportedOfficialEventEntity(it) || isInternalOfficialEventEntity(it) } }
 
+    /** Verified inventory rows used by the active opt-in Mesh service. */
+    fun observePeerInventory(): Flow<List<ChunkEntity>> = chunkDao.observeAll()
+
     /**
      * Loads optional nationwide static layers only after manifest, chunk and
      * feature verification. First launch downloads the signed layer; later
@@ -877,7 +880,7 @@ class MeshRepository(
         withContext(Dispatchers.IO) {
             val updated = governmentWarningUploadDao.markUploadedSync(eventId, payloadHash, Instant.now().toEpochMilli()) == 1
             updated || governmentWarningUploadDao.findSync(eventId)?.let {
-                it.payloadHash == payloadHash && it.uploadStatus == "PUBLISHED"
+                it.payloadHash == payloadHash && it.uploadStatus in setOf("UPLOADED", "PUBLISHED")
             } == true
         }
 

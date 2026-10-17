@@ -13,10 +13,20 @@ import androidx.core.app.NotificationCompat
 import com.resilientgeo.mesh.data.MeshRepository
 import com.resilientgeo.mesh.transport.*
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import org.json.JSONArray
 
 /** Nearby -> Wi-Fi Direct, with a persistent BLE rendezvous path in automatic mode. */
 class EmergencyModeService : Service() {
+    private data class InventoryChunk(
+        val datasetId: String,
+        val namespace: String,
+        val chunkId: String,
+        val chunkHash: String,
+    )
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val syncScope = CoroutineScope(scope.coroutineContext + Dispatchers.Default)
     private val settings by lazy { MeshTransportSettings(applicationContext) }
@@ -48,6 +58,30 @@ class EmergencyModeService : Service() {
                 publish()
                 delay(5_000)
             }
+        }
+        scope.launch {
+            var previousInventory: Set<InventoryChunk>? = null
+            repository.observePeerInventory()
+                .map { rows ->
+                    rows.map { row ->
+                        InventoryChunk(row.datasetId, row.namespace, row.chunkId, row.chunkHash)
+                    }.toSet()
+                }
+                .distinctUntilChanged()
+                .collect { inventory ->
+                    val previous = previousInventory
+                    previousInventory = inventory
+                    val addedGovernmentAnnouncement = previous?.let { oldInventory ->
+                        inventory.any {
+                            it !in oldInventory &&
+                                it.namespace == GOVERNMENT_ANNOUNCEMENT_NAMESPACE &&
+                                it.datasetId in GOVERNMENT_ANNOUNCEMENT_DATASETS
+                        }
+                    } == true
+                    if (addedGovernmentAnnouncement) {
+                        lanes.values.forEach { it.engine.requestSyncSoon() }
+                    }
+                }
         }
     }
 
@@ -204,5 +238,11 @@ class EmergencyModeService : Service() {
         private const val TAG = "ResilientGeoEmergency"
         private const val CHANNEL = "emergency_mode"
         private const val NOTIFICATION = 1
+        private const val GOVERNMENT_ANNOUNCEMENT_NAMESPACE = "official.announcement"
+        private val GOVERNMENT_ANNOUNCEMENT_DATASETS = setOf(
+            "government-government-announcements",
+            "government-government-device-announcements",
+            "government-device-announcements",
+        )
     }
 }
