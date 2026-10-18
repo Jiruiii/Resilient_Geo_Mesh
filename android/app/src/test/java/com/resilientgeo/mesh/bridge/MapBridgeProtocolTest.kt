@@ -1,6 +1,7 @@
 package com.resilientgeo.mesh.bridge
 
 import com.resilientgeo.mesh.data.EventEntity
+import com.resilientgeo.mesh.data.VerifiedStaticFeatureSnapshot
 import com.resilientgeo.mesh.ingest.ApplyState
 import com.resilientgeo.mesh.ingest.IngestResult
 import com.resilientgeo.mesh.routing.LonLat
@@ -60,9 +61,14 @@ class MapBridgeProtocolTest {
     }
 
     @Test
-    fun `static features reply wraps the verified list and initial state no longer waits for it`() {
+    fun `static features reply carries the verified list and snapshot time`() {
         val feature = mapOf<String, Any?>("id" to "shelter:5582", "kind" to "shelter", "address" to null)
-        assertEquals(mapOf("static_features" to listOf(feature)), MapBridgeProtocol.staticFeaturesResult(listOf(feature)))
+        assertEquals(
+            mapOf("static_features" to listOf(feature), "snapshot_at" to "2026-09-03T02:00:32Z"),
+            MapBridgeProtocol.staticFeaturesResult(
+                VerifiedStaticFeatureSnapshot(listOf(feature), "2026-09-03T02:00:32Z"),
+            ),
+        )
         val initial = MapBridgeProtocol.initialState(events = emptyList(), emergencyModeEnabled = false)
         assertEquals(emptyList<Any>(), initial["static_features"])
     }

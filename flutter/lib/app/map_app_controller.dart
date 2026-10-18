@@ -249,14 +249,9 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
   /// collection: the preview JSON is never used once Android is present.
   Future<void> _loadVerifiedStaticFeatures() async {
     try {
-      final features = await bridge.getStaticFeatures();
+      final snapshot = await bridge.getStaticFeatures();
       if (_disposed) return;
-      staticFeatures = StaticFeatureCollection(
-        schemaVersion: 'feature-v0',
-        datasetId: 'resilientgeo-taiwan',
-        snapshotAt: null,
-        features: features,
-      );
+      staticFeatures = snapshot;
     } on Object catch (error) {
       staticFeatureLoadError = error;
     } finally {

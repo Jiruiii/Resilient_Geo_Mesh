@@ -11,6 +11,7 @@ import '../data/map_search.dart';
 import '../data/map_search_asset.dart';
 import '../data/offline_search_worker.dart';
 import '../widgets/map_canvas.dart';
+import '../widgets/map_zoom_controls.dart';
 
 typedef GovernmentPlaceSearch =
     Future<List<MapSearchResult>> Function(String query);
@@ -281,14 +282,30 @@ class _GovernmentAnnouncementLocationPickerState
                 const Spacer(),
                 Padding(
                   padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                  child: Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: Text(
-                        '移動地圖，讓中心圖釘對準位置。\n'
-                        '目前座標：$_coordinateLabel',
-                      ),
-                    ),
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final availableWidth =
+                          (constraints.maxWidth -
+                                  MapZoomControls.maxPanelWidth -
+                                  12)
+                              .clamp(0.0, constraints.maxWidth)
+                              .toDouble();
+                      return Align(
+                        alignment: Alignment.centerLeft,
+                        child: ConstrainedBox(
+                          constraints: BoxConstraints(maxWidth: availableWidth),
+                          child: Card(
+                            child: Padding(
+                              padding: const EdgeInsets.all(12),
+                              child: Text(
+                                '移動地圖，讓中心圖釘對準位置。\n'
+                                '目前座標：$_coordinateLabel',
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    },
                   ),
                 ),
               ],

@@ -68,6 +68,7 @@ function testLayerBundle() {
     verify: context.ResilientGeoNLSCStatic.verifyLayerBundle,
     linkDirectoryPoints: context.ResilientGeoNLSCStatic.linkDirectoryPoints,
     mapFeature: context.ResilientGeoNLSCStatic.mapFeature,
+    latestVerifiedLayerTimestamp: context.ResilientGeoNLSCStatic.latestVerifiedLayerTimestamp,
   };
 }
 
@@ -186,6 +187,20 @@ test('maps the published MEDICAL_FACILITY type to the medical point layer', () =
 
   assert.equal(point.kind, 'medical');
   assert.deepEqual(directory.geometry, point.geometry);
+});
+
+test('selects the newest verified static layer timestamp by instant', () => {
+  const { latestVerifiedLayerTimestamp } = testLayerBundle();
+  assert.equal(typeof latestVerifiedLayerTimestamp, 'function');
+  assert.equal(
+    latestVerifiedLayerTimestamp({
+      'taiwan-shelter': { manifest: { created_at: '2026-09-03T03:00:00+02:00' } },
+      'taiwan-medical': { manifest: { created_at: '2026-09-03T02:00:00Z' } },
+      'taiwan-medical-directory': { manifest: { created_at: 'invalid' } },
+      'osm-taiwan': { manifest: { created_at: '2026-09-04T00:00:00Z' } },
+    }),
+    '2026-09-03T02:00:00Z',
+  );
 });
 
 test('WebCrypto verifies the signed address catalog and county manifest pin', async () => {

@@ -58,7 +58,7 @@ void main() {
       expect(find.text('收容人數：無資料'), findsNothing);
       expect(find.text('來源：taipei-shelter'), findsOneWidget);
       expect(find.text('更新時間：2026-9-5 00:00:00'), findsOneWidget);
-      expect(find.text('靜態資料更新：2026-9-5 00:00:00'), findsOneWidget);
+      expect(find.text('資料更新：2026/09/5 08:00:00'), findsOneWidget);
     },
   );
 
@@ -233,7 +233,7 @@ void main() {
     await tester.pump();
 
     expect(find.byType(FeatureDetailsSheet), findsNothing);
-    expect(find.text('靜態資料更新：2026-9-5 00:00:00'), findsOneWidget);
+    expect(find.text('資料更新：2026/09/5 08:00:00'), findsOneWidget);
   });
 }
 

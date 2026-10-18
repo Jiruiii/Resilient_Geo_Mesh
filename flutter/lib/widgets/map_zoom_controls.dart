@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 /// Compact, provider-neutral controls.  The map itself keeps numeric zoom;
 /// people see the common 0–100% representation instead.
 class MapZoomControls extends StatelessWidget {
+  static const double maxPanelWidth = 184;
+
   const MapZoomControls({
     super.key,
     required this.zoomPercentage,
@@ -22,7 +24,7 @@ class MapZoomControls extends StatelessWidget {
   Widget build(BuildContext context) {
     final clamped = zoomPercentage.clamp(0, 100);
     return ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 184),
+      constraints: const BoxConstraints(maxWidth: maxPanelWidth),
       child: Material(
         color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.94),
         elevation: 4,

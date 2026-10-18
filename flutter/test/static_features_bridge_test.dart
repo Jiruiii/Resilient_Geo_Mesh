@@ -23,6 +23,7 @@ void main() {
             },
           },
         ],
+        'snapshot_at': '2026-09-03T02:00:32Z',
       };
       messenger.setMockMethodCallHandler(channel, (call) async {
         expect(call.method, 'getStaticFeatures');
@@ -32,10 +33,17 @@ void main() {
       final bridge = MapBridge(methodChannel: channel);
 
       final features = await bridge.getStaticFeatures();
-      expect(features.single.id, 'shelter:5427');
-      expect(features.single.kind, 'shelter');
+      expect(features.features.single.id, 'shelter:5427');
+      expect(features.features.single.kind, 'shelter');
+      expect(features.snapshotAt, '2026-09-03T02:00:32Z');
 
       reply = <String, dynamic>{'features': <Object?>[]};
+      await expectLater(bridge.getStaticFeatures(), throwsFormatException);
+
+      reply = <String, dynamic>{
+        'static_features': <Object?>[],
+        'snapshot_at': 42,
+      };
       await expectLater(bridge.getStaticFeatures(), throwsFormatException);
     },
   );

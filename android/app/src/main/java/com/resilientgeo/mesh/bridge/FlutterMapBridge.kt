@@ -6,6 +6,7 @@ import com.resilientgeo.mesh.data.CrowdReportResult
 import com.resilientgeo.mesh.data.GovernmentWarningResult
 import com.resilientgeo.mesh.data.MeshRepository
 import com.resilientgeo.mesh.data.RescueResult
+import com.resilientgeo.mesh.data.VerifiedStaticFeatureSnapshot
 import com.resilientgeo.mesh.online.GovernmentSyncJob
 import com.resilientgeo.mesh.online.GovernmentSyncManager
 import com.resilientgeo.mesh.online.RescueServerSync
@@ -91,7 +92,7 @@ class FlutterMapBridge(
      * VerifiedLayerCache. A failed verification stays failed: nothing
      * unverified is ever returned.
      */
-    private val staticFeatures: Deferred<List<Map<String, Any?>>> =
+    private val staticFeatures: Deferred<VerifiedStaticFeatureSnapshot> =
         scope.async(Dispatchers.Default, start = CoroutineStart.LAZY) {
             repository.verifiedStaticFeatures(governmentSync.message()["url"] as? String)
         }

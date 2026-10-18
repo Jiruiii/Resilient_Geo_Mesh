@@ -171,6 +171,30 @@ void main() {
     },
   );
 
+  test('Web keeps the newest verified static snapshot timestamp', () async {
+    final controller = MapAppController(
+      bridge: _UnavailableBridge(),
+      isWeb: true,
+      webStaticLayerLoader:
+          () async =>
+              '{"schema_version":"feature-v0","dataset_id":"resilientgeo-taiwan",'
+              '"snapshot_at":"2026-09-03T02:00:32Z","features":[]}',
+      webGovernmentFeedLoader:
+          () async => const WebGovernmentFeedSnapshot(
+            revision: 1,
+            events: <MeshEvent>[],
+          ),
+      webGovernmentFeedRevisionLoader: () async => 1,
+      demoEventLoader: () async => <MeshEvent>[],
+    );
+    addTearDown(controller.dispose);
+
+    await controller.load();
+    await pumpEventQueue();
+
+    expect(controller.staticFeatures!.snapshotAt, '2026-09-03T02:00:32Z');
+  });
+
   test('Web does not use the bundled NCDR preview as current alerts', () async {
     var demoLoads = 0;
     var feedLoads = 0;
@@ -251,21 +275,29 @@ void main() {
       expect(controller.staticFeaturesPending, isTrue);
       expect(controller.staticFeatures!.features, isEmpty);
 
-      bridge.completer.complete(<StaticFeature>[
-        StaticFeature.fromJson(<String, dynamic>{
-          'id': 'shelter:5582',
-          'kind': 'shelter',
-          'name': '西湖國小',
-          'geometry': <String, dynamic>{
-            'type': 'Point',
-            'coordinates': <double>[121.5657, 25.0838],
-          },
-        }),
-      ]);
+      bridge.completer.complete(
+        StaticFeatureCollection(
+          schemaVersion: 'feature-v0',
+          datasetId: 'resilientgeo-taiwan',
+          snapshotAt: '2026-09-03T02:00:32Z',
+          features: <StaticFeature>[
+            StaticFeature.fromJson(<String, dynamic>{
+              'id': 'shelter:5582',
+              'kind': 'shelter',
+              'name': '西湖國小',
+              'geometry': <String, dynamic>{
+                'type': 'Point',
+                'coordinates': <double>[121.5657, 25.0838],
+              },
+            }),
+          ],
+        ),
+      );
       await pumpEventQueue();
 
       expect(controller.staticFeaturesPending, isFalse);
       expect(controller.staticFeatures!.features.single.id, 'shelter:5582');
+      expect(controller.staticFeatures!.snapshotAt, '2026-09-03T02:00:32Z');
     },
   );
 
@@ -473,14 +505,14 @@ class _RecoverableBridge extends _EmptyVerifiedBridge {
 }
 
 class _SlowStaticLayerBridge extends MapBridge {
-  final completer = Completer<List<StaticFeature>>();
+  final completer = Completer<StaticFeatureCollection>();
 
   @override
   Future<MapInitialState> getInitialState() async =>
       const MapInitialState(events: <MeshEvent>[], emergencyModeEnabled: false);
 
   @override
-  Future<List<StaticFeature>> getStaticFeatures() => completer.future;
+  Future<StaticFeatureCollection> getStaticFeatures() => completer.future;
 
   @override
   Stream<List<MeshEvent>> get events => const Stream<List<MeshEvent>>.empty();

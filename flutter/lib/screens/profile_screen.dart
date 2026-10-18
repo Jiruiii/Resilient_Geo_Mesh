@@ -110,14 +110,6 @@ class ProfileScreen extends StatelessWidget {
             ),
           ),
         ),
-        const SizedBox(height: 12),
-        Card(
-          child: ListTile(
-            leading: const Icon(Icons.offline_bolt_outlined),
-            title: const Text('離線資料說明'),
-            subtitle: const Text('內湖道路、避難所與醫療院所使用版本化快照。'),
-          ),
-        ),
       ],
     ),
   );
