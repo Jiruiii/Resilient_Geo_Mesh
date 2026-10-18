@@ -1815,48 +1815,58 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                     ),
                   ),
                   const SizedBox(height: 8),
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      Flexible(
-                        child: ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 520),
-                          child: _StatusOverlay(
-                            snapshotAt: staticFeatures.snapshotAt,
-                            visibleEventCount: visibleEventCount,
-                            hasCurrentLocation:
-                                _runtimeState.currentLocation != null,
-                            reportDeliveryEventId: _reportDeliveryEventId,
-                            staticFeaturesPending: widget.staticFeaturesPending,
-                            staticFeaturesFailed: widget.staticFeaturesFailed,
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      const actionColumnWidth = 48.0;
+                      const actionGap = 8.0;
+                      final statusWidth =
+                          (constraints.maxWidth - actionColumnWidth - actionGap)
+                              .clamp(0.0, 520.0)
+                              .toDouble();
+
+                      return Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: <Widget>[
+                          ConstrainedBox(
+                            constraints: BoxConstraints(maxWidth: statusWidth),
+                            child: _StatusOverlay(
+                              snapshotAt: staticFeatures.snapshotAt,
+                              visibleEventCount: visibleEventCount,
+                              hasCurrentLocation:
+                                  _runtimeState.currentLocation != null,
+                              reportDeliveryEventId: _reportDeliveryEventId,
+                              staticFeaturesPending:
+                                  widget.staticFeaturesPending,
+                              staticFeaturesFailed: widget.staticFeaturesFailed,
+                            ),
                           ),
-                        ),
-                      ),
-                      const Spacer(),
-                      _MapQuickActions(
-                        onRescue:
-                            _reportSheetVisible ||
-                                    _reportPicking ||
-                                    _routeSheetVisible ||
-                                    _rescue.step != null
-                                ? null
-                                : _openRescueRequest,
-                        onReport:
-                            _reportSheetVisible ||
-                                    _reportPicking ||
-                                    _routeSheetVisible ||
-                                    _rescue.step != null
-                                ? null
-                                : _openCrowdReport,
-                        onRecommend:
-                            _reportSheetVisible ||
-                                    _reportPicking ||
-                                    _routeSheetVisible ||
-                                    _rescue.step != null
-                                ? null
-                                : _recommendNearestShelter,
-                      ),
-                    ],
+                          const Spacer(),
+                          _MapQuickActions(
+                            onRescue:
+                                _reportSheetVisible ||
+                                        _reportPicking ||
+                                        _routeSheetVisible ||
+                                        _rescue.step != null
+                                    ? null
+                                    : _openRescueRequest,
+                            onReport:
+                                _reportSheetVisible ||
+                                        _reportPicking ||
+                                        _routeSheetVisible ||
+                                        _rescue.step != null
+                                    ? null
+                                    : _openCrowdReport,
+                            onRecommend:
+                                _reportSheetVisible ||
+                                        _reportPicking ||
+                                        _routeSheetVisible ||
+                                        _rescue.step != null
+                                    ? null
+                                    : _recommendNearestShelter,
+                          ),
+                        ],
+                      );
+                    },
                   ),
                   const SizedBox(height: 8),
                   if (_reportPicking)
@@ -2096,29 +2106,31 @@ class _StatusOverlay extends StatelessWidget {
     ),
     child: Padding(
       padding: const EdgeInsets.all(10),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Text(
-            '最新更新資料：${staticFeaturesPending ? '載入中' : formatStaticDataUpdateTime(snapshotAt)}',
-          ),
-          if (!staticFeaturesPending) Text('事件標記：$visibleEventCount'),
-          Text('目前位置：${hasCurrentLocation ? '已取得' : '尚未取得'}'),
-          if (staticFeaturesPending)
-            const Text(
-              '院所與避難所資料驗證中…',
-              key: ValueKey<String>('static-features-pending'),
+      child: IntrinsicWidth(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text(
+              '資料更新：${staticFeaturesPending ? '載入中' : formatStaticDataUpdateTime(snapshotAt)}',
             ),
-          if (staticFeaturesFailed)
-            const Text(
-              '避難所與醫療資料尚未驗證，未顯示未核實點位',
-              key: ValueKey<String>('static-features-failed'),
-            ),
-          if (reportDeliveryEventId != null) ...<Widget>[
-            const Text('民眾警示：未驗證／待同步'),
-            Text('警示編號：$reportDeliveryEventId'),
+            if (!staticFeaturesPending) Text('事件標記：$visibleEventCount'),
+            Text('目前位置：${hasCurrentLocation ? '已取得' : '尚未取得'}'),
+            if (staticFeaturesPending)
+              const Text(
+                '院所與避難所資料驗證中…',
+                key: ValueKey<String>('static-features-pending'),
+              ),
+            if (staticFeaturesFailed)
+              const Text(
+                '避難所與醫療資料尚未驗證，未顯示未核實點位',
+                key: ValueKey<String>('static-features-failed'),
+              ),
+            if (reportDeliveryEventId != null) ...<Widget>[
+              const Text('民眾警示：未驗證／待同步'),
+              Text('警示編號：$reportDeliveryEventId'),
+            ],
           ],
-        ],
+        ),
       ),
     ),
   );
@@ -2154,8 +2166,9 @@ class _MapQuickActions extends StatelessWidget {
   final VoidCallback? onRecommend;
 
   @override
-  Widget build(BuildContext context) => Row(
+  Widget build(BuildContext context) => Column(
     mainAxisSize: MainAxisSize.min,
+    crossAxisAlignment: CrossAxisAlignment.end,
     children: <Widget>[
       _QuickActionButton(
         key: const ValueKey<String>('open-rescue-request-action'),
@@ -2164,7 +2177,7 @@ class _MapQuickActions extends StatelessWidget {
         onPressed: onRescue,
         buttonKey: const ValueKey<String>('open-rescue-request'),
       ),
-      const SizedBox(width: 8),
+      const SizedBox(height: 8),
       _QuickActionButton(
         key: const ValueKey<String>('open-crowd-report-action'),
         label: '回報警示',
@@ -2172,7 +2185,7 @@ class _MapQuickActions extends StatelessWidget {
         onPressed: onReport,
         buttonKey: const ValueKey<String>('open-crowd-report'),
       ),
-      const SizedBox(width: 8),
+      const SizedBox(height: 8),
       _QuickActionButton(
         key: const ValueKey<String>('recommend-nearest-shelter-action'),
         label: '推薦最近避難所',

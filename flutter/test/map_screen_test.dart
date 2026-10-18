@@ -31,7 +31,16 @@ void main() {
       await tester.pumpWidget(_testApp());
       await tester.pump();
 
-      expect(find.text('最新更新資料：2026/09/3 10:00:32'), findsOneWidget);
+      final updateText = find.text('資料更新：2026/09/3 10:00:32');
+      expect(updateText, findsOneWidget);
+      final statusPanel =
+          find
+              .ancestor(of: updateText, matching: find.byType(DecoratedBox))
+              .first;
+      expect(
+        tester.getRect(statusPanel).width - tester.getRect(updateText).width,
+        lessThan(48),
+      );
       expect(find.text('資料快照：2026-09-05T00:00:00Z'), findsNothing);
       expect(find.text('目前位置：尚未取得'), findsOneWidget);
       expect(find.textContaining('全臺院所／避難所'), findsNothing);
@@ -41,13 +50,16 @@ void main() {
       expect(find.byTooltip('推薦最近避難所'), findsOneWidget);
       expect(tester.getTopLeft(find.byTooltip('回報警示')).dx, greaterThan(200));
       expect(tester.getTopLeft(find.byTooltip('推薦最近避難所')).dx, greaterThan(200));
+      final rescueAction = tester.getRect(find.byTooltip('需要救援'));
+      final reportAction = tester.getRect(find.byTooltip('回報警示'));
+      final shelterAction = tester.getRect(find.byTooltip('推薦最近避難所'));
+      expect(rescueAction.left, reportAction.left);
+      expect(reportAction.left, shelterAction.left);
+      expect(rescueAction.top, lessThan(reportAction.top));
+      expect(reportAction.top, lessThan(shelterAction.top));
       expect(find.byIcon(LucideIcons.mapPinHouse), findsOneWidget);
       expect(find.byIcon(MapIconCatalog.shelter), findsNothing);
       expect(find.byIcon(Icons.near_me), findsNothing);
-      expect(
-        tester.getRect(find.byTooltip('推薦最近避難所')).left,
-        greaterThan(tester.getRect(find.byTooltip('回報警示')).right),
-      );
       expect(find.text('離線地圖可用'), findsNothing);
       expect(find.text('Protomaps 台灣離線底圖'), findsNothing);
       expect(find.text('模擬事件，非即時官方災情'), findsNothing);
@@ -143,7 +155,7 @@ void main() {
       find.byKey(const ValueKey<String>('static-features-pending')),
       findsOneWidget,
     );
-    expect(find.text('最新更新資料：載入中'), findsOneWidget);
+    expect(find.text('資料更新：載入中'), findsOneWidget);
 
     // Android finishes verifying: the new collection replaces the empty one.
     await tester.pumpWidget(
@@ -174,7 +186,7 @@ void main() {
       find.byKey(const ValueKey<String>('static-features-failed')),
       findsOneWidget,
     );
-    expect(find.text('最新更新資料：無資料'), findsOneWidget);
+    expect(find.text('資料更新：無資料'), findsOneWidget);
   });
 
   testWidgets('layer settings does not expose the bundled fixture loader', (
