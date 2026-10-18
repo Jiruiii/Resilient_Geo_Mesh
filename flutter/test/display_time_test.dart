@@ -14,4 +14,20 @@ void main() {
   test('keeps an unparseable update time visible for diagnosis', () {
     expect(formatUpdateTime('not-a-time'), 'not-a-time');
   });
+
+  test('formats verified static data timestamps in Taiwan time', () {
+    expect(
+      formatStaticDataUpdateTime('2026-09-03T02:00:32Z'),
+      '2026/09/3 10:00:32',
+    );
+    expect(
+      formatStaticDataUpdateTime('2026-09-03T04:00:32+02:00'),
+      '2026/09/3 10:00:32',
+    );
+  });
+
+  test('shows no data for an absent or invalid static timestamp', () {
+    expect(formatStaticDataUpdateTime(null), '無資料');
+    expect(formatStaticDataUpdateTime('not-a-time'), '無資料');
+  });
 }

@@ -266,9 +266,14 @@ void main() {
     },
   );
 
-  testWidgets('profile keeps preferences without a basemap picker', (
+  testWidgets('profile hides offline data explanation and keeps preferences', (
     tester,
   ) async {
+    tester.view.physicalSize = const Size(800, 1600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
     await tester.pumpWidget(
       MaterialApp(
         home: ProfileScreen(
@@ -281,6 +286,8 @@ void main() {
     );
 
     expect(find.text('地圖底圖'), findsNothing);
+    expect(find.text('離線資料說明'), findsNothing);
+    expect(find.textContaining('版本化快照'), findsNothing);
     expect(find.byType(DropdownButtonFormField<ThemeMode>), findsOneWidget);
   });
 

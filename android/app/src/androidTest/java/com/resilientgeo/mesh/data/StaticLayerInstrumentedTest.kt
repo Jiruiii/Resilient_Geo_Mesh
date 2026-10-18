@@ -30,12 +30,13 @@ class StaticLayerInstrumentedTest {
         File(context.noBackupFilesDir, "verified-layers").deleteRecursively()
         File(context.filesDir, "static-layer-bundles").deleteRecursively()
 
-        val features = MeshRepository(context).verifiedStaticFeatures(serverBaseUrl = null)
+        val snapshot = MeshRepository(context).verifiedStaticFeatures(serverBaseUrl = null)
 
         assertTrue(
-            "a clean install must wait for a signed static-layer download; got ${features.size} features",
-            features.isEmpty(),
+            "a clean install must wait for a signed static-layer download; got ${snapshot.features.size} features",
+            snapshot.features.isEmpty(),
         )
+        assertEquals(null, snapshot.snapshotAt)
         assertTrue(
             "no verified-layer cache should be created before a signed bundle is accepted",
             File(context.noBackupFilesDir, "verified-layers").listFiles().orEmpty().isEmpty(),
@@ -50,7 +51,9 @@ class StaticLayerInstrumentedTest {
         File(context.noBackupFilesDir, "verified-layers").deleteRecursively()
         File(context.filesDir, "static-layer-bundles").deleteRecursively()
 
-        val downloaded = MeshRepository(context).verifiedStaticFeatures(serverUrl)
+        val downloadedSnapshot = MeshRepository(context).verifiedStaticFeatures(serverUrl)
+        val downloaded = downloadedSnapshot.features
+        assertNotNull("verified static layers should carry their manifest timestamp", downloadedSnapshot.snapshotAt)
         val shelters = downloaded.filter { it["kind"] == "shelter" }
         val medical = downloaded.filter { it["kind"] == "medical" }
         val directory = downloaded.filter { it["kind"] == "medical-directory" }
@@ -76,8 +79,10 @@ class StaticLayerInstrumentedTest {
 
         // A failed update must continue from the complete signed cache without
         // inventing geometry for unresolved directory records.
-        val offline = MeshRepository(context).verifiedStaticFeatures("http://127.0.0.1:1/")
+        val offlineSnapshot = MeshRepository(context).verifiedStaticFeatures("http://127.0.0.1:1/")
+        val offline = offlineSnapshot.features
         assertEquals(downloaded.map { it["id"] }, offline.map { it["id"] })
+        assertEquals(downloadedSnapshot.snapshotAt, offlineSnapshot.snapshotAt)
         assertTrue(offline.filter { it["kind"] == "medical-directory" }
             .any { it["geometry"] == null })
     }

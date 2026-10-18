@@ -8,6 +8,13 @@ import 'package:resilientgeo_flutter/data/map_zoom.dart';
 
 void main() {
   group('MapLibreMapConfig', () {
+    test('keeps the native collapsible attribution control at bottom left', () {
+      expect(
+        MapLibreMapConfig.attributionButtonPosition,
+        AttributionButtonPosition.bottomLeft,
+      );
+    });
+
     test('uses the user location when it is available', () {
       const location = GeoPoint(longitude: 121.545053, latitude: 25.011549);
 

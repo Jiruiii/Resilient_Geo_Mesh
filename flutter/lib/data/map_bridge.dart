@@ -151,14 +151,25 @@ class MapBridge {
   /// Verified nationwide static layers. Android verifies them in the
   /// background, so the first call after install can take several seconds;
   /// it never returns unverified data.
-  Future<List<StaticFeature>> getStaticFeatures() async {
+  Future<StaticFeatureCollection> getStaticFeatures() async {
     final response = await _invokeRequiredMap('getStaticFeatures');
     if (response['static_features'] is! List) {
       throw const FormatException(
         'getStaticFeatures response is missing static_features',
       );
     }
-    return staticFeaturesFromMessage(response['static_features']);
+    final snapshotAt = response['snapshot_at'];
+    if (snapshotAt != null && snapshotAt is! String) {
+      throw const FormatException(
+        'getStaticFeatures snapshot_at must be a string or null',
+      );
+    }
+    return StaticFeatureCollection(
+      schemaVersion: 'feature-v0',
+      datasetId: 'resilientgeo-taiwan',
+      snapshotAt: snapshotAt as String?,
+      features: staticFeaturesFromMessage(response['static_features']),
+    );
   }
 
   Future<FixtureLoadSummary> loadBundledFixture() async {

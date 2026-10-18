@@ -1,6 +1,7 @@
 package com.resilientgeo.mesh.bridge
 
 import com.resilientgeo.mesh.data.EventEntity
+import com.resilientgeo.mesh.data.VerifiedStaticFeatureSnapshot
 import com.resilientgeo.mesh.ingest.IngestResult
 import com.resilientgeo.mesh.report.GovernmentWarningInput
 import com.resilientgeo.mesh.report.CrowdReportInput
@@ -78,8 +79,11 @@ object MapBridgeProtocol {
         "static_features" to staticFeatures,
     )
 
-    fun staticFeaturesResult(staticFeatures: List<Map<String, Any?>>): Map<String, Any?> =
-        mapOf("static_features" to staticFeatures)
+    fun staticFeaturesResult(snapshot: VerifiedStaticFeatureSnapshot): Map<String, Any?> =
+        mapOf(
+            "static_features" to snapshot.features,
+            "snapshot_at" to snapshot.snapshotAt,
+        )
 
     fun fixtureLoadSummary(results: List<IngestResult>): Map<String, Int> {
         val inserted = results.count { it is IngestResult.Inserted }

@@ -483,7 +483,10 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
     );
     if (cameraChanged) {
       widget.onCameraSettled?.call(
-        GeoPoint(longitude: position.target.longitude, latitude: position.target.latitude),
+        GeoPoint(
+          longitude: position.target.longitude,
+          latitude: position.target.latitude,
+        ),
       );
     }
     final boundsZoom = _cameraBoundsZoomOverride;
@@ -1452,7 +1455,8 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
       ),
       compassEnabled: false,
       logoEnabled: false,
-      attributionButtonPosition: AttributionButtonPosition.bottomLeft,
+      attributionButtonPosition: MapLibreMapConfig.attributionButtonPosition,
+      attributionButtonMargins: const math.Point<double>(12, 12),
       rotateGesturesEnabled: false,
       dragEnabled: true,
       scrollGesturesEnabled: true,

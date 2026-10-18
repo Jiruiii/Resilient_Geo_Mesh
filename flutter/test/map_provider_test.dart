@@ -116,4 +116,22 @@ void main() {
     expect(find.byTooltip('回到預設'), findsOneWidget);
     expect(find.byTooltip('回到內湖範圍'), findsNothing);
   });
+
+  testWidgets('zoom controls do not duplicate the map attribution control', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: MapZoomControls(
+            zoomPercentage: 0,
+            onZoomPercentageChanged: (_) {},
+          ),
+        ),
+      ),
+    );
+
+    expect(find.byTooltip('地圖來源與授權'), findsNothing);
+    expect(find.textContaining('OpenStreetMap contributors'), findsNothing);
+  });
 }

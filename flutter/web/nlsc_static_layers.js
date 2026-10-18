@@ -605,6 +605,20 @@
     return { ...verified, cacheEntry: { filename, sha256: digest, manifest_hash: manifest.manifest_hash } };
   }
 
+  function latestVerifiedLayerTimestamp(bundles) {
+    let latestTimestamp = null;
+    let latestInstant = Number.NEGATIVE_INFINITY;
+    for (const layerId of layerIds) {
+      const timestamp = bundles[layerId]?.manifest?.created_at;
+      if (typeof timestamp !== 'string') continue;
+      const instant = Date.parse(timestamp);
+      if (!Number.isFinite(instant) || instant <= latestInstant) continue;
+      latestTimestamp = timestamp;
+      latestInstant = instant;
+    }
+    return latestTimestamp;
+  }
+
   async function loadNLSCStaticLayers() {
     if (!global.isSecureContext || !global.navigator?.storage?.getDirectory) return '';
     const root = await global.navigator.storage.getDirectory();
@@ -628,13 +642,13 @@
     const features = linkDirectoryPoints(
       layerIds.flatMap((layerId) => (bundles[layerId]?.features ?? []).map(mapFeature)),
     );
-    const snapshotAt = layerIds.map((layerId) => bundles[layerId]?.manifest.created_at).filter(Boolean).sort().at(-1) || null;
+    const snapshotAt = latestVerifiedLayerTimestamp(bundles);
     return JSON.stringify({ schema_version: 'feature-v0', dataset_id: 'resilientgeo-taiwan', snapshot_at: snapshotAt, features });
   }
 
   global.ResilientGeoNLSCStatic = {
     canonicalize, verifyLayerBundle, linkDirectoryPoints, verifySigned, verifyEd25519WithSpki,
-    deviceKeyIdFromSpkiBase64, sha256,
+    deviceKeyIdFromSpkiBase64, sha256, latestVerifiedLayerTimestamp,
     verifyAddressCatalog, verifyAddressManifest, mapFeature,
   };
   global.loadNLSCStaticLayers = loadNLSCStaticLayers;

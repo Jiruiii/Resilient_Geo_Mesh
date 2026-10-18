@@ -99,8 +99,10 @@ class MeshRepository(
      * shelter fallback, which could leave Android showing an older dataset
      * while medical data is unavailable.
      */
-    suspend fun verifiedStaticFeatures(serverBaseUrl: String? = null): List<Map<String, Any?>> = withContext(Dispatchers.IO) {
-        val features = STATIC_LAYER_IDS.flatMap { layerId -> loadStaticLayer(layerId, serverBaseUrl) }
+    suspend fun verifiedStaticFeatures(serverBaseUrl: String? = null): VerifiedStaticFeatureSnapshot = withContext(Dispatchers.IO) {
+        val layerSnapshots = STATIC_LAYER_IDS.map { layerId -> loadStaticLayer(layerId, serverBaseUrl) }
+        val verifiedSnapshot = combineVerifiedStaticLayers(layerSnapshots)
+        val features = verifiedSnapshot.features
         val medicalPoints = features.filter { it["kind"] == "medical" && it["id"] is String }
             .associateBy { it["id"] as String }
         features.forEach { feature ->
@@ -109,17 +111,19 @@ class MeshRepository(
             @Suppress("UNCHECKED_CAST")
             (feature as MutableMap<String, Any?>)["geometry"] = pointId?.let { medicalPoints[it]?.get("geometry") }
         }
-        features
+        verifiedSnapshot
     }
 
     suspend fun verifiedShelterDisasterCatalog(serverBaseUrl: String? = null): com.resilientgeo.mesh.routing.ShelterDisasterCatalog =
         withContext(Dispatchers.IO) {
-            com.resilientgeo.mesh.routing.ShelterDisasterCatalog.fromFeatures(loadStaticLayer("taiwan-shelter", serverBaseUrl))
+            com.resilientgeo.mesh.routing.ShelterDisasterCatalog.fromFeatures(
+                loadStaticLayer("taiwan-shelter", serverBaseUrl).features,
+            )
         }
 
-    private fun loadStaticLayer(layerId: String, serverBaseUrl: String? = null): List<Map<String, Any?>> {
+    private fun loadStaticLayer(layerId: String, serverBaseUrl: String? = null): StaticLayerFeatureSnapshot {
         val bundleCache = StaticLayerBundleCache(File(appContext.filesDir, "static-layer-bundles"))
-        fun verifiedMessages(bundle: StaticLayerBundleCache.Bundle, isDownloaded: Boolean): List<Map<String, Any?>>? {
+        fun verifiedMessages(bundle: StaticLayerBundleCache.Bundle, isDownloaded: Boolean): StaticLayerFeatureSnapshot? {
             try {
                 val manifest = JSONObject(bundle.manifest)
                 if (isDownloaded) {
@@ -128,6 +132,7 @@ class MeshRepository(
                     ).isAfter(Instant.now())) { "static layer $layerId is expired" }
                 }
                 val cacheKey = VerifiedLayerCache.key(trustStoreText, bundle.manifest, bundle.chunks)
+                val createdAt = manifest.opt("created_at") as? String
                 memoizedLayers[layerId]?.takeIf { it.first == cacheKey }?.let { return it.second }
 
                 val messages = if (layerId == MEDICAL_DIRECTORY_LAYER_ID || layerId == "taiwan-medical") {
@@ -171,8 +176,13 @@ class MeshRepository(
                         android.util.Log.w("MeshRepository", "Could not cache verified static layer $layerId", error)
                     }
                 }
-                memoizedLayers[layerId] = cacheKey to messages
-                return messages
+                val snapshot = StaticLayerFeatureSnapshot(
+                    layerId = layerId,
+                    features = messages,
+                    createdAt = createdAt,
+                )
+                memoizedLayers[layerId] = cacheKey to snapshot
+                return snapshot
             } catch (error: Exception) {
                 if (error is java.util.concurrent.CancellationException) throw error
                 android.util.Log.w("MeshRepository", "Static layer $layerId candidate rejected", error)
@@ -206,7 +216,7 @@ class MeshRepository(
             JSONObject(remoteManifest).getString("manifest_hash") == JSONObject(cachedManifest).getString("manifest_hash")
         }.getOrDefault(false)
 
-        fun cachedMessages(): List<Map<String, Any?>>? =
+        fun cachedMessages(): StaticLayerFeatureSnapshot? =
             bundleCache.read(layerId)?.let { verifiedMessages(it, false) }
 
         // An unchanged or unreachable release needs only the already verified
@@ -222,7 +232,7 @@ class MeshRepository(
             }
         }
         if (!sameRelease) cachedMessages()?.let { return it }
-        return emptyList()
+        return StaticLayerFeatureSnapshot(layerId, emptyList(), null)
     }
 
     private fun staticMessagesFromChunks(chunkTexts: List<String>): List<Map<String, Any?>> {
@@ -1214,7 +1224,7 @@ class MeshRepository(
         private var sharedDeviceKey: DeviceSigningKey? = null
 
         /** Verified static layers already converted for the bridge, per process. */
-        private val memoizedLayers = java.util.concurrent.ConcurrentHashMap<String, Pair<String, List<Map<String, Any?>>>>()
+        private val memoizedLayers = java.util.concurrent.ConcurrentHashMap<String, Pair<String, StaticLayerFeatureSnapshot>>()
 
         /** One key per process: several MeshRepository instances must never race to create two. */
         private fun deviceSigningKey(context: Context): DeviceSigningKey =

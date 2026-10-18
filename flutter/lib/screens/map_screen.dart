@@ -182,7 +182,8 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
         WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
     _bridge = widget.bridge ?? MapBridge();
     _rescue = RescueFlowController(
-      service: widget.rescueService ?? RescueService.forPlatform(bridge: _bridge),
+      service:
+          widget.rescueService ?? RescueService.forPlatform(bridge: _bridge),
     )..addListener(_onRescueChanged);
     unawaited(_rescue.load());
     _locationController = widget.locationController ?? LocationController();
@@ -816,7 +817,8 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
       final event = session.request.event;
       final key = meshEventIdentity(event);
       final existing = byId[key];
-      if (existing == null || (event.eventVersion ?? 0) > (existing.eventVersion ?? 0)) {
+      if (existing == null ||
+          (event.eventVersion ?? 0) > (existing.eventVersion ?? 0)) {
         byId[key] = event;
       }
     }
@@ -1357,10 +1359,12 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     if (_pickTarget == _PickTarget.rescue) {
       final draft = _rescue.draft;
       if (draft == null) return;
-      _rescue.updateDraft(draft.copyWith(
-        location: point,
-        locationSource: CrowdReportLocationSource.mapPick,
-      ));
+      _rescue.updateDraft(
+        draft.copyWith(
+          location: point,
+          locationSource: CrowdReportLocationSource.mapPick,
+        ),
+      );
       return;
     }
     final draft = _reportDraft;
@@ -1406,11 +1410,13 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     setState(() {
       _runtimeState = _runtimeState.copyWith(currentLocation: location);
     });
-    _rescue.updateDraft(draft.copyWith(
-      location: location,
-      locationSource: CrowdReportLocationSource.currentLocation,
-      locationHint: null,
-    ));
+    _rescue.updateDraft(
+      draft.copyWith(
+        location: location,
+        locationSource: CrowdReportLocationSource.currentLocation,
+        locationHint: null,
+      ),
+    );
   }
 
   void _beginRescueMapPick() {
@@ -1470,11 +1476,13 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
       _selectedFeature = null;
       _selectedEvent = null;
     });
-    _rescue.updateDraft(draft.copyWith(
-      location: coordinate,
-      locationSource: CrowdReportLocationSource.mapPick,
-      locationHint: hint,
-    ));
+    _rescue.updateDraft(
+      draft.copyWith(
+        location: coordinate,
+        locationSource: CrowdReportLocationSource.mapPick,
+        locationHint: hint,
+      ),
+    );
   }
 
   void _openSirenOnly() {
@@ -1486,14 +1494,15 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
-      builder: (context) => SafeArea(
-        child: PointerInterceptor(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-            child: builder(context, _rescue),
+      builder:
+          (context) => SafeArea(
+            child: PointerInterceptor(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+                child: builder(context, _rescue),
+              ),
+            ),
           ),
-        ),
-      ),
     );
   }
 
@@ -1744,15 +1753,6 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     final visibleEvents = _visibleEvents;
     final mapEventsReady = !widget.staticFeaturesPending;
     final mapEvents = mapEventsReady ? visibleEvents : const <MeshEvent>[];
-    final visibleFacilityCount =
-        staticFeatures.features
-            .where(
-              (feature) =>
-                  feature.geometry is PointGeometry &&
-                  ((_showShelters && feature.kind == 'shelter') ||
-                      (_showMedical && feature.kind == 'medical')),
-            )
-            .length;
     final visibleEventCount =
         mapEventsReady && _showEvents
             ? mapEvents
@@ -1823,7 +1823,6 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                           constraints: const BoxConstraints(maxWidth: 520),
                           child: _StatusOverlay(
                             snapshotAt: staticFeatures.snapshotAt,
-                            visibleFacilityCount: visibleFacilityCount,
                             visibleEventCount: visibleEventCount,
                             hasCurrentLocation:
                                 _runtimeState.currentLocation != null,
@@ -1870,7 +1869,9 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                         ),
                       ),
                     ),
-                  if (_rescue.activeSession != null && _rescue.step == null && !_reportPicking)
+                  if (_rescue.activeSession != null &&
+                      _rescue.step == null &&
+                      !_reportPicking)
                     PointerInterceptor(
                       child: ConstrainedBox(
                         constraints: const BoxConstraints(maxWidth: 520),
@@ -1879,9 +1880,13 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                           now: _rescue.now,
                           reminderDue: _rescue.expiryReminderDue,
                           busy: _rescue.busy,
-                          sirenPanel: _rescue.showsSirenShortcut
-                              ? widget.sirenPanelBuilder?.call(context, _rescue)
-                              : null,
+                          sirenPanel:
+                              _rescue.showsSirenShortcut
+                                  ? widget.sirenPanelBuilder?.call(
+                                    context,
+                                    _rescue,
+                                  )
+                                  : null,
                           onUpdate: _rescue.startUpdate,
                           onExtend: _rescue.extend,
                           onResolve: _rescue.resolve,
@@ -1889,7 +1894,8 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                         ),
                       ),
                     )
-                  else if (_rescue.expiredSession != null && _rescue.step == null)
+                  else if (_rescue.expiredSession != null &&
+                      _rescue.step == null)
                     Padding(
                       padding: const EdgeInsets.only(top: 8),
                       child: Card(
@@ -1909,20 +1915,32 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                         ),
                       ),
                     ),
-                  if (!_reportPicking && !_reportSheetVisible)
-                    PointerInterceptor(
-                      child: ActionChip(
-                        key: const ValueKey('evacuation-disaster-context'),
-                        avatar: const Icon(Icons.tune, size: 18),
-                        label: Text('避難情境：${_disasterType?.label ?? '不限類型'}'),
-                        onPressed: _routeLoading ? null : _openLayerPanel,
-                      ),
-                    ),
                   const Spacer(),
                 ],
               ),
             ),
           ),
+          if (!_reportPicking && !_reportSheetVisible)
+            Positioned(
+              left: 12,
+              right: 208,
+              bottom:
+                  _routeSheetVisible ||
+                          _selectedFeature != null ||
+                          _selectedEvent != null
+                      ? 280
+                      : 52,
+              child: SafeArea(
+                child: Align(
+                  alignment: Alignment.bottomLeft,
+                  child: PointerInterceptor(
+                    child: _EvacuationLayerSettingsButton(
+                      onOpen: _routeLoading ? null : _openLayerPanel,
+                    ),
+                  ),
+                ),
+              ),
+            ),
           if (_selectedFeature != null)
             Align(
               alignment: Alignment.bottomCenter,
@@ -1943,8 +1961,9 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                 event: _selectedEvent!,
                 corroboration: _corroborationOf(_selectedEvent!),
                 onClose: _closeDetails,
-                confirmedEarlierVersion: AttestationIndex.fromEvents(_persistedEvents)
-                    .confirmedOtherVersion(_selectedEvent!),
+                confirmedEarlierVersion: AttestationIndex.fromEvents(
+                  _persistedEvents,
+                ).confirmedOtherVersion(_selectedEvent!),
               ),
             ),
           if (_rescue.step != null && !_rescueSheetHidden)
@@ -1974,7 +1993,9 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                 onOpenSirenOnly: _openSirenOnly,
               ),
             ),
-          if (_reportPicking && _pickTarget == _PickTarget.rescue && _rescue.draft != null)
+          if (_reportPicking &&
+              _pickTarget == _PickTarget.rescue &&
+              _rescue.draft != null)
             Align(
               alignment: Alignment.bottomCenter,
               child: MapLocationPickerBar(
@@ -2012,7 +2033,9 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                 onCancel: _closeCrowdReport,
               ),
             ),
-          if (_reportPicking && _pickTarget == _PickTarget.report && _reportDraft != null)
+          if (_reportPicking &&
+              _pickTarget == _PickTarget.report &&
+              _reportDraft != null)
             Align(
               alignment: Alignment.bottomCenter,
               child: CrowdReportMapPickerBar(
@@ -2048,7 +2071,6 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
 class _StatusOverlay extends StatelessWidget {
   const _StatusOverlay({
     required this.snapshotAt,
-    required this.visibleFacilityCount,
     required this.visibleEventCount,
     required this.hasCurrentLocation,
     required this.reportDeliveryEventId,
@@ -2057,7 +2079,6 @@ class _StatusOverlay extends StatelessWidget {
   });
 
   final String? snapshotAt;
-  final int visibleFacilityCount;
   final int visibleEventCount;
   final bool hasCurrentLocation;
   final String? reportDeliveryEventId;
@@ -2078,23 +2099,10 @@ class _StatusOverlay extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          SizedBox(
-            width: double.infinity,
-            child: FittedBox(
-              alignment: Alignment.centerLeft,
-              fit: BoxFit.scaleDown,
-              child: Text(
-                staticFeaturesPending && visibleFacilityCount == 0
-                    ? '全臺院所／避難所：載入中'
-                    : '全臺院所／避難所：$visibleFacilityCount',
-                maxLines: 1,
-                softWrap: false,
-              ),
-            ),
+          Text(
+            '最新更新資料：${staticFeaturesPending ? '載入中' : formatStaticDataUpdateTime(snapshotAt)}',
           ),
           if (!staticFeaturesPending) Text('事件標記：$visibleEventCount'),
-          if (snapshotAt != null && snapshotAt!.isNotEmpty)
-            Text('靜態資料更新：${formatUpdateTime(snapshotAt)}'),
           Text('目前位置：${hasCurrentLocation ? '已取得' : '尚未取得'}'),
           if (staticFeaturesPending)
             const Text(
@@ -2114,6 +2122,28 @@ class _StatusOverlay extends StatelessWidget {
       ),
     ),
   );
+}
+
+class _EvacuationLayerSettingsButton extends StatelessWidget {
+  const _EvacuationLayerSettingsButton({required this.onOpen});
+
+  final VoidCallback? onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      key: const ValueKey<String>('evacuation-disaster-context-control'),
+      color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.94),
+      elevation: 4,
+      borderRadius: BorderRadius.circular(14),
+      child: IconButton(
+        key: const ValueKey<String>('evacuation-context-collapsed'),
+        tooltip: '圖層設定',
+        onPressed: onOpen,
+        icon: const Icon(Icons.tune),
+      ),
+    );
+  }
 }
 
 class _MapQuickActions extends StatelessWidget {

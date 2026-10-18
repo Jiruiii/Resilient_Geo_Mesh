@@ -11,6 +11,10 @@ import 'map_zoom.dart';
 class MapLibreMapConfig {
   const MapLibreMapConfig._();
 
+  /// Use MapLibre's built-in compact, expandable attribution control.
+  static const AttributionButtonPosition attributionButtonPosition =
+      AttributionButtonPosition.bottomLeft;
+
   /// Keep the camera range useful for Taiwan. The checked-in PMTiles currently
   /// contain data through z15; z17 is an intentional vector overzoom until a
   /// higher-detail Taiwan package is generated.
