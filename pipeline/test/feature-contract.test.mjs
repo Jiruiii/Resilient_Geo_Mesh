@@ -10,6 +10,7 @@ import {
   verifyFeatureBundle,
 } from '../lib/feature-bundle.mjs';
 import { generateEd25519KeyPair } from '../lib/crypto.mjs';
+import { canonicalize } from '../lib/canonical.mjs';
 
 const { privateKey, publicKey } = generateEd25519KeyPair();
 const KEY_ID = 'feature-test-2026';
@@ -81,6 +82,76 @@ test('builds and verifies a separate static layer bundle', () => {
   assert.equal(bundle.chunks[0].schema_version, 'layer-chunk-v0');
   assert.equal(bundle.manifest.total_feature_count, 2);
   assert.equal(verifyFeatureBundle(bundle, publicKey, { trustedKeyIds: [KEY_ID], now: NOW }).valid, true);
+});
+
+test('fixed-size feature chunks preserve UTF-8 byte boundaries', () => {
+  const signedFeatures = Array.from({ length: 24 }, (_, index) => signFeature(feature({
+    feature_id: `shelter:${String(index).padStart(3, '0')}`,
+    properties: {
+      name: `內湖避難所-${index}`,
+      notes: '防災資訊'.repeat(index % 4 + 1),
+    },
+  }), privateKey));
+  const options = {
+    datasetId: 'resilientgeo-neihu',
+    layerId: 'shelter',
+    namespace: 'official.taipei',
+    datasetVersion: 1,
+    source: 'taipei-shelter',
+    sourceVersion: 'snapshot-2026-09-04',
+    createdAt: '2026-09-04T00:00:00Z',
+    expiresAt: '2026-09-11T00:00:00Z',
+    signingKeyId: KEY_ID,
+    privateKey,
+    targetSizeBytes: 1800,
+  };
+  const bundle = buildFeatureBundle(signedFeatures, options);
+  const expectedGroups = [];
+  let current = [];
+  for (const signedFeature of signedFeatures) {
+    const candidate = [...current, signedFeature];
+    const content = {
+      dataset_id: options.datasetId,
+      layer_id: options.layerId,
+      namespace: options.namespace,
+      dataset_version: options.datasetVersion,
+      sequence: expectedGroups.length,
+      priority: 'NORMAL',
+      created_at: options.createdAt,
+      content_type: 'application/json',
+      content_encoding: 'identity',
+      features: candidate,
+    };
+    if (current.length > 0
+      && Buffer.byteLength(canonicalize(content), 'utf8') > options.targetSizeBytes) {
+      expectedGroups.push(current);
+      current = [signedFeature];
+    } else {
+      current = candidate;
+    }
+  }
+  if (current.length > 0) expectedGroups.push(current);
+
+  assert.deepEqual(
+    bundle.chunks.map((chunk) => chunk.features.map((value) => value.feature_id)),
+    expectedGroups.map((group) => group.map((value) => value.feature_id)),
+  );
+  for (const chunk of bundle.chunks) {
+    const content = {
+      dataset_id: chunk.dataset_id,
+      layer_id: chunk.layer_id,
+      namespace: chunk.namespace,
+      dataset_version: chunk.dataset_version,
+      sequence: chunk.sequence,
+      priority: chunk.priority,
+      created_at: chunk.created_at,
+      content_type: chunk.content_type,
+      content_encoding: chunk.content_encoding,
+      features: chunk.features,
+    };
+    assert.equal(chunk.byte_length, Buffer.byteLength(canonicalize(content), 'utf8'));
+    assert.ok(chunk.byte_length <= options.targetSizeBytes);
+  }
 });
 
 test('allows geometry-less medical directory records without weakening point layers', () => {

@@ -629,6 +629,64 @@ test('normalizes CAP circles and category-specific NCDR events', () => {
   assert.equal(events[0].attributes.affected_area, '臺中市東區');
 });
 
+test('keeps fire-safety inspections and marine fire descriptions out of the fire category', () => {
+  const raw = rawSnapshot('ncdr-hazard-events', NCDR_ENDPOINT, {
+    details: [
+      {
+        capid: 'NFA-FIRE-INSPECTION-001',
+        payload: {
+          identifier: 'NFA-FIRE-INSPECTION-001',
+          sent: RETRIEVED_AT,
+          info: [{
+            language: 'zh-TW',
+            category: 'Other',
+            event: '消防安全檢查重大不合格場所',
+            eventCode: { valueName: 'profile:CAP-TWP:Event:1.0', value: 'Dangerfield' },
+            effective: RETRIEVED_AT,
+            expires: NCDR_EXPIRES_AT,
+            severity: 'Severe',
+            description: '新北市消防安全設備不合格',
+            area: [{ areaDesc: '新北市', circle: '25.0,121.5 1' }],
+          }],
+        },
+      },
+      {
+        capid: 'OCA-MARINE-FIRE-001',
+        payload: {
+          identifier: 'OCA-MARINE-FIRE-001',
+          sent: RETRIEVED_AT,
+          info: [{
+            language: 'zh-TW',
+            category: 'Env',
+            event: '海洋污染',
+            eventCode: { valueName: 'profile:CAP-TWP:Event:1.0', value: 'marinePollution' },
+            effective: RETRIEVED_AT,
+            expires: NCDR_EXPIRES_AT,
+            severity: 'Minor',
+            description: '旗津區中州漁港漁船火災',
+            area: [{ areaDesc: '高雄市', circle: '22.6,120.3 0.5' }],
+          }],
+        },
+      },
+    ],
+    partial: false,
+  });
+  const events = normalizeNcdrHazards(raw, {
+    boundary: {
+      type: 'Polygon',
+      coordinates: [[[119.0, 21.0], [123.0, 21.0], [123.0, 26.0], [119.0, 26.0], [119.0, 21.0]]],
+    },
+    scope: 'taiwan',
+    coverage: 'TW',
+    areaId: 'tw',
+  });
+
+  assert.equal(events.find((event) => event.event_id.endsWith('nfa-fire-inspection-001'))
+    .attributes.ncdr_category_label, '其他 NCDR 事件');
+  assert.equal(events.find((event) => event.event_id.endsWith('oca-marine-fire-001'))
+    .attributes.ncdr_category_label, '其他 NCDR 事件');
+});
+
 test('normalizes NCDR CAP polygons, excludes outside hazards, and retains expired events', () => {
   const raw = rawSnapshot('ncdr-hazard-events', NCDR_ENDPOINT, ncdrPayload());
   const events = normalizeNcdrHazards(raw, { boundary: OFFICIAL_NEIHU_BOUNDARY });

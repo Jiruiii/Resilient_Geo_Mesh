@@ -67,7 +67,7 @@ class FlutterMapBridge(
     private val governmentSync: GovernmentSyncManager = GovernmentSyncManager.get(context),
     private val routeService: EvacuationRouteService = EvacuationRouteService(
         graphLoader = EvacuationRouteService.assetGraphLoader(context),
-        eventJsonProvider = { repository.allEventsSnapshot().map { it.eventJson } },
+        eventJsonProvider = { repository.compactEventJsonSnapshot() },
         shelterCatalogProvider = {
             repository.verifiedShelterDisasterCatalog(governmentSync.message()["url"] as? String)
         },
@@ -172,7 +172,7 @@ class FlutterMapBridge(
 
         eventObservation = scope.launch {
             rowsWithOfficialExpiryPurge(
-                source = repository.observeEvents(),
+                source = repository.observeBridgeEvents(),
                 purgeExpired = { now ->
                     withContext(Dispatchers.IO) { repository.purgeExpiredOfficialEvents(now) }
                 },
@@ -183,6 +183,7 @@ class FlutterMapBridge(
                 }
                 .distinctUntilChanged()
                 .catch { error ->
+                    android.util.Log.e("FlutterMapBridge", "Event observation failed", error)
                     events.error(EVENT_OBSERVATION_ERROR, error.message, null)
                 }
                 .collect { eventMessages ->
@@ -213,12 +214,13 @@ class FlutterMapBridge(
                     repository.purgeExpiredOfficialEvents(Instant.now())
                 }
                 result.success(
-                    MapBridgeProtocol.initialState(
-                        events = repository.observeEvents().first(),
+                    MapBridgeProtocol.initialBridgeState(
+                        events = repository.observeBridgeEvents().first(),
                         emergencyModeEnabled = emergencyMode.isEnabled,
                     ),
                 )
             } catch (error: Throwable) {
+                android.util.Log.e("FlutterMapBridge", "Initial event snapshot failed", error)
                 result.error(METHOD_ERROR, error.message, null)
             }
         }

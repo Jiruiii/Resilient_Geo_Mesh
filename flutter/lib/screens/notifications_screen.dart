@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../data/attestation_index.dart';
 import '../data/government_announcement_time.dart';
 import '../data/map_models.dart';
+import '../data/ncdr_category.dart';
 import '../data/rescue_request_models.dart';
 import '../widgets/map_layers.dart';
 
@@ -183,6 +184,7 @@ class _EventCard extends StatelessWidget {
     final title = eventName(event);
     final rescue = RescueRequestView.fromEvent(event);
     final supplyStation = isSupplyStationEvent(event);
+    final ncdrCategory = ncdrCategoryLabelFor(event);
     return Card(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -220,6 +222,7 @@ class _EventCard extends StatelessWidget {
                 padding: const EdgeInsets.only(top: 4),
                 child: Text(
                   [
+                    if (ncdrCategory != null) '警示類型：$ncdrCategory',
                     if (demo) '模擬事件，非即時官方災情',
                     if (rescue != null) ...<String>[
                       '求救狀態：${rescue.status.label}',
@@ -230,8 +233,7 @@ class _EventCard extends StatelessWidget {
                       if (announcement)
                         '公告類別：${governmentAnnouncementCategoryLabel(event.attributes?['category'])}',
                       '來源：${event.source ?? '無資料'}',
-                      if (!supplyStation)
-                        '嚴重度：${event.severity ?? '無資料'}',
+                      if (!supplyStation) '嚴重度：${event.severity ?? '無資料'}',
                     ],
                     isCrowdEvent(event) && !event.isExpired
                         ? '狀態：${crowdVerificationLabel(event.verification ?? CrowdVerification.unverified)}'

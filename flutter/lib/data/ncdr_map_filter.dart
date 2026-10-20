@@ -1,10 +1,7 @@
 import 'map_models.dart';
+import 'ncdr_category.dart';
 
-const Set<String> _actionableNcdrRelevance = <String>{
-  'EVACUATION',
-  'ROUTE_CHANGE',
-  'HIGH_IMPACT',
-};
+export 'ncdr_category.dart' show isNcdrEvent;
 
 /// Official alerts in the App come from CWA and NCDR. Local crowd reports
 /// remain a separate, explicitly unverified event stream.
@@ -16,10 +13,10 @@ bool isAppSupportedEvent(MeshEvent event) =>
         event.source == 'GOV_ATTEST' &&
         event.eventType == 'ATTESTATION' ||
     _isCwaEvent(event) ||
-    _isNcdrEvent(event);
+    isNcdrEvent(event);
 
-/// Keeps NCDR background notices out of the operational map. CWA events use
-/// their own source semantics and are not filtered by NCDR relevance fields.
+/// Shows categorized NCDR events on the map, independent of source operational
+/// relevance. CWA events use their own source semantics.
 bool isMapVisibleEvent(MeshEvent event) {
   if (event.namespace?.startsWith('crowd.') == true) return true;
   if (event.namespace == 'official.announcement') {
@@ -37,26 +34,12 @@ bool isMapVisibleEvent(MeshEvent event) {
     return false;
   }
   if (_isCwaEvent(event)) return true;
-  if (!_isNcdrEvent(event)) return false;
-
-  final mapVisible = event.attributes?['map_visible'];
-  if (mapVisible is bool) return mapVisible;
-
-  final relevance = event.attributes?['operational_relevance'];
-  return relevance is String && _actionableNcdrRelevance.contains(relevance);
+  if (!isNcdrEvent(event)) return false;
+  return isNcdrCategoryVisibleInApp(event);
 }
 
 List<MeshEvent> filterMapEvents(Iterable<MeshEvent> events) =>
     List<MeshEvent>.unmodifiable(events.where(isMapVisibleEvent));
-
-bool _isNcdrEvent(MeshEvent event) {
-  final namespace = event.namespace ?? '';
-  return event.source?.toUpperCase() == 'NCDR' ||
-      namespace == 'official.ncdr' ||
-      namespace.startsWith('official.ncdr.') ||
-      namespace == 'official.live.ncdr' ||
-      namespace.startsWith('official.live.ncdr.');
-}
 
 bool _isCwaEvent(MeshEvent event) {
   final namespace = event.namespace ?? '';

@@ -20,7 +20,7 @@ ogr2ogr -f GeoJSON -t_srs EPSG:4326 /tmp/town.geojson /tmp/TOWN_MOI_1140318.shp
 | 資料 | 官方來源／程式 source id | 認證 | 輸出與注意事項 |
 |---|---|---|---|
 | 縣市、鄉鎮市區界線 | [data.gov.tw 7442](https://data.gov.tw/dataset/7442)、[7441](https://data.gov.tw/dataset/7441)／`area-catalog` | 不需要 | 下載後轉成 EPSG:4326 GeoJSON，再合併產生 `area-catalog-v0`；每筆資料可得到 `county_code`、`town_code`、`area_id`。 |
-| NCDR 示警 | [NCDR Swagger](https://alerts.ncdr.nat.gov.tw/api_swagger/index.html)／`ncdr-hazard-events` | `NCDR_ALERT_API_KEY` | Server 全台採兩階段：`/api/datastore` 取得 `capid` 索引，再對每筆呼叫 `/api/dump/datastore` 取得完整 CAP；完整資料留在 private cache，公開 government feed 排除 `BACKGROUND`。 |
+| NCDR 示警 | [NCDR Swagger](https://alerts.ncdr.nat.gov.tw/api_swagger/index.html)／`ncdr-hazard-events` | `NCDR_ALERT_API_KEY` | Server 全台採兩階段：`/api/datastore` 取得 `capid` 索引，再對每筆呼叫 `/api/dump/datastore` 取得完整 CAP；原始 CAP 與正規化來源快取留在 private volume。公開 government feed 保留所有未過期事件（包含 `BACKGROUND` 與「其他」），每筆標示警示類型，manifest 再按行政區與類型分包；不將完整 `source_record` 複製到公開事件。Web／Android 依選定區域及截圖類型清單下載分包，停水、海洋污染、消防安全檢查重大不合格場所及「其他」不會進入客戶端事件快取。 |
 | CWA 地震、縣市警報、颱風 | `E-A0015-001`、`W-C0033-001`、`W-C0034-001`／`cwa-earthquake`、`cwa-weather-warning`、`cwa-typhoon-warning` | `CWA_API_KEY` | `Authorization` 僅在 collector request 使用，Raw 不保存。 |
 | TDX 道路事件 | [TDX Swagger](https://tdx.transportdata.tw/api-service/swagger)／`tdx-road-events` | `TDX_CLIENT_ID`、`TDX_CLIENT_SECRET` | OAuth2 client credentials；保留 adapter 供手動收集，但目前不在 Central Server 預設排程，也不進核心災害 feed。 |
 | 避難所位置 | [data.gov.tw 73242](https://data.gov.tw/dataset/73242)／`taiwan-shelter` | 不需要 | CSV 靜態 layer；沒有 Neihu filter。全台模式要求 AreaCatalog，核對來源縣市／鄉鎮、地址及點位界線；2026-10-04 單次來源 5,973 筆，5,727 已定位、180 未定位、66 排除。未通過檢查的座標不進地圖 layer；本機暫存 bundle 已簽章驗證，但尚未部署正式服務。 |

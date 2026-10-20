@@ -3,15 +3,47 @@ import { sha256Canonical, eventPayload } from './canonical.mjs';
 import { signEvent, verifyBundle, verifyEvent } from './contract.mjs';
 import { buildBundle } from './bundle.mjs';
 import { isDeviceKeyId } from './device-key.mjs';
+import { ncdrCategoryForEvent } from '../sources/ncdr.mjs';
 
 export const FEED_KEY_ID = 'government-feed-2026';
 function distributable(event, now) {
   return Date.parse(event.expires_at) > now.getTime() || event.attributes?.publication_retracted === true &&
     Date.parse(event.attributes.retraction_issued_at) + 86400000 > now.getTime();
 }
-function isPublicEvent(result, event) {
-  const isNcdr = result.id === 'ncdr' || result.feedId === 'ncdr' || result.sourceId === 'ncdr-hazard-events';
-  return !isNcdr || event.attributes?.operational_relevance !== 'BACKGROUND';
+
+function publicNcdrEvent(event) {
+  const output = structuredClone(event);
+  output.attributes = output.attributes && typeof output.attributes === 'object'
+    ? output.attributes
+    : {};
+  const category = ncdrCategoryForEvent(output);
+  output.attributes.ncdr_category_code = category.code;
+  output.attributes.ncdr_category_label = category.label;
+  output.attributes.ncdr_category_match = category.match;
+  // The complete raw record remains in private source snapshots. Duplicating it
+  // in every signed public event makes selective downloads and mobile startup
+  // unnecessarily large.
+  delete output.attributes.source_record;
+  return output;
+}
+
+function migrateRetainedNcdrEvents({ current, ledger, privateKey, signingKeyId, namespace }) {
+  for (const [eventId, previousEvent] of current) {
+    const event = publicNcdrEvent(previousEvent);
+    event.namespace = namespace;
+    event.signing_key_id = signingKeyId;
+    delete event.signer_public_key;
+    const identity = `${namespace}/${eventId}`;
+    const payload = eventPayload(event);
+    delete payload.event_version;
+    const fingerprint = sha256Canonical(payload);
+    const previousVersion = ledger[identity];
+    if (previousVersion?.fingerprint === fingerprint && previousEvent.event_version === previousVersion.version) continue;
+    event.event_version = Math.max(previousVersion?.version ?? 0, previousEvent.event_version ?? 0) + 1;
+    if (event.event_version > 2147483647) throw new Error('Event version exhausted');
+    ledger[identity] = { version: event.event_version, fingerprint };
+    current.set(eventId, signEvent(event, privateKey));
+  }
 }
 export function feedInput(feed) {
   const { signature, ...input } = feed;
@@ -77,12 +109,14 @@ export function buildGovernmentFeed({ previous, previousEvents = {}, results, pr
     if (!/^[a-z][a-z0-9-]+$/.test(id)) throw new Error('Invalid source id');
     const oldSource = previous?.sources.find(source => source.id === id);
     const current = new Map((previousEvents[id] ?? [])
-      .filter(event => isPublicEvent(result, event) && distributable(event, now))
+      .filter(event => distributable(event, now))
       .map(event => [event.event_id, event]));
     const namespace = result.namespace ?? `official.live.${id}`;
     if (typeof namespace !== 'string' || !/^[a-z][a-z0-9._-]+$/u.test(namespace)) {
       throw new Error('Invalid government event namespace');
     }
+    const isNcdr = id === 'ncdr' || result.sourceId === 'ncdr-hazard-events';
+    if (isNcdr) migrateRetainedNcdrEvents({ current, ledger, privateKey, signingKeyId, namespace });
     if (result.events) {
       for (const eventId of result.cancelledEventIds ?? []) {
         const existing = current.get(eventId);
@@ -102,7 +136,7 @@ export function buildGovernmentFeed({ previous, previousEvents = {}, results, pr
         ledger[identity] = { version: retraction.event_version, fingerprint: sha256Canonical(payload) };
         current.set(eventId, signEvent(retraction, privateKey));
       }
-      for (const input of result.events.filter((event) => isPublicEvent(result, event))) {
+      for (const input of result.events) {
         if (result.cancelledEventIds?.includes(input.event_id)) continue;
         if (isDeviceKeyId(input.signing_key_id)) {
           const allowedSource = id === 'government-announcements' && namespace === 'official.announcement';
@@ -136,7 +170,7 @@ export function buildGovernmentFeed({ previous, previousEvents = {}, results, pr
           current.set(event.event_id, event);
           continue;
         }
-        const event = structuredClone(input);
+        const event = isNcdr ? publicNcdrEvent(input) : structuredClone(input);
         if (Date.parse(event.expires_at) <= now.getTime()) {
           const existing = current.get(event.event_id);
           if (!existing || existing.attributes.publication_retracted) continue;

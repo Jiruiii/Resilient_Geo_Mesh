@@ -659,6 +659,7 @@ export async function publishStaticLayer({ layerId, features, releaseRoot, signi
   const root = absoluteRoot(releaseRoot, 'releaseRoot');
   const { privateKey, publicKey, signingKeyId } = keyParts(signingKey);
   const currentTime = dateValue(now);
+  const requestedSourceVersion = sourceVersion ?? features[0]?.source_version;
   let previous;
   try {
     previous = await createReleaseStore({ releaseRoot: root, releasePointerStore }).readLayerBundle(layerId);
@@ -672,6 +673,7 @@ export async function publishStaticLayer({ layerId, features, releaseRoot, signi
       && previous.manifest.chunks.length <= MAX_MEDICAL_LAYER_CHUNKS);
   if (previous
     && previousWithinClientLimit
+    && previous.manifest.source_version === requestedSourceVersion
     && semanticFeaturesHash(previous.chunks.flatMap((chunk) => chunk.features ?? []))
       === semanticFeaturesHash(safeFeatures)
     && Date.parse(previous.manifest.expires_at) - currentTime.getTime() > STATIC_REFRESH_BEFORE_EXPIRY_MS) {

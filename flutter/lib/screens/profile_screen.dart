@@ -16,6 +16,7 @@ class ProfileScreen extends StatelessWidget {
     required this.onAnimationChanged,
     this.bridge,
     this.governmentAuth,
+    this.onWebGovernmentFeedRefresh,
   });
 
   final ThemeMode themeMode;
@@ -24,6 +25,7 @@ class ProfileScreen extends StatelessWidget {
   final ValueChanged<bool> onAnimationChanged;
   final MapBridge? bridge;
   final GovernmentAuthController? governmentAuth;
+  final Future<void> Function()? onWebGovernmentFeedRefresh;
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -43,8 +45,10 @@ class ProfileScreen extends StatelessWidget {
                 () => Navigator.of(context).push(
                   MaterialPageRoute<void>(
                     builder:
-                        (_) =>
-                            GovernmentSyncScreen(bridge: bridge ?? MapBridge()),
+                        (_) => GovernmentSyncScreen(
+                          bridge: bridge ?? MapBridge(),
+                          onWebAreaChanged: onWebGovernmentFeedRefresh,
+                        ),
                   ),
                 ),
           ),

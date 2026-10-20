@@ -42,7 +42,7 @@ void main() {
     );
   });
 
-  test('does not render a classified NCDR background event on the map', () {
+  test('renders a selected NCDR background category on the map', () {
     final background = _event(
       'ncdr:fire-inspection',
       issuedAt: '2026-09-26T03:00:00Z',
@@ -66,10 +66,13 @@ void main() {
       now: DateTime.utc(2026, 9, 26, 4),
     );
 
-    expect(markers, hasLength(1));
+    expect(markers, hasLength(2));
     expect(
-      markers.single.key,
-      ValueKey<String>('event-marker-${meshEventIdentity(actionable)}'),
+      markers.map((marker) => marker.key),
+      containsAll(<ValueKey<String>>[
+        ValueKey<String>('event-marker-${meshEventIdentity(background)}'),
+        ValueKey<String>('event-marker-${meshEventIdentity(actionable)}'),
+      ]),
     );
   });
 
@@ -923,6 +926,7 @@ MeshEvent _event(
   applyState: null,
   geometry: const PointGeometry(GeoPoint(longitude: 121.5, latitude: 25.0)),
   attributes: <String, dynamic>{
+    'ncdr_category_label': '火災',
     'source_description': '測試示警',
     'map_visible': mapVisible,
   },

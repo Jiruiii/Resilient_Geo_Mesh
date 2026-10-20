@@ -22,24 +22,30 @@ function priorityFor(events) {
 function areaTheme(event) {
   const areaId = event?.attributes?.area_id;
   const theme = event?.attributes?.theme;
+  const categoryCode = event?.source?.toUpperCase() === 'NCDR'
+    ? event?.attributes?.ncdr_category_code ?? 'other'
+    : null;
   if (typeof areaId !== 'string' || areaId.length === 0 || typeof theme !== 'string' || theme.length === 0) {
     throw new TypeError(`event ${event?.event_id ?? '<unknown>'} is missing attributes.area_id / attributes.theme`);
   }
-  return { areaId, theme };
+  if (categoryCode !== null && !/^[a-z][a-z0-9_]{0,63}$/u.test(categoryCode)) {
+    throw new TypeError(`event ${event?.event_id ?? '<unknown>'} has an invalid NCDR category code`);
+  }
+  return { areaId, theme, categoryCode };
 }
 
 /**
- * Two-phase grouping. First bucket events by (area_id, theme) so a chunk maps to
- * one geographic + topical slice; then, within a bucket ordered by area_id then
- * theme, fall back to the existing byte-size accumulation split. The stable
- * bucket order is what makes the bundle replayable.
+ * Two-phase grouping. First bucket events by (area_id, theme, category_code)
+ * so a chunk maps to one geographic + topical slice; then, within a bucket,
+ * fall back to the existing byte-size accumulation split. The category is
+ * manifest routing metadata and does not change the chunk-v0 content hash.
  */
 function groupEvents(events, targetSizeBytes, datasetId, namespace, datasetVersion) {
   const buckets = new Map();
   for (const event of events) {
-    const { areaId, theme } = areaTheme(event);
-    const key = `${areaId}\u0000${theme}`;
-    if (!buckets.has(key)) buckets.set(key, { areaId, theme, events: [] });
+    const { areaId, theme, categoryCode } = areaTheme(event);
+    const key = `${areaId}\u0000${theme}\u0000${categoryCode ?? ''}`;
+    if (!buckets.has(key)) buckets.set(key, { areaId, theme, categoryCode, events: [] });
     buckets.get(key).events.push(event);
   }
 
@@ -49,7 +55,7 @@ function groupEvents(events, targetSizeBytes, datasetId, namespace, datasetVersi
 
   const groups = [];
   for (const key of orderedKeys) {
-    const { areaId, theme, events: bucketEvents } = buckets.get(key);
+    const { areaId, theme, categoryCode, events: bucketEvents } = buckets.get(key);
     let current = [];
     for (const event of bucketEvents) {
       const candidate = [...current, event];
@@ -67,18 +73,18 @@ function groupEvents(events, targetSizeBytes, datasetId, namespace, datasetVersi
         events: candidate,
       };
       if (current.length > 0 && Buffer.byteLength(canonicalize(candidateContent), 'utf8') > targetSizeBytes) {
-        groups.push({ areaId, theme, events: current, seq: 0 });
+        groups.push({ areaId, theme, categoryCode, events: current, seq: 0 });
         current = [event];
       } else {
         current = candidate;
       }
     }
-    if (current.length > 0) groups.push({ areaId, theme, events: current, seq: 0 });
+    if (current.length > 0) groups.push({ areaId, theme, categoryCode, events: current, seq: 0 });
   }
 
   const seqByBucket = new Map();
   for (const group of groups) {
-    const bucketKey = `${group.areaId}\u0000${group.theme}`;
+    const bucketKey = `${group.areaId}\u0000${group.theme}\u0000${group.categoryCode ?? ''}`;
     const seq = seqByBucket.get(bucketKey) ?? 0;
     group.seq = seq;
     seqByBucket.set(bucketKey, seq + 1);
@@ -121,8 +127,9 @@ export function buildBundle(events, options) {
 
   const groups = groupEvents(events, targetSizeBytes, datasetId, namespace, datasetVersion);
   const unsignedChunks = groups.map((group, sequence) => {
-    const { areaId, theme, events: groupEventsList, seq } = group;
-    const chunkId = `${datasetId}:chunk:${datasetVersion}:${areaShort(areaId)}:${theme}:${String(seq).padStart(3, '0')}`;
+    const { areaId, theme, categoryCode, events: groupEventsList, seq } = group;
+    const categoryToken = categoryCode === null ? '' : `:${categoryCode}`;
+    const chunkId = `${datasetId}:chunk:${datasetVersion}:${areaShort(areaId)}:${theme}${categoryToken}:${String(seq).padStart(3, '0')}`;
     const base = {
       schema_version: 'chunk-v0',
       chunk_id: chunkId,
@@ -177,6 +184,9 @@ export function buildBundle(events, options) {
       priority: chunk.priority,
       area_id: chunk.area_id,
       theme: chunk.theme,
+      ...(groups[chunk.sequence].categoryCode !== null
+        ? { category_code: groups[chunk.sequence].categoryCode }
+        : {}),
       bbox: chunk.bbox,
       event_ids: chunk.events.map((event) => event.event_id),
     })),

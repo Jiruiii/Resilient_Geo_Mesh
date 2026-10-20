@@ -12,7 +12,7 @@
 
 中央 Server 的資料流是：官方來源 → 單一排程 collector → private raw/normalized cache → signed government feed 或 static layer → read-only Fastify API。API request 只讀已發布內容，不會觸發官方 API。Web／Android client 程式已加入，但仍須部署正式 HTTPS 網域並做兩端下載驗收。
 
-目前 Server 的預設範圍是：NCDR 全台災害事件（公開 feed 排除 `BACKGROUND`）、CWA 地震／天氣特報／颱風，以及獨立的靜態避難所位置與醫療資源。App 的官方動態事件支援 NCDR 與三種 CWA feed；NCDR 的 `BACKGROUND` 篩選不套用到 CWA。TDX 與舊避難所狀態 feed 不會進入 Web／Android 的事件快取、地圖或通知。OSM／Protomaps 底圖隨 App 內附，不由資料 Server 提供；避難所位置與醫療資源走簽章 layer。避難所開設狀態 XML 不在目前收集範圍。TDX 與 OSM POI adapter 保留但不在預設排程。Web 與 Android 都已接入簽章 layer、告警 feed 與門牌包資料路徑；正式網域及兩端外部下載驗收仍待完成。
+目前 Server 的預設範圍是：NCDR 全台有效事件（包括 `BACKGROUND` 與「其他」；完整 raw CAP／正規化來源快取留在 private volume，公開事件保留來源事件類型／代碼及分類標籤但不帶完整 `source_record`）、CWA 地震／天氣特報／颱風，以及獨立的靜態避難所位置與醫療資源。NCDR manifest 依行政區與分類代碼分包，Web／Android 先驗證完整索引，再依「雙北及全臺警報」或「全臺」範圍，只下載截圖列出的 32 種類型；「其他」、停水、海洋污染及消防安全檢查重大不合格場所保留在 Server，不進用戶端快取、轉傳、通知、未讀數或地圖。未知類型仍在 Server 標示為「其他 NCDR 事件」。`BACKGROUND` 仍可透過 `map_visible=false` 不顯示為地圖行動 marker，但不再因此從 Server 通知 feed 排除。App 的官方動態事件支援 NCDR 與三種 CWA feed。TDX 與舊避難所狀態 feed 不會進入 Web／Android 的事件快取、地圖或通知。OSM／Protomaps 底圖隨 App 內附，不由資料 Server 提供；避難所位置與醫療資源走簽章 layer。避難所開設狀態 XML 不在目前收集範圍。TDX 與 OSM POI adapter 保留但不在預設排程。Web 與 Android 都已接入簽章 layer、告警 feed 與門牌包資料路徑；正式網域及兩端外部下載驗收仍待完成。
 
 ## Web 與 Android 同步開發規則
 

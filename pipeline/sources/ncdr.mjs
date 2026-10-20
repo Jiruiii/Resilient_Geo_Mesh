@@ -366,6 +366,210 @@ function normalizeEventType(value) {
   return 'NCDR_HAZARD';
 }
 
+const NCDR_OTHER_CATEGORY = Object.freeze({ code: 'other', label: '其他 NCDR 事件' });
+const NCDR_CATEGORY_ENTRIES = [
+  ['typhoon', '颱風'],
+  ['earthquake', '地震'],
+  ['tsunami', '海嘯'],
+  ['flood', '淹水'],
+  ['debris_landslide', '土石流及大規模崩塌'],
+  ['rainfall', '降雨'],
+  ['road_closed', '道路封閉'],
+  ['air_defense', '防空'],
+  ['thunderstorm', '雷雨'],
+  ['infectious_disease', '傳染病'],
+  ['low_temperature', '低溫'],
+  ['strong_wind', '強風'],
+  ['fog', '濃霧'],
+  ['fire', '火災'],
+  ['wildfire_risk', '林火危險度預警'],
+  ['diversion_alarm', '分洪警報'],
+  ['evacuation', '疏散避難'],
+  ['radiation', '輻射災害'],
+  ['high_temperature', '高溫'],
+  ['volcano', '火山'],
+  ['ramp_connector_flood', '交流道下地方連絡道淹水'],
+  ['wind_control_road', '強風管制路段'],
+  ['railway_accident', '鐵路事故'],
+  ['urgent_clinic', '急門診通報'],
+  ['highway_condition', '高速公路路況事件'],
+  ['landslide_dam_warning', '堰塞湖警戒'],
+  ['national_park_admission', '國家公園入園示警'],
+  ['local_government_report', '各直轄市縣市政府災情通報'],
+  ['public_natural_gas_report', '公用天然氣事業災情通報'],
+  ['national_forest_recreation', '國家森林遊樂區'],
+  ['flood_sensor', '淹水感測'],
+  ['giant_wave', '巨浪'],
+].map(([code, label]) => Object.freeze({ code, label }));
+
+/** Screenshot-aligned NCDR labels. Repeated 「濃霧」 is represented once. */
+export const NCDR_ALERT_CATEGORIES = Object.freeze([
+  ...NCDR_CATEGORY_ENTRIES,
+  NCDR_OTHER_CATEGORY,
+]);
+
+const NCDR_CATEGORY_BY_CODE = new Map(
+  NCDR_ALERT_CATEGORIES.map((category) => [category.code, category]),
+);
+
+// More specific labels come first so a road or sensor alert is not flattened
+// into the broad flood/wind category.
+const NCDR_CATEGORY_RULES = [
+  ['ramp_connector_flood', /交流道.{0,12}地方連絡道.{0,8}淹水|ramp.{0,20}connector.{0,20}flood/iu],
+  ['flood_sensor', /淹水感測|flood.{0,12}sensor/iu],
+  ['landslide_dam_warning', /堰塞湖|landslide.?dam/iu],
+  ['debris_landslide', /土石流|大規模崩塌|debris.?flow|landslide/iu],
+  ['national_forest_recreation', /國家森林遊樂區|forest.?recreation|facilityClos/iu],
+  ['wildfire_risk', /林火危險度|森林火災危險度|wildfire(?:.?risk)?/iu],
+  ['wind_control_road', /強風管制路段|強風.{0,8}管制.{0,8}路段|wind.{0,12}control.{0,12}road/iu],
+  ['highway_condition', /高速公路路況事件|國道.{0,8}路況|highway.{0,12}(?:condition|incident)/iu],
+  ['railway_accident', /鐵路事故|railway.?accident/iu],
+  ['urgent_clinic', /急門診通報|急診.{0,8}門診|hospitalreport|urgent.?clinic/iu],
+  ['public_natural_gas_report', /公用天然氣事業災情通報|天然氣.{0,8}災情通報|natural.?gas.{0,12}incident/iu],
+  ['local_government_report', /各直轄市縣市政府災情通報|地方政府災情通報|local.?government.{0,12}disaster.?report/iu],
+  ['national_park_admission', /國家公園入園示警|國家公園.{0,8}入園|national.?park.{0,12}admission/iu],
+  ['giant_wave', /巨浪|長浪|giant.?wave|large.?wave/iu],
+  ['tsunami', /海嘯|tsunami/iu],
+  ['typhoon', /颱風|typhoon/iu],
+  ['earthquake', /地震|earthquake/iu],
+  ['road_closed', /道路封閉|封閉道路|路段封閉|road.?clos(?:ed|ure)/iu],
+  ['air_defense', /防空|air.?defen[cs]e|air.?raid/iu],
+  ['thunderstorm', /雷雨|雷暴|thunderstorm/iu],
+  ['infectious_disease', /傳染病|感染症|infectious.?disease/iu],
+  ['low_temperature', /低溫|寒流|low.?temperature/iu],
+  ['strong_wind', /強風|strong.?wind/iu],
+  ['fog', /濃霧|fog/iu],
+  ['fire', /火災|\bfire(?:_warning)?\b/iu],
+  ['diversion_alarm', /分洪警報|分洪|洩洪警報|diversion.?alarm/iu],
+  ['evacuation', /疏散避難|疏散|避難|撤離|evacuation/iu],
+  ['radiation', /輻射災害|輻射|radiation/iu],
+  ['high_temperature', /高溫|heat(?:_warning)?/iu],
+  ['volcano', /火山|volcano/iu],
+  ['flood', /淹水|積水|洪水|flood/iu],
+  ['rainfall', /降雨|雨量|大雨|豪雨|rainfall|heavy.?rain|\brain\b/iu],
+];
+
+function categoryForText(value) {
+  const text = String(value ?? '').trim();
+  if (!text) return undefined;
+  for (const [code, pattern] of NCDR_CATEGORY_RULES) {
+    if (pattern.test(text)) return NCDR_CATEGORY_BY_CODE.get(code);
+  }
+  return undefined;
+}
+
+function capEventCodeValue(value) {
+  const parsed = parseJsonValue(value);
+  if (typeof parsed === 'string') return parsed;
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
+  return firstValue(parsed.value, parsed.Value, parsed.valueName, parsed.ValueName);
+}
+
+function ncdrSourceFields(record) {
+  const sourceRecord = record.source_record && typeof record.source_record === 'object'
+    ? record.source_record
+    : record;
+  const infos = capInfoValues(sourceRecord);
+  const info = capInfoForRecord(sourceRecord, infos) ?? {};
+  const code = firstValue(
+    record.capCode,
+    record.CapCode,
+    capEventCodeValue(record.event_code ?? record.EventCode ?? record.eventCode ?? info.eventCode ?? info.EventCode),
+  );
+  return {
+    eventType: firstValue(
+      record.event,
+      record.Event,
+      record.phenomenon,
+      record.Phenomenon,
+      record.event_type,
+      record.EventType,
+      record.hazard_type,
+      record.HazardType,
+      info.event,
+      info.Event,
+      info.phenomenon,
+      info.Phenomenon,
+    ),
+    eventCode: code,
+    capCategory: firstValue(info.category, info.Category),
+    headline: firstValue(record.headline, record.Headline, info.headline, info.Headline),
+  };
+}
+
+function classifyNcdrCategory({ eventType, eventCode, description, headline } = {}) {
+  if (isExcludedNcdrCategory([eventType, eventCode, description, headline].filter(Boolean).join(' '))) {
+    return { ...NCDR_OTHER_CATEGORY, match: 'excluded_source_type' };
+  }
+  const byEvent = categoryForText(eventType);
+  const byCode = categoryForText(eventCode);
+  if (byEvent && byCode && byEvent.code !== byCode.code) {
+    return { ...NCDR_OTHER_CATEGORY, match: 'conflicting_source_type' };
+  }
+  if (byEvent) return { ...byEvent, match: 'source_event' };
+  if (byCode) return { ...byCode, match: 'source_event_code' };
+
+  // A present upstream type is authoritative. Do not let unrelated words in
+  // a description (for example, 「火災」 in a marine alert) change its class.
+  if (eventType || eventCode) {
+    return { ...NCDR_OTHER_CATEGORY, match: 'unmapped_source_type' };
+  }
+
+  const byDescription = categoryForText([headline, description].filter(Boolean).join(' '));
+  return byDescription
+    ? { ...byDescription, match: 'description_fallback' }
+    : { ...NCDR_OTHER_CATEGORY, match: 'unmapped' };
+}
+
+function isExcludedNcdrCategory(value) {
+  const text = String(value ?? '').toLowerCase();
+  return [
+    '消防安全檢查', '重大不合格場所', 'dangerfield',
+    '海洋污染', 'marinepollution', 'marine pollution',
+    '停水', '供水', 'water supply', 'watersupply', 'wateroutage',
+    'safety_alert', 'water_supply_alert', 'marine_pollution_alert',
+  ].some((excluded) => text.includes(excluded));
+}
+
+/** Reclassifies an already normalized event, including releases built before category metadata existed. */
+export function ncdrCategoryForEvent(event) {
+  const attributes = event?.attributes && typeof event.attributes === 'object'
+    ? event.attributes
+    : {};
+  const sourceRecord = attributes.source_record && typeof attributes.source_record === 'object'
+    ? attributes.source_record
+    : {};
+  const sourceFields = ncdrSourceFields(sourceRecord);
+  const sourceEventType = firstValue(attributes.ncdr_source_event_type, sourceFields.eventType);
+  const eventCode = firstValue(attributes.ncdr_source_event_code, sourceFields.eventCode);
+  if (isExcludedNcdrCategory([
+    sourceEventType,
+    eventCode,
+    event?.event_type,
+    attributes.source_description,
+    attributes.description,
+    attributes.headline,
+    JSON.stringify(sourceRecord),
+  ].filter(Boolean).join(' '))) {
+    return { ...NCDR_OTHER_CATEGORY, match: 'excluded_source_type' };
+  }
+  const existingCode = NCDR_CATEGORY_BY_CODE.get(attributes.ncdr_category_code);
+  if (existingCode && !sourceEventType && !eventCode) {
+    return {
+      ...existingCode,
+      match: typeof attributes.ncdr_category_match === 'string'
+        ? attributes.ncdr_category_match
+        : 'existing_normalized',
+    };
+  }
+  return classifyNcdrCategory({
+    eventType: firstValue(sourceEventType, event?.event_type),
+    eventCode,
+    description: firstValue(attributes.source_description, attributes.description),
+    headline: firstValue(attributes.headline, sourceFields.headline),
+  });
+}
+
 function themeForEventType(eventType) {
   if (eventType.startsWith('FIRE')) return 'fire';
   if (eventType.startsWith('RESERVOIR')) return 'reservoir';
@@ -498,6 +702,7 @@ function normalizeRecord(record, index, rawSnapshot, options) {
     record.event, record.Event, record.event_type, record.EventType, record.hazard_type,
     record.category, record.Category,
   ));
+  const sourceFields = ncdrSourceFields(record);
   const issuedAt = normalizeTime(
     firstValue(record.sent, record.Sent, record.effective, record.Effective, record.issue_time, record.IssueTime, record.issued_at),
     `NCDR hazard ${id} issued_at`,
@@ -513,6 +718,12 @@ function normalizeRecord(record, index, rawSnapshot, options) {
   const theme = themeForEventType(eventType);
   const sourceDescription = firstValue(record.description, record.Description, record.source_description, record.SourceDescription);
   const affectedArea = firstValue(record.areaDesc, record.AreaDesc, record.affected_area, record.AffectedArea);
+  const ncdrCategory = classifyNcdrCategory({
+    eventType: sourceFields.eventType,
+    eventCode: sourceFields.eventCode,
+    description: sourceDescription,
+    headline: sourceFields.headline,
+  });
   const operationalRelevance = classifyNcdrOperationalRelevance({
     eventType,
     description: sourceDescription,
@@ -541,6 +752,12 @@ function normalizeRecord(record, index, rawSnapshot, options) {
       coverage_level: curated.coverageLevel,
       ...(options.coverage ? { coverage: options.coverage } : {}),
       alert_id: firstValue(record.CAPID, record.capid, record.identifier, record.Identifier, record.alert_id) ?? id,
+      ncdr_category_code: ncdrCategory.code,
+      ncdr_category_label: ncdrCategory.label,
+      ncdr_category_match: ncdrCategory.match,
+      ...(sourceFields.eventType ? { ncdr_source_event_type: String(sourceFields.eventType) } : {}),
+      ...(sourceFields.eventCode ? { ncdr_source_event_code: String(sourceFields.eventCode) } : {}),
+      ...(sourceFields.capCategory ? { ncdr_source_cap_category: String(sourceFields.capCategory) } : {}),
       affected_area: affectedArea,
       source_description: sourceDescription,
       operational_relevance: operationalRelevance,

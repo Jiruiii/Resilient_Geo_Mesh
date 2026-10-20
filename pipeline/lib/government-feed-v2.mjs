@@ -25,6 +25,15 @@ function themeOf(event) {
   return THEME_RE.test(value) ? value : 'unknown';
 }
 
+function categoryCodeOf(event) {
+  if (event?.source?.toUpperCase() !== 'NCDR') return undefined;
+  const value = event?.attributes?.ncdr_category_code ?? 'other';
+  if (typeof value !== 'string' || !/^[a-z][a-z0-9_]{0,63}$/u.test(value)) {
+    throw new TypeError(`NCDR event ${event?.event_id ?? '<unknown>'} has an invalid category code`);
+  }
+  return value;
+}
+
 function shardOf(eventId) {
   return createHash('sha256').update(eventId, 'utf8').digest()[0].toString(16).padStart(2, '0');
 }
@@ -36,6 +45,7 @@ function chunkCore(group, events, signingKeyId) {
     chunk_id: chunkId,
     area_id: group.area_id,
     theme: group.theme,
+    ...(group.category_code === undefined ? {} : { category_code: group.category_code }),
     shard: group.shard,
     event_count: events.length,
     events,
@@ -80,12 +90,14 @@ export function buildGovernmentFeedV2({ events, revision, createdAt = new Date()
     if (!event || typeof event.event_id !== 'string' || event.event_id.length === 0) {
       throw new TypeError('each event must have an event_id');
     }
+    const categoryCode = categoryCodeOf(event);
     const group = {
       area_id: areaIdOf(event),
       theme: themeOf(event),
+      ...(categoryCode === undefined ? {} : { category_code: categoryCode }),
       shard: shardOf(event.event_id),
     };
-    const key = `${group.area_id}\u0000${group.theme}\u0000${group.shard}`;
+    const key = `${group.area_id}\u0000${group.theme}\u0000${group.category_code ?? ''}\u0000${group.shard}`;
     if (!groups.has(key)) groups.set(key, { group, events: [] });
     groups.get(key).events.push(event);
   }
@@ -93,16 +105,16 @@ export function buildGovernmentFeedV2({ events, revision, createdAt = new Date()
   const files = new Map();
   const manifestChunks = [];
   const previousByGroup = new Map(previousChunks.map((chunk) => [
-    `${chunk.area_id}\u0000${chunk.theme}\u0000${chunk.shard}`,
+    `${chunk.area_id}\u0000${chunk.theme}\u0000${chunk.category_code ?? ''}\u0000${chunk.shard}`,
     chunk,
   ]));
   let reusedChunkCount = 0;
   let rebuiltChunkCount = 0;
   for (const { group, events: groupedEvents } of [...groups.values()].sort((left, right) =>
-    `${left.group.area_id}/${left.group.theme}/${left.group.shard}`
-      .localeCompare(`${right.group.area_id}/${right.group.theme}/${right.group.shard}`))) {
+    `${left.group.area_id}/${left.group.theme}/${left.group.category_code ?? ''}/${left.group.shard}`
+      .localeCompare(`${right.group.area_id}/${right.group.theme}/${right.group.category_code ?? ''}/${right.group.shard}`))) {
     const sortedEvents = groupedEvents.slice().sort((left, right) => left.event_id.localeCompare(right.event_id));
-    const groupKey = `${group.area_id}\u0000${group.theme}\u0000${group.shard}`;
+    const groupKey = `${group.area_id}\u0000${group.theme}\u0000${group.category_code ?? ''}\u0000${group.shard}`;
     const previousChunk = previousByGroup.get(groupKey);
     const canReuse = previousChunk?.signing_key_id === signingKeyId
       && Array.isArray(previousChunk.events)
@@ -118,6 +130,7 @@ export function buildGovernmentFeedV2({ events, revision, createdAt = new Date()
       chunk_id: chunk.chunk_id,
       area_id: group.area_id,
       theme: group.theme,
+      ...(group.category_code === undefined ? {} : { category_code: group.category_code }),
       shard: group.shard,
       sha256: chunkHash,
       event_count: sortedEvents.length,
@@ -147,6 +160,8 @@ export function verifyGovernmentChunkV2(chunk, publicKey, { trustedKeyIds } = {}
     || typeof chunk.chunk_id !== 'string'
     || !AREA_RE.test(chunk.area_id)
     || !THEME_RE.test(chunk.theme)
+    || chunk.category_code !== undefined &&
+      (typeof chunk.category_code !== 'string' || !/^[a-z][a-z0-9_]{0,63}$/u.test(chunk.category_code))
     || !/^[0-9a-f]{2}$/u.test(chunk.shard)
     || !Array.isArray(chunk.events)
     || chunk.event_count !== chunk.events.length
@@ -161,7 +176,8 @@ export function verifyGovernmentChunkV2(chunk, publicKey, { trustedKeyIds } = {}
   if (chunk.events.some((event) => !event || typeof event.event_id !== 'string'
     || shardOf(event.event_id) !== chunk.shard
     || areaIdOf(event) !== chunk.area_id
-    || themeOf(event) !== chunk.theme)) return { valid: false, reason: 'group' };
+    || themeOf(event) !== chunk.theme
+    || categoryCodeOf(event) !== chunk.category_code)) return { valid: false, reason: 'group' };
   return { valid: true };
 }
 
@@ -194,6 +210,7 @@ export function verifyGovernmentFeedV2(manifest, chunks, publicKey, { trustedKey
     const chunk = byHash.get(entry.sha256);
     if (!chunk || chunk.chunk_id !== entry.chunk_id || chunk.area_id !== entry.area_id
       || chunk.theme !== entry.theme || chunk.shard !== entry.shard
+      || chunk.category_code !== entry.category_code
       || chunk.event_count !== entry.event_count) return { valid: false, reason: 'chunk_binding' };
     const result = verifyGovernmentChunkV2(chunk, publicKey, { trustedKeyIds });
     if (!result.valid) return result;

@@ -100,6 +100,43 @@ void main() {
     },
   );
 
+  test(
+    'hides other NCDR notices and unread count while retaining the full event data',
+    () async {
+      final other = _ncdrEvent(
+        'ncdr:other',
+        eventType: 'WATER_SUPPLY_ALERT',
+        categoryLabel: '其他 NCDR 事件',
+      );
+      final fire = _ncdrEvent(
+        'ncdr:fire',
+        eventType: 'FIRE_WARNING',
+        categoryLabel: '火災',
+      );
+      final heat = _ncdrEvent(
+        'ncdr:heat',
+        eventType: 'HEAT_WARNING',
+        categoryLabel: '高溫',
+      );
+      final forest = _ncdrEvent(
+        'ncdr:forest',
+        eventType: 'FOREST_ALERT',
+        categoryLabel: '國家森林遊樂區',
+      );
+      final controller = MapAppController(
+        bridge: _InitialEventsBridge(<MeshEvent>[other, fire, heat, forest]),
+      );
+      addTearDown(controller.dispose);
+
+      await controller.load();
+
+      expect(controller.notificationEvents, <MeshEvent>[fire, heat, forest]);
+      expect(controller.notificationCount, 3);
+      expect(controller.events, contains(other));
+      expect(controller.persistedEvents, contains(other));
+    },
+  );
+
   test('expired alerts leave active app state at their expiry time', () async {
     final expiresAt = DateTime.now().toUtc().add(
       const Duration(milliseconds: 150),
@@ -492,6 +529,21 @@ MeshEvent _governmentAnnouncement(String eventId, int version) => MeshEvent(
     'has_map_location': true,
   },
 );
+
+MeshEvent _ncdrEvent(
+  String eventId, {
+  required String eventType,
+  required String categoryLabel,
+}) => MeshEvent.fromJson(<String, dynamic>{
+  'namespace': 'official.ncdr',
+  'event_id': eventId,
+  'event_version': 1,
+  'event_type': eventType,
+  'source': 'NCDR',
+  'issued_at': '2026-10-19T00:00:00Z',
+  'expires_at': '2099-01-01T00:00:00Z',
+  'attributes': <String, dynamic>{'ncdr_category_label': categoryLabel},
+});
 
 class _RecoverableBridge extends _EmptyVerifiedBridge {
   final updates = StreamController<List<MeshEvent>>.broadcast();

@@ -266,3 +266,51 @@ test('collector commits feed, v2, and static layer versions through one release 
     await rm(publicRoot, { recursive: true, force: true });
   }
 });
+
+test('collector refreshes medical manifests when source version advances without content changes', async () => {
+  const privateRoot = await mkdtemp(path.join(os.tmpdir(), 'resilientgeo-medical-version-private-'));
+  const publicRoot = await mkdtemp(path.join(os.tmpdir(), 'resilientgeo-medical-version-public-'));
+  let sourceVersion = 'medical-source-v1';
+  const collectSources = async () => {
+    const result = completeMedicalResult();
+    result.normalized.coordinate_report.layer_source_version = sourceVersion;
+    result.features[0].source_version = sourceVersion;
+    result.normalized.medical_directory_features[0].source_version = sourceVersion;
+    result.emergencyMedicalFeatures = [];
+    return [result, {
+      sourceId: 'ncdr-hazard-events',
+      feedId: 'ncdr',
+      kind: 'dynamic',
+      status: 'ok',
+      retrievedAt: NOW.toISOString(),
+      events: [],
+    }];
+  };
+
+  try {
+    const service = createCollectorService({
+      config: { privateDataRoot: privateRoot, publicReleaseRoot: publicRoot },
+      cacheStore: createMemoryCacheStore(),
+      sourceIds: ['taiwan-medical', 'ncdr-hazard-events'],
+      collectSources,
+      signingKey,
+    });
+
+    await service.runOnce({ now: NOW });
+    sourceVersion = 'medical-source-v2';
+    await service.runOnce({ now: new Date(NOW.getTime() + 60_000) });
+
+    const store = createReleaseStore({ releaseRoot: publicRoot });
+    assert.equal(
+      (await store.readLayerBundle('taiwan-medical')).manifest.source_version,
+      sourceVersion,
+    );
+    assert.equal(
+      (await store.readLayerBundle('taiwan-medical-directory')).manifest.source_version,
+      sourceVersion,
+    );
+  } finally {
+    await rm(privateRoot, { recursive: true, force: true });
+    await rm(publicRoot, { recursive: true, force: true });
+  }
+});

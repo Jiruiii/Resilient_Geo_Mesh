@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../data/attestation_index.dart';
 import '../data/map_bridge.dart';
 import '../data/map_models.dart';
+import '../data/ncdr_category.dart';
 import '../data/ncdr_demo_events.dart';
 import '../data/ncdr_map_filter.dart';
 import '../data/government_api.dart';
@@ -72,7 +73,8 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
   final WebGovernmentFeedLoader _webGovernmentFeedLoader;
   final RescueService? _rescueServiceOverride;
   late final RescueService rescueService =
-      _rescueServiceOverride ?? RescueService.forPlatform(bridge: bridge, isWeb: _isWeb);
+      _rescueServiceOverride ??
+      RescueService.forPlatform(bridge: bridge, isWeb: _isWeb);
   List<MeshEvent> _rescueNearby = const <MeshEvent>[];
   GeoPoint? _rescueCenter;
   DateTime? _rescueFetchedAt;
@@ -129,6 +131,7 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
   /// local list; the verified event stream remains intact for the map/cache.
   List<MeshEvent> get notificationEvents => events
       .where((event) => !isAttestationEvent(event))
+      .where(isNcdrCategoryVisibleInApp)
       .where(
         (event) => !_deletedNotificationKeys.contains(meshEventIdentity(event)),
       )
@@ -423,6 +426,10 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
+  /// Reloads the browser's signed feed after its persisted download scope changes.
+  Future<void> refreshGovernmentFeed() =>
+      _refreshWebGovernmentFeed(manual: true);
+
   void _scheduleCloudAnnouncementRefresh({
     required String eventId,
     required int eventVersion,
@@ -566,12 +573,19 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
   void setRescueViewport(GeoPoint center) {
     final previous = _rescueCenter;
     _rescueCenter = center;
-    final moved = previous == null ||
+    final moved =
+        previous == null ||
         (previous.longitude - center.longitude).abs() > 0.01 ||
         (previous.latitude - center.latitude).abs() > 0.01;
-    final stale = _rescueFetchedAt == null || DateTime.now().difference(_rescueFetchedAt!) >= const Duration(seconds: 60);
+    final stale =
+        _rescueFetchedAt == null ||
+        DateTime.now().difference(_rescueFetchedAt!) >=
+            const Duration(seconds: 60);
     if (moved || stale) unawaited(_refreshRescueNearby());
-    _rescueTimer ??= Timer.periodic(const Duration(seconds: 60), (_) => unawaited(_refreshRescueNearby()));
+    _rescueTimer ??= Timer.periodic(
+      const Duration(seconds: 60),
+      (_) => unawaited(_refreshRescueNearby()),
+    );
   }
 
   Future<void> _refreshRescueNearby() async {
@@ -579,7 +593,9 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
     if (_disposed || center == null || _rescueFetching) return;
     _rescueFetching = true;
     try {
-      _rescueNearby = List<MeshEvent>.unmodifiable(await rescueService.nearby(RescueBounds.around(center)));
+      _rescueNearby = List<MeshEvent>.unmodifiable(
+        await rescueService.nearby(RescueBounds.around(center)),
+      );
       _rescueFetchedAt = DateTime.now();
       _publishEvents();
     } on RescueFailure {
@@ -596,7 +612,10 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
     for (final event in <MeshEvent>[...persistedEvents, ..._rescueNearby]) {
       final key = meshEventIdentity(event);
       final existing = byId[key];
-      if (existing == null || (event.eventVersion ?? 0) > (existing.eventVersion ?? 0)) byId[key] = event;
+      if (existing == null ||
+          (event.eventVersion ?? 0) > (existing.eventVersion ?? 0)) {
+        byId[key] = event;
+      }
     }
     return byId.values.toList(growable: false);
   }

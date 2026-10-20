@@ -177,7 +177,8 @@ class _MapAppHomeState extends State<_MapAppHome> {
                   active: _selectedIndex == 0,
                   rescueService: controller.rescueService,
                   onViewportSettled: controller.setRescueViewport,
-                  sirenPanelBuilder: (context, _) => SirenPanel(controller: widget.siren),
+                  sirenPanelBuilder:
+                      (context, _) => SirenPanel(controller: widget.siren),
                   notificationFocusEvent: _notificationFocusEvent,
                   notificationFocusRequestId: _notificationFocusRequestId,
                 ),
@@ -195,6 +196,7 @@ class _MapAppHomeState extends State<_MapAppHome> {
                 ProfileScreen(
                   governmentAuth: controller.governmentAuth,
                   bridge: controller.bridge,
+                  onWebGovernmentFeedRefresh: controller.refreshGovernmentFeed,
                   themeMode: controller.themeMode,
                   animationEnabled: controller.animationEnabled,
                   onThemeModeChanged: controller.setThemeMode,
