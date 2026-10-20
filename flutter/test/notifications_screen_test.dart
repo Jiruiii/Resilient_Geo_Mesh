@@ -111,6 +111,40 @@ void main() {
     expect(find.textContaining('公告類別：物資站'), findsOneWidget);
     expect(find.byIcon(MapIconCatalog.supplyStation), findsOneWidget);
   });
+
+  testWidgets(
+    'CWA county warning names its affected area and reference point',
+    (tester) async {
+      const warning = MeshEvent(
+        namespace: 'official.cwa',
+        eventId: 'wind:new-taipei',
+        eventVersion: 1,
+        eventType: 'WEATHER_WARNING',
+        severity: 'UNKNOWN',
+        source: 'CWA',
+        issuedAt: '2026-10-21T03:00:00Z',
+        expiresAt: '2099-01-01T00:00:00Z',
+        applyState: 'CURRENT',
+        geometry: PointGeometry(GeoPoint(longitude: 121.5, latitude: 25)),
+        attributes: <String, dynamic>{
+          'affected_area': '新北市',
+          'coverage_level': 'county',
+          'map_location_kind': 'area_reference',
+        },
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: NotificationsScreen(
+            events: const <MeshEvent>[warning],
+            onEventRead: (_) {},
+          ),
+        ),
+      );
+
+      expect(find.textContaining('影響範圍：新北市（縣市級警報）'), findsOneWidget);
+      expect(find.textContaining('地圖位置：影響範圍參考點'), findsOneWidget);
+    },
+  );
 }
 
 MeshEvent _notice(String id) => MeshEvent(

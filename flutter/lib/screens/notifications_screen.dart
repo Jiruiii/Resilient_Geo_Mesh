@@ -185,6 +185,13 @@ class _EventCard extends StatelessWidget {
     final rescue = RescueRequestView.fromEvent(event);
     final supplyStation = isSupplyStationEvent(event);
     final ncdrCategory = ncdrCategoryLabelFor(event);
+    final affectedArea = event.attributes?['affected_area'];
+    final areaLabel =
+        event.source?.toUpperCase() == 'CWA' &&
+                affectedArea is String &&
+                affectedArea.trim().isNotEmpty
+            ? affectedArea.trim()
+            : null;
     return Card(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -234,6 +241,13 @@ class _EventCard extends StatelessWidget {
                         '公告類別：${governmentAnnouncementCategoryLabel(event.attributes?['category'])}',
                       '來源：${event.source ?? '無資料'}',
                       if (!supplyStation) '嚴重度：${event.severity ?? '無資料'}',
+                      if (areaLabel != null)
+                        '影響範圍：$areaLabel${event.attributes?['coverage_level'] == 'county' ? '（縣市級警報）' : ''}',
+                      if (event.source?.toUpperCase() == 'CWA' &&
+                          event.attributes?['map_location_kind'] ==
+                              'area_reference' &&
+                          mapPoint != null)
+                        '地圖位置：影響範圍參考點（非告警發生的精確位置）',
                     ],
                     isCrowdEvent(event) && !event.isExpired
                         ? '狀態：${crowdVerificationLabel(event.verification ?? CrowdVerification.unverified)}'

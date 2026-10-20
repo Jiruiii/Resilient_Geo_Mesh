@@ -21,6 +21,8 @@ import {
   normalizeNcdrHazards,
 } from '../sources/ncdr.mjs';
 import { makeRawSnapshot } from '../lib/source.mjs';
+import { isGeometryInBoundary } from '../lib/geo.mjs';
+import { areaBoundary, createAreaResolvers, normalizeAreaCatalog } from '../sources/areas.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const OFFICIAL_NEIHU_BOUNDARY = JSON.parse(readFileSync(
@@ -343,6 +345,43 @@ test('normalizes the CWA warning API shape with records grouped under location',
   assert.equal(events[0].issued_at, '2026-09-03T19:00:00.000Z');
   assert.equal(events[0].expires_at, '2026-09-04T01:00:00.000Z');
   assert.equal(events[0].attributes.source_record.hazard.info.phenomena, '豪雨');
+});
+
+test('county wind warnings publish compact reference points within the correct county', () => {
+  const square = (left, bottom, right, top) => [[
+    [left, bottom], [right, bottom], [right, top], [left, top], [left, bottom],
+  ]];
+  const catalog = normalizeAreaCatalog({ type: 'FeatureCollection', features: [
+    { type: 'Feature', properties: { COUNTYCODE: '65000', COUNTYNAME: '新北市' },
+      geometry: { type: 'Polygon', coordinates: square(121, 24, 122, 25) } },
+    { type: 'Feature', properties: { COUNTYCODE: '65000', COUNTYNAME: '新北市', TOWNCODE: '65000010', TOWNNAME: '板橋區' },
+      geometry: { type: 'Polygon', coordinates: square(121, 24, 121.2, 24.2) } },
+    { type: 'Feature', properties: { COUNTYCODE: '10016', COUNTYNAME: '澎湖縣' },
+      geometry: { type: 'MultiPolygon', coordinates: [square(119, 23, 119.8, 23.8), square(120, 23, 120.1, 23.1)] } },
+    { type: 'Feature', properties: { COUNTYCODE: '10016', COUNTYNAME: '澎湖縣', TOWNCODE: '10016010', TOWNNAME: '馬公市' },
+      geometry: { type: 'Polygon', coordinates: square(119, 23, 119.2, 23.2) } },
+  ] });
+  const payload = { success: true, result: { resource_id: 'W-C0033-001' }, records: {
+    location: ['新北市', '澎湖縣'].map((locationName, index) => ({
+      locationName,
+      geocode: index === 0 ? 65 : 10016,
+      hazardConditions: { hazards: [{ info: { phenomena: '陸上強風' }, validTime: {
+        startTime: '2026-10-21 11:00:00', endTime: '2026-10-21 23:00:00',
+      } }] },
+    })),
+  } };
+  const events = normalizeCwaWarnings(rawSnapshot('cwa-weather-warning', CWA_WARNING_ENDPOINT, payload), {
+    scope: 'taiwan', coverage: 'TW', boundary: areaBoundary(catalog), ...createAreaResolvers(catalog),
+  });
+  assert.deepEqual(events.map((event) => event.attributes.area_id), ['tw.65000', 'tw.10016']);
+  for (const event of events) {
+    assert.equal(event.geometry.type, 'Point');
+    assert.equal(event.attributes.map_location_kind, 'area_reference');
+    assert.equal(event.attributes.coverage_level, 'county');
+    assert.equal(isGeometryInBoundary(event.geometry,
+      catalog.areas.find((area) => area.area_id === event.attributes.area_id).geometry), true);
+  }
+  assert.deepEqual(events.map((event) => event.attributes.affected_area), ['新北市', '澎湖縣']);
 });
 
 test('normalizes the official CWA typhoon records.info shape as one nationwide warning', () => {

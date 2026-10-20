@@ -231,6 +231,19 @@ function matchArea(catalog, record, geometry) {
     if (geometryMatches.length > 0) return chooseMostSpecific(geometryMatches);
   }
 
+  // County-wide warnings name only a county. The generic name matcher below
+  // also matches every town in that county and would otherwise choose one.
+  const exactName = normalizeName(firstValue(
+    record?.AreaDesc, record?.area_desc, record?.locationName,
+    record?.CountyName, record?.county_name,
+  ));
+  if (exactName) {
+    const county = catalog.areas.find((area) => area.level === 'county'
+      && normalizeName(area.county_name) === exactName
+      && (!codes.county || area.county_code === codes.county));
+    if (county) return county;
+  }
+
   const nameMatches = catalog.areas
     .map((area) => {
       const matchedNames = namesForArea(area).filter((name) => textValue.includes(name));

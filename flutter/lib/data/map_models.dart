@@ -34,6 +34,16 @@ sealed class MapGeometry {
       case 'Polygon':
         final rings = _ringsFromCoordinates(json['coordinates']);
         return rings == null ? null : PolygonGeometry(rings);
+      case 'MultiPolygon':
+        final coordinates = json['coordinates'];
+        if (coordinates is! List || coordinates.isEmpty) return null;
+        final polygons = coordinates
+            .map(_ringsFromCoordinates)
+            .toList(growable: false);
+        if (polygons.any((polygon) => polygon == null || polygon.isEmpty)) {
+          return null;
+        }
+        return MultiPolygonGeometry(polygons.cast<List<List<GeoPoint>>>());
       default:
         return null;
     }
@@ -56,6 +66,12 @@ final class PolygonGeometry extends MapGeometry {
   const PolygonGeometry(this.rings);
 
   final List<List<GeoPoint>> rings;
+}
+
+final class MultiPolygonGeometry extends MapGeometry {
+  const MultiPolygonGeometry(this.polygons);
+
+  final List<List<List<GeoPoint>>> polygons;
 }
 
 class StaticFeatureCollection {
@@ -266,8 +282,36 @@ GeoPoint? meshEventFocusPoint(MeshEvent event) => switch (event.geometry) {
   PointGeometry(:final point) => point,
   LineStringGeometry(:final points) => _averageGeoPoint(points),
   PolygonGeometry(:final rings) => _boundsCenter(rings.expand((ring) => ring)),
+  MultiPolygonGeometry(:final polygons) => _boundsCenter(
+    _largestPolygon(polygons).expand((ring) => ring),
+  ),
   _ => null,
 };
+
+List<List<GeoPoint>> _largestPolygon(List<List<List<GeoPoint>>> polygons) {
+  var largest = const <List<GeoPoint>>[];
+  var largestArea = -1.0;
+  for (final polygon in polygons) {
+    if (polygon.isEmpty || polygon.first.isEmpty) continue;
+    final ring = polygon.first;
+    var minLongitude = ring.first.longitude;
+    var maxLongitude = ring.first.longitude;
+    var minLatitude = ring.first.latitude;
+    var maxLatitude = ring.first.latitude;
+    for (final point in ring.skip(1)) {
+      if (point.longitude < minLongitude) minLongitude = point.longitude;
+      if (point.longitude > maxLongitude) maxLongitude = point.longitude;
+      if (point.latitude < minLatitude) minLatitude = point.latitude;
+      if (point.latitude > maxLatitude) maxLatitude = point.latitude;
+    }
+    final area = (maxLongitude - minLongitude) * (maxLatitude - minLatitude);
+    if (area > largestArea) {
+      largest = polygon;
+      largestArea = area;
+    }
+  }
+  return largest;
+}
 
 GeoPoint? _averageGeoPoint(Iterable<GeoPoint> points) {
   var count = 0;

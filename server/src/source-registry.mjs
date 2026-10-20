@@ -29,7 +29,7 @@ export const SOURCE_REGISTRY = Object.freeze([
   dynamic('cwa-earthquake', 'cwa-earthquake', 10 * 60 * 1000),
   dynamic('cwa-weather-warning', 'cwa-warning', 10 * 60 * 1000),
   dynamic('cwa-typhoon-warning', 'cwa-typhoon', 10 * 60 * 1000),
-  dynamic('ncdr-hazard-events', 'ncdr', 10 * 60 * 1000),
+  dynamic('ncdr-hazard-events', 'ncdr', 5 * 60 * 1000),
   staticLayer('taiwan-shelter'),
   staticLayer('taiwan-medical'),
   staticLayer('taiwan-emergency-medical', 24 * 60 * 60 * 1000, false),

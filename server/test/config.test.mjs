@@ -47,7 +47,7 @@ test('loads separated data roots, signing paths, port, and source schedule overr
       'cwa-earthquake': 600000,
       'cwa-weather-warning': 600000,
       'cwa-typhoon-warning': 600000,
-      'ncdr-hazard-events': 600000,
+      'ncdr-hazard-events': 300000,
       'taiwan-shelter': 3600000,
       'taiwan-medical': 3600000,
       'taiwan-emergency-medical': 3600000,
@@ -56,6 +56,11 @@ test('loads separated data roots, signing paths, port, and source schedule overr
   });
   assert.equal(config.emergencyMedicalRosterPath, null);
   assert.equal(config.emergencyMedicalCrosswalkPath, null);
+});
+
+test('accepts an explicit NCDR collection interval', () => {
+  const config = loadServerConfig({ ...VALID_ENV, SCHEDULE_NCDR_MS: '420000' });
+  assert.equal(config.scheduleMsBySource['ncdr-hazard-events'], 420000);
 });
 
 test('loads official medical coordinate endpoint and fallback source settings', () => {

@@ -152,6 +152,12 @@ class FeatureDetailsSheet extends StatelessWidget {
   List<Widget> _eventBody(MeshEvent event) {
     final rescue = RescueRequestView.fromEvent(event);
     if (rescue != null) return _rescueBody(event, rescue);
+    final cwaWarning = event.source?.toUpperCase() == 'CWA';
+    final affectedArea = event.attributes?['affected_area'];
+    final areaReference =
+        cwaWarning &&
+        event.attributes?['map_location_kind'] == 'area_reference' &&
+        event.geometry is PointGeometry;
     return <Widget>[
       if (event.attributes?['exercise'] == true ||
           event.namespace?.startsWith('drill.') == true)
@@ -188,7 +194,18 @@ class FeatureDetailsSheet extends StatelessWidget {
       _DetailLine('事件類型', _text(event.eventType)),
       if (!isSupplyStationEvent(event))
         _DetailLine('嚴重度', _text(event.severity)),
-      _DetailLine('位置／範圍', _geometryText(event.geometry)),
+      if (cwaWarning &&
+          affectedArea is String &&
+          affectedArea.trim().isNotEmpty)
+        _DetailLine(
+          '影響範圍',
+          '${affectedArea.trim()}${event.attributes?['coverage_level'] == 'county' ? '（縣市級警報）' : ''}',
+        ),
+      if (areaReference) const _DetailLine('地圖位置', '影響範圍參考點（非告警發生的精確位置）'),
+      _DetailLine(
+        areaReference ? '地圖參考座標' : '位置／範圍',
+        _geometryText(event.geometry),
+      ),
       _DetailLine('來源', _text(event.source)),
       _DetailLine('發佈時間', _text(event.issuedAt)),
       _DetailLine('到期時間', _text(event.expiresAt)),
@@ -196,25 +213,40 @@ class FeatureDetailsSheet extends StatelessWidget {
     ];
   }
 
-  List<Widget> _rescueBody(MeshEvent event, RescueRequestView rescue) => <Widget>[
+  List<Widget> _rescueBody(
+    MeshEvent event,
+    RescueRequestView rescue,
+  ) => <Widget>[
     _VerificationNotice(event.verification ?? CrowdVerification.unverified),
     if (confirmedEarlierVersion)
       const Padding(
         padding: EdgeInsets.only(bottom: 2),
-        child: Text('官方確認的是先前版本，最新內容未經查證', key: ValueKey<String>('rescue-confirmed-earlier-version')),
+        child: Text(
+          '官方確認的是先前版本，最新內容未經查證',
+          key: ValueKey<String>('rescue-confirmed-earlier-version'),
+        ),
       ),
     _DetailLine('求救類型', rescue.type.label),
-    _DetailLine('急迫程度', '${rescue.urgency.label}（${rescueUrgencyReason(rescue.type, rescue.triage, rescue.subject)}）'),
+    _DetailLine(
+      '急迫程度',
+      '${rescue.urgency.label}（${rescueUrgencyReason(rescue.type, rescue.triage, rescue.subject)}）',
+    ),
     _DetailLine('求救狀態', rescue.status.label),
     _DetailLine('求救對象', rescue.subject.label),
     _DetailLine('人數', '${rescue.peopleCount} 人'),
     _DetailLine('描述', _text(rescue.description)),
-    _DetailLine('位置來源', event.attributes?['location_source'] == 'MAP_PICK' ? '地圖選點' : '目前位置'),
+    _DetailLine(
+      '位置來源',
+      event.attributes?['location_source'] == 'MAP_PICK' ? '地圖選點' : '目前位置',
+    ),
     _DetailLine('最後更新', formatUpdateTime(event.issuedAt)),
     _DetailLine('到期時間', formatUpdateTime(event.expiresAt)),
     const Padding(
       padding: EdgeInsets.only(top: 8),
-      child: Text('未經查證，不代表已派遣救援', key: ValueKey<String>('rescue-not-dispatched')),
+      child: Text(
+        '未經查證，不代表已派遣救援',
+        key: ValueKey<String>('rescue-not-dispatched'),
+      ),
     ),
   ];
 }
@@ -293,6 +325,7 @@ String _geometryText(MapGeometry? geometry) => switch (geometry) {
   PointGeometry(:final point) => '點位（${point.latitude}, ${point.longitude}）',
   LineStringGeometry(:final points) => '線段（${points.length} 個座標）',
   PolygonGeometry(:final rings) => '區域（${rings.length} 個環）',
+  MultiPolygonGeometry(:final polygons) => '區域（${polygons.length} 個分離區塊）',
   null => '無資料',
 };
 

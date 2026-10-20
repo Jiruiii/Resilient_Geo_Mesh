@@ -8,6 +8,30 @@ import 'package:resilientgeo_flutter/screens/map_screen.dart';
 import 'package:resilientgeo_flutter/widgets/feature_details_sheet.dart';
 
 void main() {
+  testWidgets('county warning map details name its area reference point', (
+    tester,
+  ) async {
+    final event = MeshEvent.fromJson(<String, dynamic>{
+      ..._eventJson('Point', <dynamic>[119.6, 23.6]),
+      'source': 'CWA',
+      'attributes': <String, dynamic>{
+        'affected_area': '澎湖縣',
+        'coverage_level': 'county',
+        'map_location_kind': 'area_reference',
+      },
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: FeatureDetailsSheet.event(event: event, onClose: () {}),
+        ),
+      ),
+    );
+
+    expect(find.text('影響範圍：澎湖縣（縣市級警報）'), findsOneWidget);
+    expect(find.text('地圖位置：影響範圍參考點（非告警發生的精確位置）'), findsOneWidget);
+  });
+
   test('parses point, line, and polygon event geometries', () {
     final point = MeshEvent.fromJson(
       _eventJson('Point', <dynamic>[121.59, 25.08]),

@@ -86,6 +86,49 @@ void main() {
     expect((polygon.geometry! as PolygonGeometry).rings.single, hasLength(4));
   });
 
+  test(
+    'keeps an island warning MultiPolygon and focuses its largest island',
+    () {
+      final warning = MeshEvent.fromJson(<String, dynamic>{
+        'namespace': 'official.cwa',
+        'event_id': 'wind:islands',
+        'event_type': 'WEATHER_WARNING',
+        'geometry': <String, dynamic>{
+          'type': 'MultiPolygon',
+          'coordinates': <dynamic>[
+            <dynamic>[
+              <dynamic>[
+                <dynamic>[120.0, 23.0],
+                <dynamic>[120.1, 23.0],
+                <dynamic>[120.1, 23.1],
+                <dynamic>[120.0, 23.0],
+              ],
+            ],
+            <dynamic>[
+              <dynamic>[
+                <dynamic>[119.0, 23.0],
+                <dynamic>[119.8, 23.0],
+                <dynamic>[119.8, 23.8],
+                <dynamic>[119.0, 23.8],
+                <dynamic>[119.0, 23.0],
+              ],
+            ],
+          ],
+        },
+      });
+
+      expect(warning.geometry, isA<MultiPolygonGeometry>());
+      expect(
+        (warning.geometry! as MultiPolygonGeometry).polygons,
+        hasLength(2),
+      );
+      expect(
+        meshEventFocusPoint(warning),
+        const GeoPoint(longitude: 119.4, latitude: 23.4),
+      );
+    },
+  );
+
   test('preserves nullable event fields and flags expired events', () {
     final event = MeshEvent.fromJson(<String, dynamic>{
       'namespace': 'crowd.reports',

@@ -29,6 +29,18 @@ class MapLibreOverlayData {
               .map((ring) => ring.map(_coordinate).toList(growable: false))
               .toList(growable: false),
         },
+        MultiPolygonGeometry(:final polygons) => <String, dynamic>{
+          'type': 'MultiPolygon',
+          'coordinates': polygons
+              .map(
+                (rings) => rings
+                    .map(
+                      (ring) => ring.map(_coordinate).toList(growable: false),
+                    )
+                    .toList(growable: false),
+              )
+              .toList(growable: false),
+        },
         _ => null,
       };
       if (geometryJson == null) continue;

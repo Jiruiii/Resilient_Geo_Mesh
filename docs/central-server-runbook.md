@@ -41,6 +41,10 @@ NCDR 的完整官方 raw snapshot 與私有正規化快取保存在 collector �
 
 Collector 的排程會將同時到期的來源排入單一序列佇列，避免來源競爭全域 lock 而被靜默跳過。每次排程會以本次成功結果加上其他來源的 last-known-good cache 組成完整結果集；來源缺少 cache，或狀態為 `partial`／`stale`／`unavailable`／`blocked_by_auth` 時，會保留目前 `current/feed.json`，不發布不完整版本。來源檢查成功且當下沒有有效告警時，零資料集仍可通過 schema、hash、signature 與 chunk 驗證並發布有效的簽章空 feed；來源失敗時則沿用上一個可信版本。Collector 與政府工作台發布 worker 都會取得共用發布鎖，並在 staging 完成驗證後才切換 current pointer。
 
+NCDR 預設每 5 分鐘檢查一次；Docker Compose 可用 `SCHEDULE_NCDR_MS` 覆寫，值以毫秒計。CWA 仍每 10 分鐘檢查一次。Android App 在前景與 Web 分頁開啟時各約每 5 分鐘檢查 Server 的簽章 feed；Android 背景同步由作業系統排程，沒有每 5 分鐘準時執行的保證。兩段輪詢彼此獨立，因此上游發布到 App 顯示會有額外延遲。
+
+CWA `W-C0033-001` 縣市級警報依原始地名配對正確的縣市 `area_id`。Collector private cache 保留完整原始紀錄，行政區邊界維持在 AreaCatalog；公開事件使用該縣市內的地圖參考點，並保留 `affected_area`、`coverage_level=county` 與 `map_location_kind=area_reference`，避免把龐大邊界傳到客戶端或把參考點當成強風實測位置。Web 與 Android 通知卡共用 Flutter 畫面顯示「影響範圍」。
+
 要只在重建後的首次 run 收集指定來源，可於 Compose 命令前設定 `COLLECTOR_INITIAL_SOURCE_IDS`。例如先只收醫療：
 
 ```bash

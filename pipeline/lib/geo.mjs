@@ -256,6 +256,58 @@ function pointInGeometry(point, geometry) {
   return false;
 }
 
+/** A point inside the largest land polygon, for locating an area alert on a map. */
+export function representativePointInBoundary(boundaryInput) {
+  const polygons = collectGeometries(boundaryInput)
+    .flatMap((geometry) => geometry.type === 'MultiPolygon'
+      ? geometry.coordinates
+      : geometry.type === 'Polygon' ? [geometry.coordinates] : [])
+    .sort((left, right) => ringArea(right[0]) - ringArea(left[0]));
+  for (const polygon of polygons) {
+    const box = envelope({ type: 'Polygon', coordinates: polygon });
+    const latitude = (box.minY + box.maxY) / 2;
+    const center = [(box.minX + box.maxX) / 2, latitude];
+    if (pointInPolygon(center, polygon)) return { type: 'Point', coordinates: center };
+
+    const crossings = [];
+    const outer = polygon[0];
+    for (let index = 1; index < outer.length; index += 1) {
+      const start = outer[index - 1];
+      const end = outer[index];
+      if ((start[1] <= latitude && latitude < end[1])
+        || (end[1] <= latitude && latitude < start[1])) {
+        crossings.push(start[0] + (latitude - start[1])
+          * (end[0] - start[0]) / (end[1] - start[1]));
+      }
+    }
+    crossings.sort((left, right) => left - right);
+    const spans = [];
+    for (let index = 1; index < crossings.length; index += 2) {
+      spans.push([crossings[index - 1], crossings[index]]);
+    }
+    spans.sort((left, right) => (right[1] - right[0]) - (left[1] - left[0]));
+    for (const [left, right] of spans) {
+      const point = [(left + right) / 2, latitude];
+      if (pointInPolygon(point, polygon)) return { type: 'Point', coordinates: point };
+    }
+    for (const point of outer) {
+      if (pointInPolygon(point, polygon)) {
+        return { type: 'Point', coordinates: point.slice(0, 2) };
+      }
+    }
+  }
+  throw new GeoValidationError('boundary has no representative point');
+}
+
+function ringArea(ring) {
+  let twiceArea = 0;
+  for (let index = 1; index < ring.length; index += 1) {
+    twiceArea += ring[index - 1][0] * ring[index][1]
+      - ring[index][0] * ring[index - 1][1];
+  }
+  return Math.abs(twiceArea);
+}
+
 const preparedBoundaryCache = new WeakMap();
 
 /**

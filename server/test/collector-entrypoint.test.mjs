@@ -163,6 +163,27 @@ test('collector initial source selection defaults safely and rejects invalid IDs
   }
 });
 
+test('collector schedules NCDR with the configured interval', () => {
+  const intervals = [];
+  const service = createCollectorService({
+    config: {
+      privateDataRoot: '/tmp/collector-schedule-test-private',
+      publicReleaseRoot: '/tmp/collector-schedule-test-public',
+      scheduleMsBySource: { 'ncdr-hazard-events': 300000 },
+    },
+    publisher: async () => {},
+    registry: SOURCE_REGISTRY,
+    sourceIds: ['ncdr-hazard-events'],
+    clock: {
+      setInterval(_callback, delay) { intervals.push(delay); return intervals.length; },
+      clearInterval() {},
+    },
+  });
+  service.start();
+  assert.deepEqual(intervals, [300000]);
+  service.stop();
+});
+
 test('scheduled source collection publishes a complete result set from fresh and cached sources', async () => {
   const privateRoot = await mkdtemp(path.join(os.tmpdir(), 'resilientgeo-complete-results-'));
   try {

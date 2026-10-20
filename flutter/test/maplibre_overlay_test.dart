@@ -63,15 +63,38 @@ void main() {
         geometry: PointGeometry(GeoPoint(longitude: 121.5, latitude: 25.0)),
         attributes: null,
       );
+      const multiPolygon = MeshEvent(
+        namespace: 'test',
+        eventId: 'multi-polygon-1',
+        eventVersion: 1,
+        eventType: 'WEATHER_WARNING',
+        severity: 'LOW',
+        source: 'CWA',
+        issuedAt: null,
+        expiresAt: null,
+        applyState: 'CURRENT',
+        geometry: MultiPolygonGeometry(<List<List<GeoPoint>>>[
+          <List<GeoPoint>>[
+            <GeoPoint>[
+              GeoPoint(longitude: 119.5, latitude: 23.5),
+              GeoPoint(longitude: 119.6, latitude: 23.5),
+              GeoPoint(longitude: 119.6, latitude: 23.6),
+              GeoPoint(longitude: 119.5, latitude: 23.5),
+            ],
+          ],
+        ]),
+        attributes: null,
+      );
 
       final collection = MapLibreOverlayData.eventFeatureCollection(<MeshEvent>[
         line,
         polygon,
+        multiPolygon,
         point,
       ]);
       final features = collection['features']! as List<Object?>;
 
-      expect(features, hasLength(2));
+      expect(features, hasLength(3));
       expect(
         (features[0] as Map<String, dynamic>)['geometry'],
         containsPair('type', 'LineString'),
@@ -84,6 +107,22 @@ void main() {
         ((features[1] as Map<String, dynamic>)['properties']
             as Map<String, dynamic>)['expired'],
         isTrue,
+      );
+      expect(
+        (features[2] as Map<String, dynamic>)['geometry'],
+        <String, dynamic>{
+          'type': 'MultiPolygon',
+          'coordinates': <List<List<List<double>>>>[
+            <List<List<double>>>[
+              <List<double>>[
+                <double>[119.5, 23.5],
+                <double>[119.6, 23.5],
+                <double>[119.6, 23.6],
+                <double>[119.5, 23.5],
+              ],
+            ],
+          ],
+        },
       );
     },
   );
