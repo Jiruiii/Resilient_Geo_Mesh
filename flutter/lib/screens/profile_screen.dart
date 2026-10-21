@@ -29,7 +29,14 @@ class ProfileScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('個人設定')),
+    appBar: AppBar(
+      title: Text(
+        '個人設定',
+        style: Theme.of(
+          context,
+        ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+      ),
+    ),
     body: ListView(
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
       children: <Widget>[
@@ -39,6 +46,9 @@ class ProfileScreen extends StatelessWidget {
           child: ListTile(
             leading: const Icon(Icons.cloud_download_outlined),
             title: const Text('政府資料更新'),
+            titleTextStyle: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
             subtitle: const Text('取得最新警報與道路、收容所狀態'),
             trailing: const Icon(Icons.chevron_right),
             onTap:
@@ -58,6 +68,9 @@ class ProfileScreen extends StatelessWidget {
           child: ListTile(
             leading: const Icon(Icons.sync),
             title: const Text('同步狀態'),
+            titleTextStyle: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
             subtitle: const Text('查看緊急模式、附近節點與同步結果'),
             trailing: const Icon(Icons.chevron_right),
             onTap:
@@ -76,7 +89,12 @@ class ProfileScreen extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
-                Text('偏好設定', style: Theme.of(context).textTheme.titleMedium),
+                Text(
+                  '偏好設定',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<String>(
                   value: '繁體中文',
@@ -156,11 +174,14 @@ class _GovernmentAccountSectionState extends State<GovernmentAccountSection> {
     animation: _auth,
     builder: (context, _) {
       if (_auth.loading) {
-        return const Card(
+        return Card(
           child: ListTile(
-            leading: Icon(Icons.badge_outlined),
-            title: Text('政府人員帳號'),
-            subtitle: Text('正在確認登入狀態…'),
+            leading: const Icon(Icons.badge_outlined),
+            title: const Text('政府人員帳號'),
+            titleTextStyle: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+            subtitle: const Text('正在確認登入狀態…'),
           ),
         );
       }
@@ -172,7 +193,12 @@ class _GovernmentAccountSectionState extends State<GovernmentAccountSection> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
-                Text('政府人員登入', style: Theme.of(context).textTheme.titleMedium),
+                Text(
+                  '政府人員登入',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
                 const SizedBox(height: 4),
                 const Text('由系統管理者建立帳號，完成身分核實的政府人員可使用。'),
                 if (_auth.error != null) ...<Widget>[
@@ -219,7 +245,8 @@ class _GovernmentAccountSectionState extends State<GovernmentAccountSection> {
                       children: <Widget>[
                         Text(
                           user.displayName,
-                          style: Theme.of(context).textTheme.titleMedium,
+                          style: Theme.of(context).textTheme.titleMedium
+                              ?.copyWith(fontWeight: FontWeight.bold),
                         ),
                         Text(
                           '${user.agency} · ${user.role == 'SYSTEM_ADMIN' ? '系統管理者' : '政府人員'}',

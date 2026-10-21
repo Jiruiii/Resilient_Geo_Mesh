@@ -76,6 +76,24 @@ class GovernmentWarningFactoryTest {
     }
 
     @Test
+    fun `road and shelter warnings require a map point`() {
+        for (category in listOf("ROAD", "SHELTER")) {
+            assertFalse(
+                GovernmentWarningFactory.validate(input(category = category), issuedAt).isEmpty(),
+            )
+            assertTrue(
+                GovernmentWarningFactory.validate(
+                    input(
+                        category = category,
+                        location = GovernmentWarningInput.Location(121.48, 25.06),
+                    ),
+                    issuedAt,
+                ).isEmpty(),
+            )
+        }
+    }
+
+    @Test
     fun `rejects expiry beyond ninety days and out of bounds locations`() {
         assertFalse(GovernmentWarningFactory.validate(
             input(expiresAt = issuedAt.plusSeconds(90 * 24 * 60 * 60L + 1)), issuedAt,

@@ -20,6 +20,46 @@ MeshEvent? ncdrAreaWarningAtCoordinate(
   return null;
 }
 
+/// Finds the most relevant visible CWA county warning under [point].
+///
+/// County boundaries are bundled display geometry, while warning identity and
+/// validity remain on the complete event records supplied by the server.
+MeshEvent? cwaCountyWarningAtCoordinate(
+  Iterable<MeshEvent> events,
+  Map<String, Map<String, dynamic>> counties,
+  GeoPoint point, {
+  DateTime? now,
+}) {
+  final reference = (now ?? DateTime.now()).toUtc();
+  MeshEvent? selected;
+  var selectedIsCurrent = false;
+  var selectedIssuedAt = DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
+
+  for (final event in events) {
+    if (!event.isCwaCountyWarning) continue;
+    final isCurrent = event.isCurrentAt(reference);
+    if (!isCurrent && !event.isUpcomingCwaCountyWarningAt(reference)) continue;
+
+    final areaId = event.attributes?['area_id'];
+    if (areaId is! String) continue;
+    final geometry = counties[areaId]?['geometry'];
+    if (!_containsGeoJsonGeometry(geometry, point)) continue;
+
+    final issuedAt =
+        DateTime.tryParse(event.issuedAt ?? '')?.toUtc() ??
+        DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
+    if (selected == null ||
+        (isCurrent && !selectedIsCurrent) ||
+        (isCurrent == selectedIsCurrent &&
+            issuedAt.isAfter(selectedIssuedAt))) {
+      selected = event;
+      selectedIsCurrent = isCurrent;
+      selectedIssuedAt = issuedAt;
+    }
+  }
+  return selected;
+}
+
 bool _containsGeometry(MapGeometry geometry, GeoPoint point) =>
     switch (geometry) {
       PolygonGeometry(:final rings) => _containsPolygon(rings, point),
@@ -28,6 +68,46 @@ bool _containsGeometry(MapGeometry geometry, GeoPoint point) =>
       ),
       _ => false,
     };
+
+bool _containsGeoJsonGeometry(Object? value, GeoPoint point) {
+  if (value is! Map) return false;
+  final type = value['type'];
+  final coordinates = value['coordinates'];
+  return switch (type) {
+    'Polygon' => _containsPolygon(_geoJsonRings(coordinates), point),
+    'MultiPolygon' =>
+      coordinates is List &&
+          coordinates.any(
+            (polygon) => _containsPolygon(_geoJsonRings(polygon), point),
+          ),
+    _ => false,
+  };
+}
+
+List<List<GeoPoint>> _geoJsonRings(Object? coordinates) {
+  if (coordinates is! List) return const <List<GeoPoint>>[];
+  final rings = <List<GeoPoint>>[];
+  for (final ring in coordinates) {
+    if (ring is! List) return const <List<GeoPoint>>[];
+    final points = <GeoPoint>[];
+    for (final coordinate in ring) {
+      if (coordinate is! List ||
+          coordinate.length < 2 ||
+          coordinate[0] is! num ||
+          coordinate[1] is! num) {
+        return const <List<GeoPoint>>[];
+      }
+      points.add(
+        GeoPoint(
+          longitude: (coordinate[0] as num).toDouble(),
+          latitude: (coordinate[1] as num).toDouble(),
+        ),
+      );
+    }
+    rings.add(points);
+  }
+  return rings;
+}
 
 bool _containsPolygon(List<List<GeoPoint>> rings, GeoPoint point) {
   if (rings.isEmpty || !_containsRing(rings.first, point)) return false;

@@ -148,6 +148,8 @@ class FeatureDetailsSheet extends StatelessWidget {
         _DetailLine('地址', _text(details['address'])),
         _DetailLine('來源', _text(details['source'])),
         _DetailLine('更新時間', formatUpdateTime(snapshotAt)),
+        if (feature.geometry is PointGeometry)
+          const _WalkingRouteUnavailableButton(),
       ];
     }
     if (kind == 'medical-directory') {
@@ -191,6 +193,8 @@ class FeatureDetailsSheet extends StatelessWidget {
         _DetailLine('地址', SupplyStatus(event).address),
         _DetailLine('發布單位', SupplyStatus(event).issuer),
         const Text('供應資訊可能已變更；未知數量不代表沒有物資。'),
+        if (event.geometry is PointGeometry)
+          const _WalkingRouteUnavailableButton(),
       ],
       if (isCrowdEvent(event)) ...<Widget>[
         _VerificationNotice(event.verification ?? CrowdVerification.unverified),
@@ -205,6 +209,8 @@ class FeatureDetailsSheet extends StatelessWidget {
         ),
         if (event.attributes?['content'] is String)
           _DetailLine('公告內容', _text(event.attributes?['content'])),
+        if (isSupplyStationEvent(event) && event.geometry is PointGeometry)
+          const _WalkingRouteUnavailableButton(),
       ],
       _DetailLine('事件類型', _text(event.eventType)),
       if (!isSupplyStationEvent(event))
@@ -282,6 +288,44 @@ class FeatureDetailsSheet extends StatelessWidget {
       ),
     ),
   ];
+}
+
+class _WalkingRouteUnavailableButton extends StatelessWidget {
+  const _WalkingRouteUnavailableButton();
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(top: 4),
+    child: SizedBox(
+      width: double.infinity,
+      height: 36,
+      child: OutlinedButton.icon(
+        key: const ValueKey<String>('plan-walking-route'),
+        onPressed:
+            () => showDialog<void>(
+              context: context,
+              builder:
+                  (dialogContext) => AlertDialog(
+                    title: const Text('路線規劃尚未開放'),
+                    content: const Text('此地點的步行路線規劃尚未開放'),
+                    actions: <Widget>[
+                      TextButton(
+                        onPressed: () => Navigator.of(dialogContext).pop(),
+                        child: const Text('知道了'),
+                      ),
+                    ],
+                  ),
+            ),
+        style: OutlinedButton.styleFrom(
+          minimumSize: Size.zero,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
+        icon: const Icon(Icons.directions_walk),
+        label: const Text('規劃步行路線'),
+      ),
+    ),
+  );
 }
 
 class _DetailLine extends StatelessWidget {

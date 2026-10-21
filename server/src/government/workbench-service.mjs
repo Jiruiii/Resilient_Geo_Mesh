@@ -7,6 +7,7 @@ import { CROWD_TTL_MS, crowdReportErrors } from '../../../pipeline/lib/crowd-rep
 import { GovernmentAuthError } from './auth-service.mjs';
 
 const ANNOUNCEMENT_CATEGORIES = new Set(['SAFETY', 'WEATHER', 'ROAD', 'SHELTER', 'SUPPLY_STATION', 'OTHER']);
+const LOCATION_REQUIRED_ANNOUNCEMENT_CATEGORIES = new Set(['ROAD', 'SHELTER', 'SUPPLY_STATION']);
 const SEVERITIES = new Set(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL', 'UNKNOWN']);
 const NATIONWIDE_AREA_ID = 'tw.national';
 const HASH_RE = /^sha256:[0-9a-f]{64}$/u;
@@ -47,7 +48,9 @@ function validateAnnouncement(input, now) {
         latitude < 20.5 || latitude > 26.8) throw fail('announcement_location_invalid');
     location = { longitude: Number(longitude.toFixed(6)), latitude: Number(latitude.toFixed(6)) };
   }
-  if (category === 'SUPPLY_STATION' && location === null) throw fail('announcement_location_invalid');
+  if (LOCATION_REQUIRED_ANNOUNCEMENT_CATEGORIES.has(category) && location === null) {
+    throw fail('announcement_location_invalid');
+  }
   return {
     title, content, category, severity, area_id: NATIONWIDE_AREA_ID,
     expires_at: expiresAt.toISOString(), location,
@@ -104,7 +107,7 @@ function validateGovernmentWarning(event, now) {
   } else {
     throw fail('announcement_location_invalid');
   }
-  if (attributes.category === 'SUPPLY_STATION' && event.geometry.type !== 'Point') {
+  if (LOCATION_REQUIRED_ANNOUNCEMENT_CATEGORIES.has(attributes.category) && event.geometry.type !== 'Point') {
     throw fail('announcement_location_invalid');
   }
 }

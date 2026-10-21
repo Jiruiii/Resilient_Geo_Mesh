@@ -1312,29 +1312,51 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
         _usesPlatformMap
             ? overlay.markers
             : _markers(zoom: _cameraPosition?.zoom);
+    final markerTapPoint = _nativeScreenPosition(Offset(point.x, point.y));
     final markerHits = hitTestMapMarkers(
       markers: markers,
       positions: overlay.positions,
-      point: _nativeScreenPosition(Offset(point.x, point.y)),
+      point: markerTapPoint,
       translation: overlay.translation,
     );
-    if (markerHits.isNotEmpty) {
-      markerHits.last.onTap();
+    final topMarker = markerHits.isEmpty ? null : markerHits.last;
+    if (topMarker != null && topMarker.kind != MapMarkerKind.cluster) {
+      topMarker.onTap();
       return;
+    }
+    // Keep the visible center of a cluster as its drill-down target, while
+    // allowing taps on the rest of a covered warning area to select the mask.
+    if (topMarker != null) {
+      final markerCenter = overlay.positions[topMarker.key];
+      if (markerCenter != null &&
+          (markerTapPoint - (markerCenter + overlay.translation)).distance <=
+              math.min(topMarker.width, topMarker.height) * 0.28) {
+        topMarker.onTap();
+        return;
+      }
     }
 
     if (widget.showEvents && widget.showCountyWarningAreas) {
-      final areaWarning = ncdrAreaWarningAtCoordinate(
-        widget.areaWarnings,
-        GeoPoint(
-          longitude: coordinates.longitude,
-          latitude: coordinates.latitude,
-        ),
+      final coordinate = GeoPoint(
+        longitude: coordinates.longitude,
+        latitude: coordinates.latitude,
       );
+      final areaWarning =
+          ncdrAreaWarningAtCoordinate(widget.areaWarnings, coordinate) ??
+          cwaCountyWarningAtCoordinate(
+            widget.areaWarnings,
+            await _countyBoundaries,
+            coordinate,
+          );
       if (areaWarning != null) {
         widget.onEventSelected(areaWarning);
         return;
       }
+    }
+
+    if (topMarker != null) {
+      topMarker.onTap();
+      return;
     }
 
     final controller = _mapController;

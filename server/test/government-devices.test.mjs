@@ -345,6 +345,37 @@ test('government device supply station warnings require a map point', async () =
   } finally { await app.close(); }
 });
 
+test('government device road and shelter warnings require a map point', async () => {
+  const { app, store } = await setup();
+  try {
+    const token = await login(app);
+    const { certificate, deviceKey } = await issueCertificate(app, store, token, generateEd25519KeyPair());
+    const headers = { authorization: `Bearer ${token}` };
+    for (const category of ['ROAD', 'SHELTER']) {
+      const base = warningEvent(certificate, deviceKey, {
+        attributes: {
+          ...warningEvent(certificate, deviceKey).attributes,
+          category,
+        },
+      });
+      const missingLocation = await app.inject({
+        method: 'POST', url: '/api/v1/government/warnings', headers, payload: base,
+      });
+      assert.equal(missingLocation.statusCode, 400);
+      assert.equal(missingLocation.json().error, 'announcement_location_invalid');
+
+      const located = warningEvent(certificate, deviceKey, {
+        geometry: { type: 'Point', coordinates: [121.48, 25.06] },
+        attributes: { ...base.attributes, has_map_location: true },
+      });
+      const accepted = await app.inject({
+        method: 'POST', url: '/api/v1/government/warnings', headers, payload: located,
+      });
+      assert.equal(accepted.statusCode, 202);
+    }
+  } finally { await app.close(); }
+});
+
 test('government warning upload rejects a device event carrying a tampered central certificate', async () => {
   const { app, store } = await setup();
   try {

@@ -40,7 +40,7 @@ class NotificationsScreen extends StatefulWidget {
 
 class _NotificationsScreenState extends State<NotificationsScreen> {
   late Set<String> _selectedCategories;
-  final Set<String> _collapsedCategories = <String>{};
+  final Set<String> _expandedCategories = <String>{};
   final Set<String> _expandedEvents = <String>{};
   bool _allCategoriesSelected = true;
   _NotificationSort _sort = _NotificationSort.time;
@@ -61,7 +61,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       _selectedCategories.retainAll(categories);
     }
     _allCategoriesSelected = _selectedCategories.length == categories.length;
-    _collapsedCategories.retainAll(categories);
+    _expandedCategories.retainAll(categories);
     final eventKeys = widget.events.map(meshEventIdentity).toSet();
     _expandedEvents.retainAll(eventKeys);
   }
@@ -98,7 +98,14 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     }
 
     return Scaffold(
-      appBar: AppBar(title: const Text('通知')),
+      appBar: AppBar(
+        title: Text(
+          '通知',
+          style: Theme.of(
+            context,
+          ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+        ),
+      ),
       body:
           sorted.isEmpty
               ? const Center(child: Text('目前沒有事件通知'))
@@ -116,9 +123,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                                   (_, _) => const SizedBox(height: 12),
                               itemBuilder: (context, index) {
                                 final entry = groups.entries.elementAt(index);
-                                final collapsed = _collapsedCategories.contains(
-                                  entry.key,
-                                );
+                                final collapsed =
+                                    !_expandedCategories.contains(entry.key);
                                 return Column(
                                   crossAxisAlignment:
                                       CrossAxisAlignment.stretch,
@@ -330,8 +336,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
 
   void _toggleCategory(String category) {
     setState(() {
-      if (!_collapsedCategories.add(category)) {
-        _collapsedCategories.remove(category);
+      if (!_expandedCategories.add(category)) {
+        _expandedCategories.remove(category);
       }
     });
   }
@@ -416,7 +422,7 @@ class _CategoryGroupHeader extends StatelessWidget {
                   category,
                   style: Theme.of(
                     context,
-                  ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
+                  ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
                 ),
               ),
               Text(

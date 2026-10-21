@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../data/crowd_report_models.dart';
 import '../data/government_announcement_time.dart';
@@ -18,6 +19,32 @@ class _AnnouncementTimeParts {
   final int second;
 }
 
+enum _AnnouncementSort {
+  publishedNewest('發布日期（新到舊）'),
+  publishedOldest('發布日期（舊到新）'),
+  deadlineSoonest('截止日期（近到遠）'),
+  deadlineLatest('截止日期（遠到近）');
+
+  const _AnnouncementSort(this.label);
+
+  final String label;
+}
+
+const Map<String, String> _announcementCategoryLabels = <String, String>{
+  'SAFETY': '安全提醒',
+  'WEATHER': '天氣',
+  'ROAD': '道路',
+  'SHELTER': '避難收容',
+  'SUPPLY_STATION': '物資站',
+  'OTHER': '其他',
+};
+
+const Set<String> _announcementCategoriesRequiringLocation = <String>{
+  'ROAD',
+  'SHELTER',
+  'SUPPLY_STATION',
+};
+
 class GovernmentWorkbenchScreen extends StatefulWidget {
   const GovernmentWorkbenchScreen({super.key, required this.auth});
 
@@ -28,7 +55,8 @@ class GovernmentWorkbenchScreen extends StatefulWidget {
       _GovernmentWorkbenchScreenState();
 }
 
-class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen> {
+class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen>
+    with WidgetsBindingObserver {
   final _attestationNote = TextEditingController();
   final _announcementTitle = TextEditingController();
   final _announcementContent = TextEditingController();
@@ -47,12 +75,22 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen> {
   bool _warningUploadActive = false;
   Object? _error;
   Timer? _automaticWarningUploadTimer;
+  Timer? _announcementExpiryTimer;
+  final Set<String> _hiddenAnnouncementKeys = <String>{};
+  final Set<String> _expandedAnnouncementCategories = <String>{};
+  _AnnouncementSort _announcementSort = _AnnouncementSort.publishedNewest;
+  bool _hiddenAnnouncementsLoaded = false;
+
+  static const String _hiddenAnnouncementsPreferencePrefix =
+      'government.workbench.hidden_announcements.v1.';
 
   bool get _isAdmin => widget.auth.user?.isSystemAdmin == true;
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _automaticWarningUploadTimer?.cancel();
+    _announcementExpiryTimer?.cancel();
     _attestationNote.dispose();
     _announcementTitle.dispose();
     _announcementContent.dispose();
@@ -67,6 +105,7 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _refresh();
     if (widget.auth.androidDeviceMode &&
         widget.auth.user?.role == 'GOVERNMENT') {
@@ -77,12 +116,20 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen> {
     }
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    if (mounted) setState(() {});
+    _scheduleAnnouncementExpiryUpdate();
+  }
+
   Future<void> _refresh() async {
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
+      await _loadHiddenAnnouncements();
       if (widget.auth.androidDeviceMode &&
           widget.auth.user?.role == 'GOVERNMENT') {
         if (!widget.auth.restoredOffline) {
@@ -119,6 +166,7 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen> {
             .toList(growable: false);
         if (_isAdmin) _users = values[2] as List<Map<String, dynamic>>;
       });
+      _scheduleAnnouncementExpiryUpdate();
       if (widget.auth.androidDeviceMode &&
           widget.auth.user?.role == 'GOVERNMENT') {
         unawaited(_retryPendingDeviceWarnings());
@@ -292,74 +340,382 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen> {
     });
   }
 
-  Widget _announcementsPage() => Column(
-    children: <Widget>[
-      if (widget.auth.androidDeviceMode &&
-          widget.auth.user?.role == 'GOVERNMENT')
-        _deviceWarningStatusPanel(),
-      Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-        child: Align(
-          alignment: Alignment.centerRight,
-          child: FilledButton.icon(
-            onPressed: _busy ? null : () => _editAnnouncement(),
-            icon: const Icon(Icons.add),
-            label: const Text('新增公告'),
+  Widget _announcementsPage() {
+    final items = _visibleAnnouncements();
+    final groups = _groupAnnouncements(items);
+    return Column(
+      children: <Widget>[
+        if (widget.auth.androidDeviceMode &&
+            widget.auth.user?.role == 'GOVERNMENT')
+          _deviceWarningStatusPanel(),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+          child: Align(
+            alignment: Alignment.centerRight,
+            child: FilledButton.icon(
+              onPressed: _busy ? null : () => _editAnnouncement(),
+              icon: const Icon(Icons.add),
+              label: const Text('新增公告'),
+            ),
           ),
         ),
-      ),
-      Expanded(
-        child:
-            _announcements.isEmpty && !_loading
-                ? const Center(child: Text('目前沒有有效公告'))
-                : RefreshIndicator(
-                  onRefresh: _refresh,
-                  child: ListView.separated(
-                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-                    itemCount: _announcements.length,
-                    separatorBuilder: (_, _) => const SizedBox(height: 10),
-                    itemBuilder: (context, index) {
-                      final item = _announcements[index];
-                      final retracted = item['retracted'] == true;
-                      return Card(
-                        child: ListTile(
-                          title: Text(item['title'] as String? ?? '未命名公告'),
-                          subtitle: Text(
-                            '${item['area_id'] == 'tw.national' ? '全台灣' : item['area_id'] ?? '未指定範圍'} · 版本 ${item['event_version'] ?? 1}${retracted ? ' · 已撤回' : ''}\n${item['content'] ?? ''}',
+        if (items.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: PopupMenuButton<_AnnouncementSort>(
+                tooltip: '公告排序方式',
+                initialValue: _announcementSort,
+                onSelected: (sort) => setState(() => _announcementSort = sort),
+                itemBuilder:
+                    (context) => _AnnouncementSort.values
+                        .map(
+                          (sort) => PopupMenuItem<_AnnouncementSort>(
+                            value: sort,
+                            child: Text(sort.label),
                           ),
-                          isThreeLine: true,
-                          trailing:
-                              retracted
-                                  ? null
-                                  : PopupMenuButton<String>(
-                                    onSelected: (value) {
-                                      if (value == 'edit') {
-                                        _editAnnouncement(item);
-                                      }
-                                      if (value == 'retract') {
-                                        _retract(item);
-                                      }
-                                    },
-                                    itemBuilder:
-                                        (_) => const <PopupMenuEntry<String>>[
-                                          PopupMenuItem(
-                                            value: 'edit',
-                                            child: Text('修訂'),
-                                          ),
-                                          PopupMenuItem(
-                                            value: 'retract',
-                                            child: Text('撤回並隱藏'),
-                                          ),
-                                        ],
-                                  ),
-                        ),
-                      );
-                    },
+                        )
+                        .toList(growable: false),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 8,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      const Icon(Icons.sort),
+                      const SizedBox(width: 4),
+                      Text(_announcementSort.label),
+                      const Icon(Icons.arrow_drop_down),
+                    ],
                   ),
                 ),
+              ),
+            ),
+          ),
+        Expanded(
+          child:
+              !_loading && items.isEmpty
+                  ? Center(
+                    child: Text(
+                      _announcements.isEmpty ? '目前沒有公告' : '目前沒有可顯示的公告',
+                    ),
+                  )
+                  : RefreshIndicator(
+                    onRefresh: _refresh,
+                    child: ListView.separated(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                      itemCount: groups.length,
+                      separatorBuilder: (_, _) => const SizedBox(height: 12),
+                      itemBuilder: (context, index) {
+                        final entry = groups.entries.elementAt(index);
+                        final expanded = _expandedAnnouncementCategories
+                            .contains(entry.key);
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: <Widget>[
+                            Card(
+                              child: ListTile(
+                                title: Text(
+                                  '${_announcementCategoryLabel(entry.key)}（${entry.value.length}）',
+                                ),
+                                trailing: Icon(
+                                  expanded
+                                      ? Icons.expand_less
+                                      : Icons.expand_more,
+                                ),
+                                onTap:
+                                    () => setState(() {
+                                      if (expanded) {
+                                        _expandedAnnouncementCategories.remove(
+                                          entry.key,
+                                        );
+                                      } else {
+                                        _expandedAnnouncementCategories.add(
+                                          entry.key,
+                                        );
+                                      }
+                                    }),
+                              ),
+                            ),
+                            if (expanded) ...<Widget>[
+                              for (final item in entry.value) ...<Widget>[
+                                const SizedBox(height: 8),
+                                _announcementCard(item),
+                              ],
+                            ],
+                          ],
+                        );
+                      },
+                    ),
+                  ),
+        ),
+      ],
+    );
+  }
+
+  String get _hiddenAnnouncementsPreferenceKey {
+    final accountId = widget.auth.user?.id ?? 'unknown';
+    return '$_hiddenAnnouncementsPreferencePrefix${Uri.encodeComponent(accountId)}';
+  }
+
+  String _announcementIdentity(Map<String, dynamic> item) =>
+      '${item['event_id'] ?? ''}:${item['event_version'] ?? 1}';
+
+  Future<void> _loadHiddenAnnouncements() async {
+    if (_hiddenAnnouncementsLoaded) return;
+    final preferences = await SharedPreferences.getInstance();
+    _hiddenAnnouncementKeys
+      ..clear()
+      ..addAll(
+        preferences.getStringList(_hiddenAnnouncementsPreferenceKey) ??
+            const <String>[],
+      );
+    _hiddenAnnouncementsLoaded = true;
+  }
+
+  Future<void> _saveHiddenAnnouncements(Set<String> keys) async {
+    final preferences = await SharedPreferences.getInstance();
+    final sortedKeys = keys.toList()..sort();
+    await preferences.setStringList(
+      _hiddenAnnouncementsPreferenceKey,
+      sortedKeys,
+    );
+  }
+
+  List<Map<String, dynamic>> _visibleAnnouncements() {
+    final items =
+        _announcements
+            .where(
+              (item) =>
+                  !_hiddenAnnouncementKeys.contains(
+                    _announcementIdentity(item),
+                  ),
+            )
+            .toList();
+    items.sort(_compareAnnouncements);
+    return items;
+  }
+
+  Map<String, List<Map<String, dynamic>>> _groupAnnouncements(
+    List<Map<String, dynamic>> items,
+  ) {
+    final groups = <String, List<Map<String, dynamic>>>{};
+    for (final item in items) {
+      final category = item['category'] as String? ?? 'OTHER';
+      groups.putIfAbsent(category, () => <Map<String, dynamic>>[]).add(item);
+    }
+    return groups;
+  }
+
+  int _compareAnnouncements(
+    Map<String, dynamic> first,
+    Map<String, dynamic> second,
+  ) {
+    final firstPublished = _announcementDate(first['created_at']);
+    final secondPublished = _announcementDate(second['created_at']);
+    final firstDeadline = _announcementDate(first['expires_at']);
+    final secondDeadline = _announcementDate(second['expires_at']);
+    final (firstDate, secondDate, newestFirst) = switch (_announcementSort) {
+      _AnnouncementSort.publishedNewest => (
+        firstPublished,
+        secondPublished,
+        true,
       ),
-    ],
-  );
+      _AnnouncementSort.publishedOldest => (
+        firstPublished,
+        secondPublished,
+        false,
+      ),
+      _AnnouncementSort.deadlineSoonest => (
+        firstDeadline,
+        secondDeadline,
+        false,
+      ),
+      _AnnouncementSort.deadlineLatest => (firstDeadline, secondDeadline, true),
+    };
+    final firstValue = firstDate?.millisecondsSinceEpoch ?? -1;
+    final secondValue = secondDate?.millisecondsSinceEpoch ?? -1;
+    final dateOrder =
+        newestFirst
+            ? secondValue.compareTo(firstValue)
+            : firstValue.compareTo(secondValue);
+    if (dateOrder != 0) return dateOrder;
+    return (first['event_id'] as String? ?? '').compareTo(
+      second['event_id'] as String? ?? '',
+    );
+  }
+
+  DateTime? _announcementDate(Object? value) =>
+      value is String ? DateTime.tryParse(value)?.toUtc() : null;
+
+  String _announcementDateLabel(Object? value) {
+    final date = _announcementDate(value);
+    return date == null ? '未提供' : GovernmentAnnouncementTime.formatTaiwan(date);
+  }
+
+  bool _isAnnouncementExpired(Map<String, dynamic> item) {
+    final expiry = _announcementDate(item['expires_at']);
+    return expiry != null && !expiry.isAfter(DateTime.now().toUtc());
+  }
+
+  String _announcementCategoryLabel(String category) =>
+      _announcementCategoryLabels[category] ?? '其他';
+
+  void _scheduleAnnouncementExpiryUpdate() {
+    _announcementExpiryTimer?.cancel();
+    final now = DateTime.now().toUtc();
+    final futureDeadlines =
+        _announcements
+            .map((item) => _announcementDate(item['expires_at']))
+            .whereType<DateTime>()
+            .where((deadline) => deadline.isAfter(now))
+            .toList();
+    if (futureDeadlines.isEmpty) return;
+    futureDeadlines.sort();
+    _announcementExpiryTimer = Timer(futureDeadlines.first.difference(now), () {
+      if (!mounted) return;
+      setState(() {});
+      _scheduleAnnouncementExpiryUpdate();
+    });
+  }
+
+  Widget _announcementCard(Map<String, dynamic> item) {
+    final expired = _isAnnouncementExpired(item);
+    final muted = expired ? Colors.grey.shade700 : null;
+    final area =
+        item['area_id'] == 'tw.national'
+            ? '全台灣'
+            : item['area_id'] as String? ?? '未指定範圍';
+    return Card(
+      color: expired ? Colors.grey.shade200 : null,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Expanded(
+                  child: Text(
+                    '${item['title'] as String? ?? '未命名公告'}${expired ? ' · 已過期' : ''}',
+                    style: Theme.of(
+                      context,
+                    ).textTheme.titleMedium?.copyWith(color: muted),
+                  ),
+                ),
+                PopupMenuButton<String>(
+                  tooltip: '公告操作',
+                  iconColor: muted,
+                  onSelected: (value) {
+                    if (value == 'edit') unawaited(_editAnnouncement(item));
+                    if (value == 'retract') unawaited(_retract(item));
+                    if (value == 'hide') {
+                      unawaited(_confirmHideExpiredAnnouncement(item));
+                    }
+                  },
+                  itemBuilder:
+                      (_) => <PopupMenuEntry<String>>[
+                        const PopupMenuItem<String>(
+                          value: 'edit',
+                          child: Text('修訂'),
+                        ),
+                        const PopupMenuItem<String>(
+                          value: 'retract',
+                          child: Text('撤回並隱藏'),
+                        ),
+                        if (expired)
+                          const PopupMenuItem<String>(
+                            value: 'hide',
+                            child: Text('從此工作台刪除'),
+                          ),
+                      ],
+                ),
+              ],
+            ),
+            Text(
+              '$area · 版本 ${item['event_version'] ?? 1}',
+              style: TextStyle(color: muted),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '發布日期：${_announcementDateLabel(item['created_at'])}',
+              style: TextStyle(color: muted),
+            ),
+            Text(
+              '截止日期：${_announcementDateLabel(item['expires_at'])}',
+              style: TextStyle(color: muted),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              item['content'] as String? ?? '',
+              style: TextStyle(color: muted),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _confirmHideExpiredAnnouncement(
+    Map<String, dynamic> item,
+  ) async {
+    if (!_isAnnouncementExpired(item)) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder:
+          (dialogContext) => AlertDialog(
+            title: const Text('從此工作台刪除公告？'),
+            content: const Text('公告只會從目前帳號在這個瀏覽器或裝置的工作台隱藏，不會撤回官方公告。'),
+            actions: <Widget>[
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('取消'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text('刪除'),
+              ),
+            ],
+          ),
+    );
+    if (confirmed != true || !mounted) return;
+    final key = _announcementIdentity(item);
+    final next = Set<String>.of(_hiddenAnnouncementKeys)..add(key);
+    await _saveHiddenAnnouncements(next);
+    if (!mounted) return;
+    setState(() {
+      _hiddenAnnouncementKeys
+        ..clear()
+        ..addAll(next);
+    });
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: const Text('公告已從此工作台隱藏'),
+          action: SnackBarAction(
+            label: '復原',
+            onPressed: () => unawaited(_restoreHiddenAnnouncement(key)),
+          ),
+        ),
+      );
+  }
+
+  Future<void> _restoreHiddenAnnouncement(String key) async {
+    final next = Set<String>.of(_hiddenAnnouncementKeys)..remove(key);
+    await _saveHiddenAnnouncements(next);
+    if (!mounted) return;
+    setState(() {
+      _hiddenAnnouncementKeys
+        ..clear()
+        ..addAll(next);
+    });
+  }
 
   Widget _deviceWarningStatusPanel() {
     final authorization =
@@ -579,7 +935,12 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen> {
                   expiry.isAfter(now) &&
                   !expiry.isAfter(now.add(const Duration(days: 90)));
               final locationValid =
-                  category != 'SUPPLY_STATION' || location != null;
+                  !_announcementCategoriesRequiringLocation.contains(
+                    category,
+                  ) ||
+                  location != null;
+              final locationRequired = _announcementCategoriesRequiringLocation
+                  .contains(category);
               return AlertDialog(
                 title: Text(existing == null ? '新增官方公告' : '修訂官方公告'),
                 content: SizedBox(
@@ -707,19 +1068,19 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen> {
                           ),
                         const SizedBox(height: 8),
                         Text(
-                          category == 'SUPPLY_STATION'
-                              ? '物資站需設定地圖位置，發布後會同時顯示在地圖與通知中。'
+                          locationRequired
+                              ? '道路、避難收容與物資站公告需設定地圖位置，發布後會同時顯示在地圖與通知中。'
                               : '公告範圍為全台灣；地圖位置選填，未指定時只顯示在通知中。',
                           style: Theme.of(context).textTheme.bodySmall,
                         ),
                         if (!locationValid)
-                          const Align(
+                          Align(
                             alignment: Alignment.centerLeft,
                             child: Padding(
                               padding: EdgeInsets.only(top: 6),
                               child: Text(
-                                '物資站必須設定地圖位置。',
-                                style: TextStyle(color: Colors.red),
+                                '${_announcementCategoryLabels[category] ?? '此類'}公告必須設定地圖位置。',
+                                style: const TextStyle(color: Colors.red),
                               ),
                             ),
                           ),

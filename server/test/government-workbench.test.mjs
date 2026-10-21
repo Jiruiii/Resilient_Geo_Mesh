@@ -203,7 +203,7 @@ test('announcement creation, revision and retraction queue incrementing signed f
     const token = await login(app);
     const headers = { authorization: `Bearer ${token}` };
     const announcement = { title: '道路管制', content: '請改道通行。', category: 'ROAD', severity: 'HIGH',
-      area_id: 'tw.63000', expires_at: '2026-11-01T00:00:00Z' };
+      area_id: 'tw.63000', longitude: 121.48, latitude: 25.06, expires_at: '2026-11-01T00:00:00Z' };
     const created = await app.inject({ method: 'POST', url: '/api/v1/government/announcements', headers, payload: announcement });
     assert.equal(created.statusCode, 202);
     assert.equal((await store.listAnnouncements())[0].area_id, 'tw.national');
@@ -244,6 +244,26 @@ test('supply station announcements require and retain a valid map location', asy
     assert.equal(saved.category, 'SUPPLY_STATION');
     assert.equal(saved.severity, 'LOW');
     assert.deepEqual(saved.location, { longitude: 121.48, latitude: 25.06 });
+  } finally { await app.close(); }
+});
+
+test('road and shelter announcements require and retain a valid map location', async () => {
+  const app = buildGovernmentApp({ store: await memoryStore(), now: () => now });
+  try {
+    const token = await login(app);
+    const headers = { authorization: `Bearer ${token}` };
+    for (const [category, title] of [['ROAD', '道路管制'], ['SHELTER', '避難收容點']]) {
+      const base = { title, content: '請依現場指示辦理。', category, severity: 'MEDIUM',
+        expires_at: '2026-11-01T00:00:00Z' };
+      const missingLocation = await app.inject({ method: 'POST', url: '/api/v1/government/announcements',
+        headers, payload: base });
+      assert.equal(missingLocation.statusCode, 400);
+      assert.equal(missingLocation.json().error, 'announcement_location_invalid');
+
+      const located = await app.inject({ method: 'POST', url: '/api/v1/government/announcements',
+        headers, payload: { ...base, longitude: 121.48, latitude: 25.06 } });
+      assert.equal(located.statusCode, 202);
+    }
   } finally { await app.close(); }
 });
 
