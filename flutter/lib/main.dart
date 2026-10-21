@@ -170,6 +170,8 @@ class _MapAppHomeState extends State<_MapAppHome> {
                   staticFeaturesPending: controller.staticFeaturesPending,
                   staticFeaturesFailed:
                       controller.staticFeatureLoadError != null,
+                  administrativeAreaDirectory:
+                      controller.notificationAreaDirectory,
                   initialState: controller.initialState,
                   bridge: controller.bridge,
                   eventUpdates: controller.eventUpdates,
@@ -186,6 +188,7 @@ class _MapAppHomeState extends State<_MapAppHome> {
                 NotificationsScreen(
                   events: controller.notificationEvents,
                   readEventKeys: controller.readEventKeys,
+                  areaDirectory: controller.notificationAreaDirectory,
                   attestationSource: controller.events,
                   onEventRead: controller.markEventRead,
                   onEventMapRequested: _openNotificationOnMap,
@@ -198,6 +201,11 @@ class _MapAppHomeState extends State<_MapAppHome> {
                   governmentAuth: controller.governmentAuth,
                   bridge: controller.bridge,
                   onWebGovernmentFeedRefresh: controller.refreshGovernmentFeed,
+                  notificationAreaDirectory:
+                      controller.notificationAreaDirectory,
+                  notificationAreaIds: controller.notificationAreaIds,
+                  onNotificationAreaIdsChanged:
+                      controller.setNotificationAreaIds,
                   themeMode: controller.themeMode,
                   animationEnabled: controller.animationEnabled,
                   onThemeModeChanged: controller.setThemeMode,

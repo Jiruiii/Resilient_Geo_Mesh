@@ -102,7 +102,7 @@ export function buildGovernmentApp({ store, config = {}, logger = false, now } =
   app.get('/api/v1/healthz', async (_request, reply) => {
     try {
       if (typeof store.health === 'function') await store.health();
-      return { status: 'ok' };
+      return { status: 'ok', announcement_scope_schema: 'affected_area_ids-v1' };
     } catch {
       return reply.code(503).send({ status: 'unavailable' });
     }

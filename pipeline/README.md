@@ -8,6 +8,14 @@ This directory implements the `system.md` phase-2 path with only Node.js built-i
 
 2026-10-04 同一輪 collector 的涵蓋核對：避難所來源 5,973 筆，5,727 通過行政區／地址檢查、180 未定位、66 排除；醫療主檔 24,138 筆，479 配到已核實座標、23,659 未定位、0 排除。兩者皆逐縣市列出 22 縣市／離島數量，報告見[全台點位涵蓋](../docs/data-coverage-2026-10-04.md)。本輪 source-status 記錄在本機 release；本機唯讀 API 曾於 loopback 提供狀態和簽章 layer/feed，Web 與 Android API 36 模擬器都下載並驗簽同一批產物。測試服務不是正式部署；正式 Server 尚未部署。
 
+以 repo 中的官方 EPSG:4326 縣市、鄉鎮市區界線產生 Server 目錄與 Flutter Web／Android 離線空間索引：
+
+```sh
+node pipeline/cli.mjs area-index --county data/boundaries/geojson/county.geojson --town data/boundaries/geojson/town.geojson --directory-out data/administrative-area-directory.json --flutter-directory-out flutter/assets/map/boundaries/taiwan-administrative-area-directory.json --spatial-out flutter/assets/map/boundaries/taiwan-administrative-area-index.json --android-area-ids-out android/app/src/main/java/com/resilientgeo/mesh/report/GovernmentAreaIds.kt
+```
+
+產生器以兩個來源檔案（中間含 null byte）的 SHA-256 作為 `source_version`，Server 與 Flutter 目錄內容相同；空間索引移除來源屬性，保留每個座標值與 EPSG:4326 bbox，不簡化官方幾何。
+
 官方 7442／7441 下載檔是 TWD97 經緯度的 SHP／GML 資料；先以 GDAL／QGIS 轉成 EPSG:4326 GeoJSON，再交給 `area-catalog`。例如：
 
 ```bash

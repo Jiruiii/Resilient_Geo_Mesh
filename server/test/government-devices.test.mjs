@@ -16,6 +16,10 @@ import { publishGovernmentOutboxBatch } from '../src/government/publisher-worker
 const now = new Date('2026-10-12T00:00:00.000Z');
 const issuer = generateEd25519KeyPair();
 const issuerKeyId = 'government-feed-2026';
+const testAreaDirectory = new Map([
+  ['tw.63000', { area_id: 'tw.63000', level: 'county', parent_area_id: null }],
+  ['tw.63000050', { area_id: 'tw.63000050', level: 'town', parent_area_id: 'tw.63000' }],
+]);
 
 async function memoryStore() {
   const users = new Map();
@@ -170,7 +174,8 @@ async function setup() {
   const store = await memoryStore();
   const app = buildGovernmentApp({
     store,
-    config: { trustedKeyIds: [issuerKeyId], trustedKeys: { [issuerKeyId]: issuer.publicKey }, signingKeyId: issuerKeyId },
+    config: { trustedKeyIds: [issuerKeyId], trustedKeys: { [issuerKeyId]: issuer.publicKey }, signingKeyId: issuerKeyId,
+      areaDirectory: testAreaDirectory },
     now: () => now,
   });
   return { app, store };
@@ -206,6 +211,7 @@ function warningEvent(certificate, deviceKey, overrides = {}) {
     geometry: { type: 'GeometryCollection', geometries: [] }, severity: 'HIGH', source: 'GOVERNMENT',
     source_version: issuedAt, event_version: 1, issued_at: issuedAt, expires_at: '2026-10-20T00:00:00.000Z',
     attributes: { title: '颱風警戒', content: '請留意官方資訊', category: 'WEATHER', area_id: 'tw.national',
+      affected_area_ids: ['tw.63000050'],
       theme: 'announcement', has_map_location: false, government_device_certificate: certificate },
     signing_key_id: deviceKeyIdForPublicKey(deviceKey.publicKey),
     signer_public_key: publicKeySpkiBase64(deviceKey.publicKey),
@@ -312,6 +318,36 @@ test('government warning upload verifies the certificate and is idempotent by ev
     const invalid = await app.inject({ method: 'POST', url: '/api/v1/government/warnings', headers, payload: invalidSignature });
     assert.equal(invalid.statusCode, 400);
     assert.ok(store.audits.some((entry) => entry.action === 'GOVERNMENT_WARNING_RECEIVED'));
+  } finally { await app.close(); }
+});
+
+test('government warning upload validates affected areas and rejects changed signed scope', async () => {
+  const { app, store } = await setup();
+  try {
+    const token = await login(app);
+    const { certificate, deviceKey } = await issueCertificate(app, store, token, generateEd25519KeyPair());
+    const headers = { authorization: `Bearer ${token}` };
+    for (const affectedAreaIds of [[], ['tw.63000', 'tw.63000'], ['tw.99999']]) {
+      const invalid = warningEvent(certificate, deviceKey, { attributes: {
+        ...warningEvent(certificate, deviceKey).attributes,
+        affected_area_ids: affectedAreaIds,
+      } });
+      const response = await app.inject({ method: 'POST', url: '/api/v1/government/warnings', headers, payload: invalid });
+      assert.equal(response.statusCode, 400);
+      assert.equal(response.json().error, 'government_warning_scope_invalid');
+    }
+    const event = warningEvent(certificate, deviceKey);
+    event.attributes.affected_area_ids = ['tw.63000'];
+    const changedSignedScope = await app.inject({ method: 'POST', url: '/api/v1/government/warnings', headers, payload: event });
+    assert.equal(changedSignedScope.statusCode, 400);
+    assert.equal(changedSignedScope.json().error, 'government_warning_integrity_invalid');
+
+    const legacy = warningEvent(certificate, deviceKey);
+    delete legacy.attributes.affected_area_ids;
+    const signedLegacy = signEvent(legacy, deviceKey.privateKey);
+    const legacyAccepted = await app.inject({ method: 'POST', url: '/api/v1/government/warnings', headers,
+      payload: signedLegacy });
+    assert.equal(legacyAccepted.statusCode, 202);
   } finally { await app.close(); }
 });
 

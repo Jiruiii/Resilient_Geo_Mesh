@@ -75,6 +75,11 @@ import {
   createAreaResolvers,
   normalizeAreaCatalog,
 } from './sources/areas.mjs';
+import {
+  administrativeAreaSourceVersion,
+  generateAdministrativeAreaAssets,
+  renderAndroidGovernmentAreaIds,
+} from './sources/administrative-area-index.mjs';
 import { TAIWAN_COUNTIES } from './sources/taiwan-counties.mjs';
 import { getSourceDefinition } from '../server/src/source-registry.mjs';
 
@@ -247,6 +252,46 @@ async function areaCatalogCommand(options) {
   await mkdir(path.dirname(outPath), { recursive: true });
   await writeJson(outPath, catalog);
   console.log(JSON.stringify({ out: outPath, area_count: catalog.area_count, coverage: catalog.coverage }, null, 2));
+}
+
+async function administrativeAreaIndexCommand(options) {
+  const countyPath = requireOption(options, 'county');
+  const townPath = requireOption(options, 'town');
+  const directoryPath = requireOption(options, 'directory_out');
+  const flutterDirectoryPath = requireOption(options, 'flutter_directory_out');
+  const spatialPath = requireOption(options, 'spatial_out');
+  const androidAreaIdsPath = requireOption(options, 'android_area_ids_out');
+  const [countyBytes, townBytes] = await Promise.all([
+    readFile(countyPath),
+    readFile(townPath),
+  ]);
+  const { directory, spatialIndex } = generateAdministrativeAreaAssets({
+    counties: JSON.parse(countyBytes.toString('utf8')),
+    towns: JSON.parse(townBytes.toString('utf8')),
+    sourceVersion: administrativeAreaSourceVersion(countyBytes, townBytes),
+  });
+  const directoryJson = `${JSON.stringify(directory)}\n`;
+  const spatialJson = `${JSON.stringify(spatialIndex)}\n`;
+  const androidAreaIdsSource = renderAndroidGovernmentAreaIds(directory);
+  const outputFiles = [
+    [directoryPath, directoryJson],
+    [flutterDirectoryPath, directoryJson],
+    [spatialPath, spatialJson],
+    [androidAreaIdsPath, androidAreaIdsSource],
+  ];
+  await Promise.all(outputFiles.map(async ([filePath, contents]) => {
+    await mkdir(path.dirname(filePath), { recursive: true });
+    await writeFile(filePath, contents, 'utf8');
+  }));
+  console.log(JSON.stringify({
+    source_version: directory.source_version,
+    county_count: directory.areas.filter((area) => area.level === 'county').length,
+    town_count: directory.areas.filter((area) => area.level === 'town').length,
+    directory_bytes: Buffer.byteLength(directoryJson),
+    spatial_index_bytes: Buffer.byteLength(spatialJson),
+    android_area_ids_bytes: Buffer.byteLength(androidAreaIdsSource),
+    outputs: [directoryPath, flutterDirectoryPath, spatialPath, androidAreaIdsPath],
+  }, null, 2));
 }
 
 async function exportMapCommand(options) {
@@ -862,6 +907,7 @@ function printHelp() {
   console.log(`Usage:
   node pipeline/cli.mjs keygen --out-dir <dir> [--key-id <id>]
   node pipeline/cli.mjs area-catalog --input <county.geojson,town.geojson> --out <area-catalog.json>
+  node pipeline/cli.mjs area-index --county <county.geojson> --town <town.geojson> --directory-out <data/administrative-area-directory.json> --flutter-directory-out <flutter/assets/map/boundaries/taiwan-administrative-area-directory.json> --spatial-out <flutter/assets/map/boundaries/taiwan-administrative-area-index.json> --android-area-ids-out <android/app/src/main/java/com/resilientgeo/mesh/report/GovernmentAreaIds.kt>
   node pipeline/cli.mjs export-map --input <features.json[,more.json]> --out <static-features.json>
   node pipeline/cli.mjs collect --source tdx-road-events --out-dir <dir>
   node pipeline/cli.mjs collect --source cwa-earthquake|cwa-weather-warning|cwa-typhoon-warning|ncdr-hazard-events --out-dir <dir>
@@ -891,7 +937,7 @@ Live CWA collection reads CWA_API_KEY and optional CWA_EARTHQUAKE_ENDPOINT /
 CWA_WARNING_ENDPOINT / CWA_TYPHOON_ENDPOINT. Live NCDR collection reads
 NCDR_ALERT_API_KEY (legacy NCDR_API_KEY is accepted), then calls the configured
 NCDR_ALERT_ENDPOINT list route and NCDR_ALERT_DETAIL_ENDPOINT CAP detail route
-(the `/api/datastore` to `/api/dump/datastore` route is derived automatically).
+(the /api/datastore to /api/dump/datastore route is derived automatically).
 Missing or unauthorized access writes collection metadata with
 source_status=blocked_by_auth and exits non-zero.
 
@@ -910,6 +956,7 @@ async function main() {
   const { command, options } = parseArgs(process.argv.slice(2));
   if (command === 'keygen') return keygen(options);
   if (command === 'area-catalog') return areaCatalogCommand(options);
+  if (command === 'area-index') return administrativeAreaIndexCommand(options);
   if (command === 'export-map') return exportMapCommand(options);
   if (command === 'collect') return collect(options);
   if (command === 'normalize') return normalizeCommand(options);

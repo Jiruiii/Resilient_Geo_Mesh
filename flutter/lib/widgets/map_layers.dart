@@ -14,6 +14,7 @@ import '../data/supply_status.dart';
 import 'rescue_marker.dart';
 
 export '../data/supply_status.dart' show isSupplyStationEvent;
+export '../data/alert_category.dart' show governmentAnnouncementCategoryLabel;
 
 typedef StaticFeatureSelection = void Function(List<StaticFeature> features);
 typedef MeshEventSelection = void Function(MeshEvent event);
@@ -48,25 +49,23 @@ class MapIconCatalog {
   static const IconData locatorSound = LucideIcons.volume2;
   static const IconData supplyStation = LucideIcons.packageOpen;
 
-  static IconData forEvent(MeshEvent event) =>
-      isSupplyStationEvent(event)
-          ? supplyStation
-          : isSupplyEvent(event)
-          ? LucideIcons.box
-          : disaster;
+  static IconData forEvent(MeshEvent event) {
+    if (event.namespace == 'official.announcement') {
+      return switch (event.attributes?['category']) {
+        'SAFETY' => LucideIcons.shield,
+        'WEATHER' => LucideIcons.cloudSun,
+        'ROAD' => LucideIcons.road,
+        'SHELTER' => shelter,
+        'SUPPLY_STATION' => supplyStation,
+        'OTHER' => LucideIcons.info,
+        _ => disaster,
+      };
+    }
+    if (isSupplyStationEvent(event)) return supplyStation;
+    if (isSupplyEvent(event)) return LucideIcons.box;
+    return disaster;
+  }
 }
-
-String governmentAnnouncementCategoryLabel(Object? category) =>
-    switch (category) {
-      'SAFETY' => '安全提醒',
-      'WEATHER' => '天氣',
-      'ROAD' => '道路',
-      'SHELTER' => '避難收容',
-      'SUPPLY_STATION' => '物資站',
-      'OTHER' => '其他',
-      String value => value,
-      _ => '未分類',
-    };
 
 class MapMarkerData {
   const MapMarkerData({

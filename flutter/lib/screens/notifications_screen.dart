@@ -5,6 +5,7 @@ import '../data/alert_category.dart';
 import '../data/government_announcement_time.dart';
 import '../data/map_models.dart';
 import '../data/rescue_request_models.dart';
+import '../data/taiwan_administrative_area_directory.dart';
 import '../widgets/map_layers.dart';
 
 class NotificationsScreen extends StatefulWidget {
@@ -19,6 +20,7 @@ class NotificationsScreen extends StatefulWidget {
     this.onDeleteAll,
     this.onUndoDelete,
     this.onEventMapRequested,
+    this.areaDirectory,
   });
 
   final List<MeshEvent> events;
@@ -33,6 +35,7 @@ class NotificationsScreen extends StatefulWidget {
   final VoidCallback? onDeleteAll;
   final ValueChanged<MeshEvent>? onUndoDelete;
   final ValueChanged<MeshEvent>? onEventMapRequested;
+  final TaiwanAdministrativeAreaDirectory? areaDirectory;
 
   @override
   State<NotificationsScreen> createState() => _NotificationsScreenState();
@@ -141,6 +144,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                                           in entry.value) ...<Widget>[
                                         _EventCard(
                                           event: event,
+                                          areaDirectory: widget.areaDirectory,
                                           isRead: widget.readEventKeys.contains(
                                             meshEventIdentity(event),
                                           ),
@@ -445,6 +449,7 @@ class _CategoryGroupHeader extends StatelessWidget {
 class _EventCard extends StatelessWidget {
   const _EventCard({
     required this.event,
+    required this.areaDirectory,
     required this.isRead,
     required this.isExpanded,
     required this.onTap,
@@ -454,6 +459,7 @@ class _EventCard extends StatelessWidget {
   });
 
   final MeshEvent event;
+  final TaiwanAdministrativeAreaDirectory? areaDirectory;
   final bool isRead;
   final bool isExpanded;
   final VoidCallback onTap;
@@ -467,7 +473,6 @@ class _EventCard extends StatelessWidget {
         event.namespace?.startsWith('demo') == true ||
         event.source?.toLowerCase() == 'demo';
     final announcement = event.namespace == 'official.announcement';
-    final areaId = event.attributes?['area_id'];
     final mapPoint =
         event.geometry is PointGeometry
             ? (event.geometry! as PointGeometry).point
@@ -476,7 +481,7 @@ class _EventCard extends StatelessWidget {
     final rescue = RescueRequestView.fromEvent(event);
     final supplyStation = isSupplyStationEvent(event);
     final alertCategory = alertCategoryLabelFor(event);
-    final affectedArea = _affectedAreaFor(event, areaId);
+    final affectedArea = _affectedAreaFor(event, areaDirectory);
     final stateLabel = _eventStateLabel(event);
     final taiwanTime = announcement || event.hasCwaWarningValidTime;
     final details = <String>[
@@ -509,12 +514,7 @@ class _EventCard extends StatelessWidget {
         '狀態：官方簽章已驗證'
       else
         '狀態：$stateLabel',
-      if (announcement)
-        '範圍：${areaId == 'tw.national'
-            ? '全台灣'
-            : areaId is String
-            ? areaId
-            : '未指定'}',
+      if (announcement) '範圍：$affectedArea',
       if (announcement) '版本：${event.eventVersion ?? 1}',
       if (announcement &&
           event.attributes?['has_map_location'] == true &&
@@ -702,13 +702,30 @@ Set<String> _categoryLabels(Iterable<MeshEvent> events) =>
 
 String _categoryFor(MeshEvent event) => alertCategoryLabelFor(event) ?? '一般通知';
 
-String _affectedAreaFor(MeshEvent event, Object? areaId) {
+String _affectedAreaFor(
+  MeshEvent event,
+  TaiwanAdministrativeAreaDirectory? areaDirectory,
+) {
   final affectedArea = event.attributes?['affected_area'];
   if (affectedArea is String && affectedArea.trim().isNotEmpty) {
     return affectedArea.trim();
   }
-  if (event.namespace == 'official.announcement' && areaId is String) {
-    return areaId == 'tw.national' ? '全台灣' : areaId;
+  if (event.namespace == 'official.announcement') {
+    final rawIds = event.attributes?['affected_area_ids'];
+    final affectedAreaIds =
+        rawIds is List
+            ? rawIds.whereType<String>().toList(growable: false)
+            : const <String>[];
+    final legacyAreaId = event.attributes?['area_id'];
+    final areaIds =
+        affectedAreaIds.isNotEmpty
+            ? affectedAreaIds
+            : legacyAreaId is String
+            ? <String>[legacyAreaId]
+            : const <String>[];
+    if (areaIds.isEmpty) return '未指定';
+    if (areaDirectory != null) return areaDirectory.displayNames(areaIds);
+    return areaIds.map((id) => id == 'tw.national' ? '全台灣' : id).join('、');
   }
   return '未提供';
 }

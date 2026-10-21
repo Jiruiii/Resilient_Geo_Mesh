@@ -27,6 +27,7 @@ import '../data/route_event_snapshot.dart';
 import '../data/map_search.dart';
 import '../data/map_search_asset.dart';
 import '../data/ncdr_map_filter.dart';
+import '../data/taiwan_administrative_area_directory.dart';
 import '../data/offline_address_pack_store.dart';
 import '../data/offline_map_asset_store.dart';
 import '../data/rescue_service.dart';
@@ -57,6 +58,7 @@ class MapScreen extends StatefulWidget {
     this.rescueService,
     this.onViewportSettled,
     this.sirenPanelBuilder,
+    this.administrativeAreaDirectory,
     this.notificationFocusEvent,
     this.notificationFocusRequestId = 0,
   });
@@ -92,6 +94,7 @@ class MapScreen extends StatefulWidget {
 
   /// Built by 06 Task 26; null hides the locator-siren entry point.
   final Widget Function(BuildContext, RescueFlowController)? sirenPanelBuilder;
+  final TaiwanAdministrativeAreaDirectory? administrativeAreaDirectory;
 
   @override
   State<MapScreen> createState() => _MapScreenState();
@@ -1998,6 +2001,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
               alignment: Alignment.bottomCenter,
               child: FeatureDetailsSheet.event(
                 event: _selectedEvent!,
+                areaDirectory: widget.administrativeAreaDirectory,
                 corroboration: _corroborationOf(_selectedEvent!),
                 onClose: _closeDetails,
                 confirmedEarlierVersion: AttestationIndex.fromEvents(

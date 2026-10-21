@@ -9,7 +9,46 @@ import '../data/government_announcement_time.dart';
 import '../data/government_api.dart';
 import '../data/government_warning_upload_queue.dart';
 import '../data/map_models.dart';
+import '../data/taiwan_administrative_area_directory.dart';
+import '../data/taiwan_administrative_area_index.dart';
+import '../widgets/administrative_area_selector.dart';
 import 'government_announcement_location_picker.dart';
+
+typedef _AnnouncementAreaData =
+    ({
+      TaiwanAdministrativeAreaDirectory directory,
+      TaiwanAdministrativeAreaIndex index,
+    });
+
+Future<_AnnouncementAreaData>? _announcementAreaData;
+
+Future<_AnnouncementAreaData> _loadAnnouncementAreaData() async {
+  final cached = _announcementAreaData;
+  if (cached != null) {
+    try {
+      return await cached;
+    } on Object {
+      if (identical(_announcementAreaData, cached)) {
+        _announcementAreaData = null;
+      }
+      rethrow;
+    }
+  }
+  final loading = () async {
+    final directory = await TaiwanAdministrativeAreaDirectory.load();
+    final index = await TaiwanAdministrativeAreaIndex.load(directory);
+    return (directory: directory, index: index);
+  }();
+  _announcementAreaData = loading;
+  try {
+    return await loading;
+  } on Object {
+    if (identical(_announcementAreaData, loading)) {
+      _announcementAreaData = null;
+    }
+    rethrow;
+  }
+}
 
 class _AnnouncementTimeParts {
   const _AnnouncementTimeParts(this.hour, this.minute, this.second);
@@ -46,9 +85,16 @@ const Set<String> _announcementCategoriesRequiringLocation = <String>{
 };
 
 class GovernmentWorkbenchScreen extends StatefulWidget {
-  const GovernmentWorkbenchScreen({super.key, required this.auth});
+  const GovernmentWorkbenchScreen({
+    super.key,
+    required this.auth,
+    this.areaDirectory,
+    this.areaIndex,
+  }) : assert((areaDirectory == null) == (areaIndex == null));
 
   final GovernmentAuthController auth;
+  final TaiwanAdministrativeAreaDirectory? areaDirectory;
+  final TaiwanAdministrativeAreaIndex? areaIndex;
 
   @override
   State<GovernmentWorkbenchScreen> createState() =>
@@ -69,9 +115,11 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen>
   List<Map<String, dynamic>> _announcements = const <Map<String, dynamic>>[];
   List<Map<String, dynamic>> _users = const <Map<String, dynamic>>[];
   List<Map<String, dynamic>> _deviceWarnings = const <Map<String, dynamic>>[];
+  TaiwanAdministrativeAreaDirectory? _areaDirectory;
   bool? _emergencyModeEnabled;
   bool _loading = true;
   bool _busy = false;
+  bool _areaDataLoading = false;
   bool _warningUploadActive = false;
   Object? _error;
   Timer? _automaticWarningUploadTimer;
@@ -105,6 +153,7 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen>
   @override
   void initState() {
     super.initState();
+    _areaDirectory = widget.areaDirectory;
     WidgetsBinding.instance.addObserver(this);
     _refresh();
     if (widget.auth.androidDeviceMode &&
@@ -123,12 +172,17 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen>
     _scheduleAnnouncementExpiryUpdate();
   }
 
-  Future<void> _refresh() async {
+  Future<void> _refresh({
+    String? expectedAnnouncementId,
+    Set<String>? expectedAreaIds,
+    int? expectedEventVersion,
+  }) async {
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
+      await _ensureAreaDirectoryLoaded();
       await _loadHiddenAnnouncements();
       if (widget.auth.androidDeviceMode &&
           widget.auth.user?.role == 'GOVERNMENT') {
@@ -159,22 +213,64 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen>
         if (_isAdmin) widget.auth.api.listUsers(),
       ]);
       if (!mounted) return;
+      final announcements = (values[1] as List<Map<String, dynamic>>)
+          .where((announcement) => announcement['retracted'] != true)
+          .toList(growable: false);
       setState(() {
         _reports = values[0] as List<Map<String, dynamic>>;
-        _announcements = (values[1] as List<Map<String, dynamic>>)
-            .where((announcement) => announcement['retracted'] != true)
-            .toList(growable: false);
+        _announcements = announcements;
         if (_isAdmin) _users = values[2] as List<Map<String, dynamic>>;
       });
       _scheduleAnnouncementExpiryUpdate();
+      if (expectedAnnouncementId != null && expectedAreaIds != null) {
+        final saved = announcements.where(
+          (announcement) => announcement['event_id'] == expectedAnnouncementId,
+        );
+        final savedAnnouncement = saved.isEmpty ? null : saved.first;
+        final rawSavedAreaIds = savedAnnouncement?['affected_area_ids'];
+        final savedAreaIds =
+            rawSavedAreaIds is List
+                ? _areaDirectory!.normalizeSelection(
+                  rawSavedAreaIds.whereType<String>().toSet(),
+                )
+                : const <String>{};
+        final normalizedExpectedAreaIds = _areaDirectory!.normalizeSelection(
+          expectedAreaIds,
+        );
+        final areaMatches =
+            savedAreaIds.length == normalizedExpectedAreaIds.length &&
+            savedAreaIds.containsAll(normalizedExpectedAreaIds);
+        final versionMatches =
+            expectedEventVersion == null ||
+            savedAnnouncement?['event_version'] == expectedEventVersion;
+        if (!areaMatches || !versionMatches) {
+          throw const GovernmentApiException(
+            'announcement_scope_not_saved',
+            409,
+          );
+        }
+      }
       if (widget.auth.androidDeviceMode &&
           widget.auth.user?.role == 'GOVERNMENT') {
         unawaited(_retryPendingDeviceWarnings());
       }
     } on Object catch (error) {
       if (mounted) setState(() => _error = error);
+      if (expectedAnnouncementId != null) rethrow;
     } finally {
       if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _ensureAreaDirectoryLoaded() async {
+    if (_areaDirectory != null) return;
+    try {
+      final directory = await TaiwanAdministrativeAreaDirectory.load();
+      if (mounted) setState(() => _areaDirectory = directory);
+    } on Object catch (error) {
+      debugPrint(
+        'Government announcement area directory failed to load: $error',
+      );
     }
   }
 
@@ -353,9 +449,18 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen>
           child: Align(
             alignment: Alignment.centerRight,
             child: FilledButton.icon(
-              onPressed: _busy ? null : () => _editAnnouncement(),
-              icon: const Icon(Icons.add),
-              label: const Text('新增公告'),
+              onPressed:
+                  _busy || _areaDataLoading ? null : () => _editAnnouncement(),
+              icon:
+                  _areaDataLoading
+                      ? const SizedBox(
+                        key: ValueKey('announcement-area-loading'),
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                      : const Icon(Icons.add),
+              label: Text(_areaDataLoading ? '載入行政區資料…' : '新增公告'),
             ),
           ),
         ),
@@ -595,10 +700,7 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen>
   Widget _announcementCard(Map<String, dynamic> item) {
     final expired = _isAnnouncementExpired(item);
     final muted = expired ? Colors.grey.shade700 : null;
-    final area =
-        item['area_id'] == 'tw.national'
-            ? '全台灣'
-            : item['area_id'] as String? ?? '未指定範圍';
+    final area = _announcementAreaLabel(item);
     return Card(
       color: expired ? Colors.grey.shade200 : null,
       child: Padding(
@@ -668,6 +770,26 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen>
         ),
       ),
     );
+  }
+
+  String _announcementAreaLabel(Map<String, dynamic> item) {
+    final rawAreaIds = item['affected_area_ids'];
+    final affectedAreaIds =
+        rawAreaIds is List
+            ? rawAreaIds.whereType<String>().toList(growable: false)
+            : const <String>[];
+    final legacyAreaId = item['area_id'];
+    final areaIds =
+        affectedAreaIds.isNotEmpty
+            ? affectedAreaIds
+            : legacyAreaId is String
+            ? <String>[legacyAreaId]
+            : const <String>[];
+    if (areaIds.isEmpty) return '未指定範圍';
+    if (_areaDirectory != null) return _areaDirectory!.displayNames(areaIds);
+    return areaIds
+        .map((areaId) => areaId == 'tw.national' ? '全台灣' : areaId)
+        .join('、');
   }
 
   Future<void> _confirmHideExpiredAnnouncement(
@@ -901,6 +1023,29 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen>
   });
 
   Future<void> _editAnnouncement([Map<String, dynamic>? existing]) async {
+    if (mounted) setState(() => _areaDataLoading = true);
+    late final _AnnouncementAreaData areaData;
+    try {
+      final directory = widget.areaDirectory;
+      final index = widget.areaIndex;
+      areaData =
+          directory != null && index != null
+              ? (directory: directory, index: index)
+              : await _loadAnnouncementAreaData();
+    } on Object catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('行政區資料無法載入，公告尚未送出。請重新開啟表單再試一次。')),
+        );
+      }
+      debugPrint('Government announcement area data failed to load: $error');
+      return;
+    } finally {
+      if (mounted) setState(() => _areaDataLoading = false);
+    }
+    if (!mounted) return;
+    final directory = areaData.directory;
+    final areaIndex = areaData.index;
     final title =
         _announcementTitle..text = existing?['title'] as String? ?? '';
     final content =
@@ -912,8 +1057,55 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen>
         category == 'SUPPLY_STATION'
             ? 'LOW'
             : existing?['severity'] as String? ?? 'MEDIUM';
+    final storedAreaIds = existing?['affected_area_ids'];
+    final hasStoredAreaIds =
+        storedAreaIds is List &&
+        storedAreaIds.any((areaId) => areaId is String);
+    var areaRangeWasManuallySet = hasStoredAreaIds;
+    Set<String> affectedAreaIds =
+        hasStoredAreaIds
+            ? directory.normalizeSelection(
+              storedAreaIds.whereType<String>().toSet(),
+            )
+            : existing?['area_id'] == 'tw.national'
+            ? const <String>{TaiwanAdministrativeAreaDirectory.nationalAreaId}
+            : <String>{};
+    // area_id is the compatibility transport scope. Only affected_area_ids
+    // records the range that a publisher actually selected.
+    var pointCandidates =
+        location == null
+            ? <TaiwanAdministrativeArea>[]
+            : areaIndex.resolvePoint(location);
+    Set<String>? pendingPointSuggestion;
+    if (location != null && pointCandidates.length == 1) {
+      final suggestion = pointCandidates.single;
+      final isLegacyScope = existing != null && !hasStoredAreaIds;
+      final suggestionIsCovered =
+          affectedAreaIds.contains(suggestion.areaId) ||
+          affectedAreaIds.contains(suggestion.parentAreaId);
+      if (existing == null && affectedAreaIds.isEmpty) {
+        affectedAreaIds = <String>{suggestion.areaId};
+      } else if (isLegacyScope || !suggestionIsCovered) {
+        pendingPointSuggestion = <String>{suggestion.areaId};
+      }
+    }
+    bool pointIsWithinAffectedAreas() {
+      if (location == null) return true;
+      if (affectedAreaIds.contains(
+        TaiwanAdministrativeAreaDirectory.nationalAreaId,
+      )) {
+        return true;
+      }
+      return pointCandidates.any(
+        (area) =>
+            affectedAreaIds.contains(area.areaId) ||
+            affectedAreaIds.contains(area.parentAreaId),
+      );
+    }
+
     String? titleError;
     String? contentError;
+    var mismatchAcknowledged = false;
     final accepted = await showDialog<bool>(
       context: context,
       builder:
@@ -926,6 +1118,35 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen>
                 }
               }
 
+              Future<void> pickAffectedAreas() async {
+                final selected = await AdministrativeAreaSelector.show(
+                  context,
+                  directory: directory,
+                  selectedIds: affectedAreaIds,
+                  allowNational: true,
+                  title: '公告影響範圍',
+                );
+                if (selected != null) {
+                  setDialogState(() {
+                    affectedAreaIds = directory.normalizeSelection(selected);
+                    areaRangeWasManuallySet = true;
+                    pendingPointSuggestion = null;
+                    mismatchAcknowledged = false;
+                  });
+                }
+              }
+
+              void applyPointSuggestion() {
+                final suggestion = pendingPointSuggestion;
+                if (suggestion == null) return;
+                setDialogState(() {
+                  affectedAreaIds = directory.normalizeSelection(suggestion);
+                  areaRangeWasManuallySet = true;
+                  pendingPointSuggestion = null;
+                  mismatchAcknowledged = false;
+                });
+              }
+
               Future<void> pickLocation() async {
                 final result =
                     await showDialog<GovernmentAnnouncementLocationSelection>(
@@ -935,8 +1156,37 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen>
                             initialLocation: location,
                           ),
                     );
-                if (result != null) {
-                  setDialogState(() => location = result.point);
+                if (result != null && result.point != location) {
+                  final nextLocation = result.point;
+                  final nextCandidates =
+                      nextLocation == null
+                          ? <TaiwanAdministrativeArea>[]
+                          : areaIndex.resolvePoint(nextLocation);
+                  final nextSuggestion =
+                      nextCandidates.length == 1
+                          ? <String>{nextCandidates.single.areaId}
+                          : null;
+                  setDialogState(() {
+                    location = nextLocation;
+                    pointCandidates = nextCandidates;
+                    mismatchAcknowledged = false;
+                    if (nextSuggestion != null &&
+                        existing == null &&
+                        !areaRangeWasManuallySet &&
+                        affectedAreaIds.isEmpty) {
+                      affectedAreaIds = nextSuggestion;
+                      pendingPointSuggestion = null;
+                    } else if (nextSuggestion != null &&
+                        ((existing != null && !hasStoredAreaIds) ||
+                            (!affectedAreaIds.contains(nextSuggestion.single) &&
+                                !affectedAreaIds.contains(
+                                  nextCandidates.single.parentAreaId,
+                                )))) {
+                      pendingPointSuggestion = nextSuggestion;
+                    } else {
+                      pendingPointSuggestion = null;
+                    }
+                  });
                 }
               }
 
@@ -951,6 +1201,16 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen>
                   location != null;
               final locationRequired = _announcementCategoriesRequiringLocation
                   .contains(category);
+              final areaRangeValid = affectedAreaIds.isNotEmpty;
+              final pointRangeMismatch =
+                  location != null &&
+                  areaRangeValid &&
+                  !pointIsWithinAffectedAreas();
+              final canPublish =
+                  expiryValid &&
+                  locationValid &&
+                  areaRangeValid &&
+                  (!pointRangeMismatch || mismatchAcknowledged);
               return AlertDialog(
                 title: Text(existing == null ? '新增官方公告' : '修訂官方公告'),
                 content: SizedBox(
@@ -987,13 +1247,128 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen>
                             }
                           },
                         ),
-                        const Align(
+                        if (existing != null) ...<Widget>[
+                          const Align(
+                            alignment: Alignment.centerLeft,
+                            child: Padding(
+                              padding: EdgeInsets.only(top: 8, bottom: 4),
+                              child: Text(
+                                '已儲存影響範圍',
+                                style: TextStyle(fontWeight: FontWeight.w600),
+                              ),
+                            ),
+                          ),
+                          if (hasStoredAreaIds)
+                            Align(
+                              alignment: Alignment.centerLeft,
+                              child: Text(
+                                '已儲存：${directory.displayNames(storedAreaIds.whereType<String>().toList())}',
+                              ),
+                            ),
+                        ],
+                        if (existing != null && !hasStoredAreaIds)
+                          const Align(
+                            alignment: Alignment.centerLeft,
+                            child: Padding(
+                              padding: EdgeInsets.only(bottom: 4),
+                              child: Text(
+                                '現有範圍尚無細部行政區資料',
+                                key: ValueKey('announcement-area-legacy-scope'),
+                              ),
+                            ),
+                          ),
+                        Align(
                           alignment: Alignment.centerLeft,
-                          child: Chip(
-                            avatar: Icon(Icons.public, size: 18),
-                            label: Text('全台灣公告'),
+                          child: Padding(
+                            padding: EdgeInsets.only(top: 8, bottom: 4),
+                            child: Text(
+                              existing == null ? '影響範圍' : '本次修訂影響範圍',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
                           ),
                         ),
+                        if (affectedAreaIds.isEmpty)
+                          const Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              '尚未選擇影響範圍。請依座標建議或手動選擇。',
+                              key: ValueKey('announcement-area-required'),
+                              style: TextStyle(color: Colors.red),
+                            ),
+                          )
+                        else
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: Wrap(
+                              spacing: 6,
+                              runSpacing: 4,
+                              children: affectedAreaIds
+                                  .map(
+                                    (areaId) => Chip(
+                                      label: Text(
+                                        directory.displayName(areaId) ?? areaId,
+                                      ),
+                                    ),
+                                  )
+                                  .toList(growable: false),
+                            ),
+                          ),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: TextButton.icon(
+                            key: const ValueKey('announcement-area-selector'),
+                            onPressed: pickAffectedAreas,
+                            icon: const Icon(Icons.location_city),
+                            label: const Text('調整影響範圍'),
+                          ),
+                        ),
+                        if (location != null && pointCandidates.length == 1)
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              pendingPointSuggestion == null
+                                  ? '座標建議：${directory.displayName(pointCandidates.single.areaId)}'
+                                  : '座標建議（尚未套用）：${directory.displayName(pointCandidates.single.areaId)}',
+                              key: const ValueKey(
+                                'announcement-area-point-suggestion',
+                              ),
+                            ),
+                          ),
+                        if (location != null && pointCandidates.length > 1)
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              '座標位於行政區交界，候選：${pointCandidates.map((area) => directory.displayName(area.areaId)).join('、')}。請手動確認影響範圍。',
+                              key: const ValueKey(
+                                'announcement-area-ambiguous-point',
+                              ),
+                            ),
+                          ),
+                        if (location != null && pointCandidates.isEmpty)
+                          const Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              '座標無法對應到鄉鎮市區，請手動選擇影響範圍。',
+                              key: ValueKey(
+                                'announcement-area-unresolved-point',
+                              ),
+                            ),
+                          ),
+                        if (pendingPointSuggestion != null)
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: TextButton(
+                              key: const ValueKey(
+                                'announcement-area-apply-suggestion',
+                              ),
+                              onPressed: applyPointSuggestion,
+                              child: Text(
+                                '套用座標建議：${directory.displayName(pendingPointSuggestion!.single)}',
+                              ),
+                            ),
+                          ),
                         DropdownButtonFormField<String>(
                           value: category,
                           decoration: const InputDecoration(labelText: '公告類別'),
@@ -1080,9 +1455,22 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen>
                         Text(
                           locationRequired
                               ? '道路、避難收容與物資站公告需設定地圖位置，發布後會同時顯示在地圖與通知中。'
-                              : '公告範圍為全台灣；地圖位置選填，未指定時只顯示在通知中。',
+                              : '地圖位置選填；未指定位置時只顯示在通知中。影響範圍需另外設定。',
                           style: Theme.of(context).textTheme.bodySmall,
                         ),
+                        if (pointRangeMismatch)
+                          CheckboxListTile(
+                            key: const ValueKey(
+                              'announcement-area-mismatch-acknowledgement',
+                            ),
+                            value: mismatchAcknowledged,
+                            contentPadding: EdgeInsets.zero,
+                            title: const Text('我已確認座標與影響範圍不一致，仍要發布'),
+                            onChanged:
+                                (value) => setDialogState(
+                                  () => mismatchAcknowledged = value == true,
+                                ),
+                          ),
                         if (!locationValid)
                           Align(
                             alignment: Alignment.centerLeft,
@@ -1129,7 +1517,7 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen>
                   ),
                   FilledButton(
                     onPressed:
-                        expiryValid && locationValid
+                        canPublish
                             ? () {
                               final nextTitleError =
                                   title.text.trim().isEmpty ? 'required' : null;
@@ -1163,6 +1551,9 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen>
       'category': category,
       'severity': category == 'SUPPLY_STATION' ? 'LOW' : severity,
       'expires_at': expiry.toUtc().toIso8601String(),
+      'affected_area_ids': directory
+          .normalizeSelection(affectedAreaIds)
+          .toList(growable: false),
       if (location != null) ...<String, Object?>{
         'longitude': location!.longitude,
         'latitude': location!.latitude,
@@ -1174,13 +1565,38 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen>
             widget.auth.user?.role == 'GOVERNMENT') {
           await widget.auth.createDeviceGovernmentWarning(input);
         } else {
-          await widget.auth.createAnnouncement(input);
+          final result = await widget.auth.createAnnouncement(input);
+          final eventId = result['event_id'];
+          final eventVersion = result['event_version'];
+          if (eventId is! String || eventVersion is! int) {
+            throw const GovernmentApiException('invalid_response', 502);
+          }
+          try {
+            await _refresh(
+              expectedAnnouncementId: eventId,
+              expectedAreaIds: directory.normalizeSelection(affectedAreaIds),
+              expectedEventVersion: eventVersion,
+            );
+          } on GovernmentApiException catch (error) {
+            if (error.code != 'announcement_scope_not_saved') rethrow;
+            throw const GovernmentApiException(
+              'announcement_create_scope_not_saved',
+              409,
+            );
+          }
+          return;
         }
       } else {
-        await widget.auth.reviseAnnouncement(
+        final result = await widget.auth.reviseAnnouncement(
           existing['event_id'] as String,
           input,
         );
+        await _refresh(
+          expectedAnnouncementId: existing['event_id'] as String,
+          expectedAreaIds: directory.normalizeSelection(affectedAreaIds),
+          expectedEventVersion: result['event_version'] as int?,
+        );
+        return;
       }
       await _refresh();
     });

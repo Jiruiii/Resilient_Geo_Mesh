@@ -7,6 +7,9 @@ import 'ncdr_category.dart';
 /// kind and source description because the feed's `event_type` is a broad
 /// transport type such as `WEATHER_WARNING`.
 String? alertCategoryLabelFor(MeshEvent event) {
+  if (event.namespace == 'official.announcement') {
+    return '政府公告・${governmentAnnouncementCategoryLabel(event.attributes?['category'])}';
+  }
   final ncdrCategory = ncdrCategoryLabelFor(event);
   if (ncdrCategory != null) return ncdrCategory;
   if (event.source?.toUpperCase() != 'CWA') return null;
@@ -22,6 +25,18 @@ String? alertCategoryLabelFor(MeshEvent event) {
       return null;
   }
 }
+
+String governmentAnnouncementCategoryLabel(Object? category) =>
+    switch (category) {
+      'SAFETY' => '安全提醒',
+      'WEATHER' => '天氣',
+      'ROAD' => '道路',
+      'SHELTER' => '避難收容',
+      'SUPPLY_STATION' => '物資站',
+      'OTHER' => '其他',
+      String value => value,
+      _ => '未分類',
+    };
 
 String _weatherWarningCategory(MeshEvent event) {
   final description = event.attributes?['source_description'];

@@ -53,6 +53,7 @@ class GovernmentFeedSyncTest {
                 category = "SAFETY",
                 severity = "HIGH",
                 expiresAt = issuedAt.plus(1, ChronoUnit.DAYS),
+                affectedAreaIds = listOf("tw.national"),
             ),
             deviceKeys.device,
             deviceKeys.certificate,

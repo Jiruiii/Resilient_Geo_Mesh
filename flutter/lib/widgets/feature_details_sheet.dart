@@ -7,6 +7,7 @@ import '../data/government_announcement_time.dart';
 import '../data/map_models.dart';
 import '../data/rescue_request_models.dart';
 import '../data/supply_status.dart';
+import '../data/taiwan_administrative_area_directory.dart';
 import 'map_layers.dart';
 
 class FeatureDetailsSheet extends StatelessWidget {
@@ -16,6 +17,7 @@ class FeatureDetailsSheet extends StatelessWidget {
     required this.snapshotAt,
     required this.onClose,
     this.onPlanEvacuationRoute,
+    this.areaDirectory,
   }) : _feature = feature,
        _event = null,
        corroboration = null,
@@ -27,6 +29,7 @@ class FeatureDetailsSheet extends StatelessWidget {
     required this.onClose,
     this.corroboration,
     this.confirmedEarlierVersion = false,
+    this.areaDirectory,
   }) : _event = event,
        _feature = null,
        snapshotAt = null,
@@ -37,6 +40,7 @@ class FeatureDetailsSheet extends StatelessWidget {
   final String? snapshotAt;
   final VoidCallback onClose;
   final VoidCallback? onPlanEvacuationRoute;
+  final TaiwanAdministrativeAreaDirectory? areaDirectory;
 
   /// 「N 人回報」 for a crowd report several devices agree on; never a verdict.
   final String? corroboration;
@@ -207,6 +211,7 @@ class FeatureDetailsSheet extends StatelessWidget {
           '公告類別',
           governmentAnnouncementCategoryLabel(event.attributes?['category']),
         ),
+        _DetailLine('影響範圍', _governmentAnnouncementArea(event)),
         if (event.attributes?['content'] is String)
           _DetailLine('公告內容', _text(event.attributes?['content'])),
         if (isSupplyStationEvent(event) && event.geometry is PointGeometry)
@@ -250,6 +255,24 @@ class FeatureDetailsSheet extends StatelessWidget {
       ),
       _DetailLine('資料狀態', _eventState(event)),
     ];
+  }
+
+  String _governmentAnnouncementArea(MeshEvent event) {
+    final rawIds = event.attributes?['affected_area_ids'];
+    final affectedAreaIds =
+        rawIds is List
+            ? rawIds.whereType<String>().toList(growable: false)
+            : const <String>[];
+    final legacyAreaId = event.attributes?['area_id'];
+    final areaIds =
+        affectedAreaIds.isNotEmpty
+            ? affectedAreaIds
+            : legacyAreaId is String
+            ? <String>[legacyAreaId]
+            : const <String>[];
+    if (areaIds.isEmpty) return '未提供';
+    if (areaDirectory != null) return areaDirectory!.displayNames(areaIds);
+    return areaIds.map((id) => id == 'tw.national' ? '全台灣' : id).join('、');
   }
 
   List<Widget> _rescueBody(

@@ -125,6 +125,7 @@ class GovernmentPeerInstrumentedTest {
                         category = "SAFETY",
                         severity = "HIGH",
                         expiresAt = Instant.now().plusSeconds(60 * 60),
+                        affectedAreaIds = listOf("tw.national"),
                     ),
                     expectedEventId,
                 )

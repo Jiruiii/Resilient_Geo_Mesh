@@ -187,6 +187,24 @@ void main() {
     expect(find.byIcon(LucideIcons.packageOpen), findsOneWidget);
   });
 
+  test('government shelter announcements use the shelter icon', () {
+    final shelter = MeshEvent(
+      namespace: 'official.announcement',
+      eventId: 'announcement:shelter',
+      eventVersion: 1,
+      eventType: 'GOVERNMENT_ANNOUNCEMENT',
+      severity: 'MEDIUM',
+      source: 'GOVERNMENT',
+      issuedAt: '2026-10-12T00:00:00Z',
+      expiresAt: '2099-01-01T00:00:00Z',
+      applyState: null,
+      geometry: const PointGeometry(GeoPoint(longitude: 121.5, latitude: 25)),
+      attributes: const <String, dynamic>{'category': 'SHELTER'},
+    );
+
+    expect(MapIconCatalog.forEvent(shelter), MapIconCatalog.shelter);
+  });
+
   test('citizen reports cannot acquire the official supply station icon', () {
     final report = MeshEvent(
       namespace: 'crowd.reports',

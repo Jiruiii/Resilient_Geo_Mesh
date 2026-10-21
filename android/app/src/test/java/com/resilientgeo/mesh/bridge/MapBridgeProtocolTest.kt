@@ -125,12 +125,18 @@ class MapBridgeProtocolTest {
             "category" to "WEATHER",
             "severity" to "HIGH",
             "expires_at" to "2026-10-13T00:00:00Z",
+            "affected_area_ids" to listOf("tw.63000050"),
             "longitude" to 121.5,
             "latitude" to 25.0,
         ))!!
         assertEquals("announcement:device:test-1", request.eventId)
         assertEquals("WEATHER", request.input.category)
+        assertEquals(listOf("tw.63000050"), request.input.affectedAreaIds)
         assertEquals(121.5, request.input.location!!.longitude, 0.0)
+        assertNull(MapBridgeProtocol.governmentWarningRequest(mapOf(
+            "title" to "標題", "content" to "內容", "category" to "OTHER", "severity" to "LOW",
+            "expires_at" to "2026-10-13T00:00:00Z", "affected_area_ids" to listOf("tw.63000", 42),
+        )))
         assertNull(MapBridgeProtocol.governmentWarningRequest(mapOf(
             "title" to "標題", "content" to "內容", "category" to "OTHER", "severity" to "LOW",
             "expires_at" to "not-an-instant", "longitude" to 121.5,

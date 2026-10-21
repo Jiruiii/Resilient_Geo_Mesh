@@ -54,6 +54,7 @@ void main() {
       addTearDown(controller.dispose);
 
       await controller.load();
+      expect(controller.notificationAreaIds, <String>{'tw.national'});
 
       expect(
         controller.notificationEvents,
@@ -97,6 +98,102 @@ void main() {
       );
       await restarted.deleteNotification(firstVersion);
       expect(restarted.notificationEvents, contains(revisedVersion));
+    },
+  );
+
+  test(
+    'notification area selection filters local notifications and unread state only',
+    () async {
+      final inArea = _governmentAnnouncement(
+        'notice:in-area',
+        1,
+        affectedAreaIds: <String>['tw.65000040'],
+      );
+      final countyWide = _governmentAnnouncement(
+        'notice:county',
+        1,
+        affectedAreaIds: <String>['tw.65000'],
+      );
+      final nationwide = _governmentAnnouncement(
+        'notice:national',
+        1,
+        affectedAreaIds: <String>['tw.national'],
+      );
+      final outside = _governmentAnnouncement(
+        'notice:outside',
+        1,
+        affectedAreaIds: <String>['tw.64000010'],
+      );
+      final unknown = _governmentAnnouncement(
+        'notice:unknown',
+        1,
+        affectedAreaIds: <String>['tw.99999'],
+      );
+      final legacy = _governmentAnnouncement(
+        'notice:legacy',
+        1,
+        legacyAreaId: 'tw.65000',
+      );
+      final controller = MapAppController(
+        bridge: _InitialEventsBridge(<MeshEvent>[
+          inArea,
+          countyWide,
+          nationwide,
+          outside,
+          unknown,
+          legacy,
+        ]),
+      );
+      addTearDown(controller.dispose);
+      await controller.load();
+
+      await controller.setNotificationAreaIds(<String>{'tw.65000040'});
+      expect(controller.notificationAreaIds, <String>{'tw.65000040'});
+      expect(controller.notificationEvents, <MeshEvent>[
+        inArea,
+        countyWide,
+        nationwide,
+        unknown,
+        legacy,
+      ]);
+      expect(controller.events, contains(outside));
+
+      await controller.markAllNotificationsRead();
+      expect(controller.notificationCount, 0);
+      expect(
+        controller.readEventKeys,
+        isNot(contains(meshEventIdentity(outside))),
+      );
+      await controller.setNotificationAreaIds(<String>{'tw.64000'});
+      expect(
+        controller.notificationEvents,
+        containsAll(<MeshEvent>[outside, nationwide, unknown]),
+      );
+      expect(controller.notificationEvents, hasLength(3));
+      expect(controller.unreadEvents, <MeshEvent>[outside]);
+      expect(controller.notificationCount, 1);
+    },
+  );
+
+  test(
+    'corrupt notification area preferences fall back to nationwide',
+    () async {
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        'map.notification_area_ids': <String>['tw.99999'],
+      });
+      final event = _governmentAnnouncement(
+        'notice:fallback',
+        1,
+        affectedAreaIds: <String>['tw.64000010'],
+      );
+      final controller = MapAppController(
+        bridge: _InitialEventsBridge(<MeshEvent>[event]),
+      );
+      addTearDown(controller.dispose);
+      await controller.load();
+
+      expect(controller.notificationAreaIds, <String>{'tw.national'});
+      expect(controller.notificationEvents, <MeshEvent>[event]);
     },
   );
 
@@ -512,7 +609,12 @@ class _InitialEventsBridge extends _EmptyVerifiedBridge {
   );
 }
 
-MeshEvent _governmentAnnouncement(String eventId, int version) => MeshEvent(
+MeshEvent _governmentAnnouncement(
+  String eventId,
+  int version, {
+  List<String>? affectedAreaIds,
+  String? legacyAreaId,
+}) => MeshEvent(
   namespace: 'official.announcement',
   eventId: eventId,
   eventVersion: version,
@@ -523,10 +625,12 @@ MeshEvent _governmentAnnouncement(String eventId, int version) => MeshEvent(
   expiresAt: '2099-01-01T00:00:00Z',
   applyState: null,
   geometry: const PointGeometry(GeoPoint(longitude: 121.5, latitude: 25)),
-  attributes: const <String, dynamic>{
+  attributes: <String, dynamic>{
     'title': '測試公告',
     'category': 'SUPPLY_STATION',
     'has_map_location': true,
+    if (affectedAreaIds != null) 'affected_area_ids': affectedAreaIds,
+    if (legacyAreaId != null) 'area_id': legacyAreaId,
   },
 );
 

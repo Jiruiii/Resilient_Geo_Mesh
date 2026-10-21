@@ -30,6 +30,9 @@ object MapBridgeProtocol {
         val severity = map["severity"] as? String ?: return null
         val expiryText = map["expires_at"] as? String ?: return null
         val expiresAt = runCatching { Instant.parse(expiryText) }.getOrNull() ?: return null
+        val rawAffectedAreaIds = map["affected_area_ids"] as? List<*> ?: return null
+        if (rawAffectedAreaIds.any { it !is String }) return null
+        val affectedAreaIds = rawAffectedAreaIds.filterIsInstance<String>()
         val hasLongitude = map["longitude"] != null
         val hasLatitude = map["latitude"] != null
         if (hasLongitude != hasLatitude) return null
@@ -40,7 +43,7 @@ object MapBridgeProtocol {
         }
         val eventId = map["event_id"] as? String ?: "announcement:device:${UUID.randomUUID()}"
         return GovernmentWarningRequest(
-            GovernmentWarningInput(title, content, category, severity, expiresAt, location),
+            GovernmentWarningInput(title, content, category, severity, expiresAt, affectedAreaIds, location),
             eventId,
         )
     }

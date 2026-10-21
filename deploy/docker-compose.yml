@@ -32,10 +32,14 @@ services:
       PORT: 8788
       DATABASE_URL: postgresql://${GOVERNMENT_DB_USER:-resilientgeo}:${GOVERNMENT_DB_PASSWORD_URLENCODED:?set URL-encoded GOVERNMENT_DB_PASSWORD_URLENCODED}@government-postgres:5432/resilientgeo
       DATABASE_SSL: disable
+      AREA_CATALOG_PATH: /app/data/area-catalog.json
       SIGNING_PUBLIC_KEY_PATH: /run/secrets/signing_public_key
       SIGNING_KEY_ID: ${SIGNING_KEY_ID:?set SIGNING_KEY_ID}
     secrets:
       - signing_public_key
+    volumes:
+      - ../data/area-catalog.json:/app/data/area-catalog.json:ro
+      - ../data/administrative-area-directory.json:/app/data/administrative-area-directory.json:ro
     read_only: true
     tmpfs:
       - /tmp

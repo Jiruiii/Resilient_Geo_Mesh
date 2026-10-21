@@ -45,6 +45,7 @@ export function loadGovernmentApiConfig(env = process.env) {
     port: port(env, 8788),
     databaseUrl: requiredUrl(env, 'DATABASE_URL', ['postgres:', 'postgresql:']),
     databaseSsl: databaseSsl(env),
+    areaCatalogPath: absolutePath(env, 'AREA_CATALOG_PATH', '/app/data/area-catalog.json'),
     signingPublicKeyPath: signingPublicKeyPath ? absolutePath(env, 'SIGNING_PUBLIC_KEY_PATH') : null,
     signingPublicKeyPem: signingPublicKeyPem ?? null,
     signingKeyId,

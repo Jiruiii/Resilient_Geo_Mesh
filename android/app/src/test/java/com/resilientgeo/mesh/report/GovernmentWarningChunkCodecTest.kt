@@ -13,7 +13,7 @@ class GovernmentWarningChunkCodecTest {
 
     private fun event(id: String = "announcement:device:chunk-1", content: String = "請留意官方資訊") =
         GovernmentWarningFactory.create(
-            GovernmentWarningInput("颱風警戒", content, "WEATHER", "HIGH", issuedAt.plusSeconds(86400)),
+            GovernmentWarningInput("颱風警戒", content, "WEATHER", "HIGH", issuedAt.plusSeconds(86400), listOf("tw.national")),
             keys.device,
             keys.certificate,
             issuedAt,

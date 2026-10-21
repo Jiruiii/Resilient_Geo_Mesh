@@ -3,6 +3,9 @@ import 'package:flutter/material.dart';
 import '../data/government_announcement_time.dart';
 import '../data/government_api.dart';
 import '../data/map_bridge.dart';
+import '../data/taiwan_administrative_area_directory.dart';
+import '../data/taiwan_administrative_area_index.dart';
+import 'notification_area_selection_screen.dart';
 import 'sync_status_screen.dart';
 import 'government_sync_screen.dart';
 import 'government_workbench_screen.dart';
@@ -17,7 +20,16 @@ class ProfileScreen extends StatelessWidget {
     this.bridge,
     this.governmentAuth,
     this.onWebGovernmentFeedRefresh,
-  });
+    this.notificationAreaDirectory,
+    this.notificationAreaIds = const <String>{
+      TaiwanAdministrativeAreaDirectory.nationalAreaId,
+    },
+    this.onNotificationAreaIdsChanged,
+    this.governmentAreaDirectory,
+    this.governmentAreaIndex,
+  }) : assert(
+         (governmentAreaDirectory == null) == (governmentAreaIndex == null),
+       );
 
   final ThemeMode themeMode;
   final bool animationEnabled;
@@ -26,6 +38,38 @@ class ProfileScreen extends StatelessWidget {
   final MapBridge? bridge;
   final GovernmentAuthController? governmentAuth;
   final Future<void> Function()? onWebGovernmentFeedRefresh;
+  final TaiwanAdministrativeAreaDirectory? notificationAreaDirectory;
+  final Set<String> notificationAreaIds;
+  final Future<void> Function(Set<String> areaIds)?
+  onNotificationAreaIdsChanged;
+  final TaiwanAdministrativeAreaDirectory? governmentAreaDirectory;
+  final TaiwanAdministrativeAreaIndex? governmentAreaIndex;
+
+  Future<void> _openNotificationAreaSettings(BuildContext context) async {
+    final directory = notificationAreaDirectory;
+    final onSave = onNotificationAreaIdsChanged;
+    if (directory == null || onSave == null) return;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder:
+            (_) => NotificationAreaSelectionScreen(
+              directory: directory,
+              selectedAreaIds: notificationAreaIds,
+              onSave: onSave,
+            ),
+      ),
+    );
+  }
+
+  String _notificationAreaSummary() {
+    final directory = notificationAreaDirectory;
+    if (directory == null) return '全台灣 · 行政區目錄載入中';
+    final names = notificationAreaIds
+        .map(directory.displayName)
+        .whereType<String>()
+        .toList(growable: false);
+    return names.isEmpty ? '全台灣' : names.join('、');
+  }
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -40,7 +84,11 @@ class ProfileScreen extends StatelessWidget {
     body: ListView(
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
       children: <Widget>[
-        GovernmentAccountSection(controller: governmentAuth),
+        GovernmentAccountSection(
+          controller: governmentAuth,
+          areaDirectory: governmentAreaDirectory,
+          areaIndex: governmentAreaIndex,
+        ),
         const SizedBox(height: 12),
         Card(
           child: ListTile(
@@ -80,6 +128,23 @@ class ProfileScreen extends StatelessWidget {
                         (_) => SyncStatusScreen(bridge: bridge ?? MapBridge()),
                   ),
                 ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Card(
+          child: ListTile(
+            leading: const Icon(Icons.notifications_active_outlined),
+            title: const Text('通知接收區域'),
+            titleTextStyle: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+            subtitle: Text(_notificationAreaSummary()),
+            trailing: const Icon(Icons.chevron_right),
+            onTap:
+                notificationAreaDirectory == null ||
+                        onNotificationAreaIdsChanged == null
+                    ? null
+                    : () => _openNotificationAreaSettings(context),
           ),
         ),
         const SizedBox(height: 12),
@@ -138,9 +203,16 @@ class ProfileScreen extends StatelessWidget {
 }
 
 class GovernmentAccountSection extends StatefulWidget {
-  const GovernmentAccountSection({super.key, this.controller});
+  const GovernmentAccountSection({
+    super.key,
+    this.controller,
+    this.areaDirectory,
+    this.areaIndex,
+  }) : assert((areaDirectory == null) == (areaIndex == null));
 
   final GovernmentAuthController? controller;
+  final TaiwanAdministrativeAreaDirectory? areaDirectory;
+  final TaiwanAdministrativeAreaIndex? areaIndex;
 
   @override
   State<GovernmentAccountSection> createState() =>
@@ -287,7 +359,11 @@ class _GovernmentAccountSectionState extends State<GovernmentAccountSection> {
                         () => Navigator.of(context).push(
                           MaterialPageRoute<void>(
                             builder:
-                                (_) => GovernmentWorkbenchScreen(auth: _auth),
+                                (_) => GovernmentWorkbenchScreen(
+                                  auth: _auth,
+                                  areaDirectory: widget.areaDirectory,
+                                  areaIndex: widget.areaIndex,
+                                ),
                           ),
                         ),
                     icon: const Icon(Icons.dashboard_outlined),

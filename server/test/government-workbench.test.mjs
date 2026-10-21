@@ -7,6 +7,11 @@ import { hashGovernmentPassword } from '../src/government/auth-service.mjs';
 import { buildGovernmentApp } from '../src/government/app.mjs';
 
 const now = new Date('2026-10-12T00:00:00Z');
+const testAreaDirectory = new Map([
+  ['tw.63000', { area_id: 'tw.63000', level: 'county', parent_area_id: null }],
+  ['tw.63000050', { area_id: 'tw.63000050', level: 'town', parent_area_id: 'tw.63000' }],
+  ['tw.65000', { area_id: 'tw.65000', level: 'county', parent_area_id: null }],
+]);
 
 async function memoryStore() {
   const users = new Map();
@@ -108,6 +113,15 @@ async function login(app, id = 'government-user') {
   return response.json().access_token;
 }
 
+test('health endpoint advertises support for saved announcement impact areas', async () => {
+  const app = buildGovernmentApp({ store: await memoryStore(), now: () => now });
+  try {
+    const response = await app.inject({ method: 'GET', url: '/api/v1/healthz' });
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.json().announcement_scope_schema, 'affected_area_ids-v1');
+  } finally { await app.close(); }
+});
+
 test('only a system administrator can create government accounts directly', async () => {
   const store = await memoryStore();
   const app = buildGovernmentApp({ store, now: () => now });
@@ -198,19 +212,23 @@ test('report API rejects invalid device signatures, malformed crowd payloads and
 
 test('announcement creation, revision and retraction queue incrementing signed feed versions', async () => {
   const store = await memoryStore();
-  const app = buildGovernmentApp({ store, now: () => now });
+  const app = buildGovernmentApp({ store, now: () => now, config: { areaDirectory: testAreaDirectory } });
   try {
     const token = await login(app);
     const headers = { authorization: `Bearer ${token}` };
     const announcement = { title: '道路管制', content: '請改道通行。', category: 'ROAD', severity: 'HIGH',
-      area_id: 'tw.63000', longitude: 121.48, latitude: 25.06, expires_at: '2026-11-01T00:00:00Z' };
+      affected_area_ids: ['tw.63000050'], area_id: 'tw.63000', longitude: 121.48, latitude: 25.06,
+      expires_at: '2026-11-01T00:00:00Z' };
     const created = await app.inject({ method: 'POST', url: '/api/v1/government/announcements', headers, payload: announcement });
     assert.equal(created.statusCode, 202);
     assert.equal((await store.listAnnouncements())[0].area_id, 'tw.national');
+    assert.deepEqual((await store.listAnnouncements())[0].affected_area_ids, ['tw.63000050']);
     const eventId = created.json().event_id;
     const revised = await app.inject({ method: 'PUT', url: `/api/v1/government/announcements/${encodeURIComponent(eventId)}`,
-      headers, payload: { ...announcement, content: '管制解除前請依現場指示改道。' } });
+      headers, payload: { ...announcement, content: '管制解除前請依現場指示改道。', affected_area_ids: ['tw.63000'] } });
     assert.equal(revised.json().event_version, 2);
+    const reloaded = (await store.listAnnouncements()).find((row) => row.event_id === eventId);
+    assert.deepEqual(reloaded.affected_area_ids, ['tw.63000']);
     const retracted = await app.inject({ method: 'DELETE', url: `/api/v1/government/announcements/${encodeURIComponent(eventId)}`, headers });
     assert.equal(retracted.json().event_version, 3);
     assert.deepEqual(store.outbox.filter((row) => row.aggregateType === 'ANNOUNCEMENT').map((row) => row.version), [1, 2, 3]);
@@ -220,12 +238,13 @@ test('announcement creation, revision and retraction queue incrementing signed f
 
 test('supply station announcements require and retain a valid map location', async () => {
   const store = await memoryStore();
-  const app = buildGovernmentApp({ store, now: () => now });
+  const app = buildGovernmentApp({ store, now: () => now, config: { areaDirectory: testAreaDirectory } });
   try {
     const token = await login(app);
     const headers = { authorization: `Bearer ${token}` };
     const base = {
       title: '三重物資站', content: '提供飲水與乾糧。', category: 'SUPPLY_STATION',
+      affected_area_ids: ['tw.63000'],
       expires_at: '2026-11-01T00:00:00Z',
     };
     const missingLocation = await app.inject({
@@ -248,12 +267,13 @@ test('supply station announcements require and retain a valid map location', asy
 });
 
 test('road and shelter announcements require and retain a valid map location', async () => {
-  const app = buildGovernmentApp({ store: await memoryStore(), now: () => now });
+  const app = buildGovernmentApp({ store: await memoryStore(), now: () => now, config: { areaDirectory: testAreaDirectory } });
   try {
     const token = await login(app);
     const headers = { authorization: `Bearer ${token}` };
     for (const [category, title] of [['ROAD', '道路管制'], ['SHELTER', '避難收容點']]) {
       const base = { title, content: '請依現場指示辦理。', category, severity: 'MEDIUM',
+        affected_area_ids: ['tw.63000050'],
         expires_at: '2026-11-01T00:00:00Z' };
       const missingLocation = await app.inject({ method: 'POST', url: '/api/v1/government/announcements',
         headers, payload: base });
@@ -268,7 +288,7 @@ test('road and shelter announcements require and retain a valid map location', a
 });
 
 test('browser mutations require same-origin cookies and a matching CSRF token', async () => {
-  const app = buildGovernmentApp({ store: await memoryStore(), now: () => now });
+  const app = buildGovernmentApp({ store: await memoryStore(), now: () => now, config: { areaDirectory: testAreaDirectory } });
   const headers = { origin: 'http://localhost', host: 'localhost' };
   try {
     const loginResponse = await app.inject({ method: 'POST', url: '/api/v1/auth/sessions', headers,
@@ -277,12 +297,44 @@ test('browser mutations require same-origin cookies and a matching CSRF token', 
     const cookie = loginResponse.headers['set-cookie'].split(';')[0];
     const csrf = loginResponse.json().csrf_token;
     const payload = { title: '防災提醒', content: '請留意官方訊息。', category: 'SAFETY', severity: 'MEDIUM',
-      area_id: 'tw.63000', expires_at: '2026-11-01T00:00:00Z' };
+      affected_area_ids: ['tw.national'], area_id: 'tw.63000', expires_at: '2026-11-01T00:00:00Z' };
     const denied = await app.inject({ method: 'POST', url: '/api/v1/government/announcements', headers: { ...headers, cookie }, payload });
     assert.equal(denied.statusCode, 403);
     const accepted = await app.inject({ method: 'POST', url: '/api/v1/government/announcements',
       headers: { ...headers, cookie, 'x-csrf-token': csrf }, payload });
     assert.equal(accepted.statusCode, 202);
+  } finally { await app.close(); }
+});
+
+test('announcement impact areas accept canonical county, town or explicit nationwide selections', async () => {
+  const store = await memoryStore();
+  const app = buildGovernmentApp({ store, now: () => now, config: { areaDirectory: testAreaDirectory } });
+  try {
+    const token = await login(app);
+    const headers = { authorization: `Bearer ${token}` };
+    for (const affectedAreaIds of [['tw.63000'], ['tw.63000050'], ['tw.national']]) {
+      const response = await app.inject({ method: 'POST', url: '/api/v1/government/announcements', headers,
+        payload: { title: '防災提醒', content: '請留意官方訊息。', category: 'SAFETY', severity: 'MEDIUM',
+          affected_area_ids: affectedAreaIds, expires_at: '2026-11-01T00:00:00Z' } });
+      assert.equal(response.statusCode, 202);
+    }
+    assert.deepEqual((await store.listAnnouncements()).map((row) => row.affected_area_ids),
+      [['tw.63000'], ['tw.63000050'], ['tw.national']]);
+  } finally { await app.close(); }
+});
+
+test('announcement impact area validation rejects empty, duplicate and unknown IDs', async () => {
+  const app = buildGovernmentApp({ store: await memoryStore(), now: () => now, config: { areaDirectory: testAreaDirectory } });
+  try {
+    const token = await login(app);
+    const headers = { authorization: `Bearer ${token}` };
+    for (const affectedAreaIds of [[], ['tw.63000', 'tw.63000'], ['tw.99999']]) {
+      const response = await app.inject({ method: 'POST', url: '/api/v1/government/announcements', headers,
+        payload: { title: '防災提醒', content: '請留意官方訊息。', category: 'SAFETY', severity: 'MEDIUM',
+          affected_area_ids: affectedAreaIds, expires_at: '2026-11-01T00:00:00Z' } });
+      assert.equal(response.statusCode, 400);
+      assert.equal(response.json().error, 'announcement_scope_invalid');
+    }
   } finally { await app.close(); }
 });
 
