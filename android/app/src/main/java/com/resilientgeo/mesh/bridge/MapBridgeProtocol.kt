@@ -1,6 +1,7 @@
 package com.resilientgeo.mesh.bridge
 
 import com.resilientgeo.mesh.data.EventEntity
+import com.resilientgeo.mesh.data.EventBridgeRow
 import com.resilientgeo.mesh.data.VerifiedStaticFeatureSnapshot
 import com.resilientgeo.mesh.ingest.IngestResult
 import com.resilientgeo.mesh.report.GovernmentWarningInput
@@ -29,6 +30,9 @@ object MapBridgeProtocol {
         val severity = map["severity"] as? String ?: return null
         val expiryText = map["expires_at"] as? String ?: return null
         val expiresAt = runCatching { Instant.parse(expiryText) }.getOrNull() ?: return null
+        val rawAffectedAreaIds = map["affected_area_ids"] as? List<*> ?: return null
+        if (rawAffectedAreaIds.any { it !is String }) return null
+        val affectedAreaIds = rawAffectedAreaIds.filterIsInstance<String>()
         val hasLongitude = map["longitude"] != null
         val hasLatitude = map["latitude"] != null
         if (hasLongitude != hasLatitude) return null
@@ -39,7 +43,7 @@ object MapBridgeProtocol {
         }
         val eventId = map["event_id"] as? String ?: "announcement:device:${UUID.randomUUID()}"
         return GovernmentWarningRequest(
-            GovernmentWarningInput(title, content, category, severity, expiresAt, location),
+            GovernmentWarningInput(title, content, category, severity, expiresAt, affectedAreaIds, location),
             eventId,
         )
     }
@@ -69,12 +73,25 @@ object MapBridgeProtocol {
     fun eventSnapshot(events: List<EventEntity>): List<Map<String, Any?>> =
         events.map { EventPayloadMapper.toMessage(it) }
 
+    fun bridgeEventSnapshot(events: List<EventBridgeRow>): List<Map<String, Any?>> =
+        events.map { EventPayloadMapper.toMessage(it) }
+
     fun initialState(
         events: List<EventEntity>,
         emergencyModeEnabled: Boolean,
         staticFeatures: List<Map<String, Any?>> = emptyList(),
     ): Map<String, Any?> = mapOf(
         "events" to eventSnapshot(events),
+        "emergency_mode_enabled" to emergencyModeEnabled,
+        "static_features" to staticFeatures,
+    )
+
+    fun initialBridgeState(
+        events: List<EventBridgeRow>,
+        emergencyModeEnabled: Boolean,
+        staticFeatures: List<Map<String, Any?>> = emptyList(),
+    ): Map<String, Any?> = mapOf(
+        "events" to bridgeEventSnapshot(events),
         "emergency_mode_enabled" to emergencyModeEnabled,
         "static_features" to staticFeatures,
     )

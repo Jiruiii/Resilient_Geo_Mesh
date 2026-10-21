@@ -1,6 +1,8 @@
 package com.resilientgeo.mesh.bridge
 
 import com.resilientgeo.mesh.data.EventEntity
+import com.resilientgeo.mesh.data.EventBridgeRow
+import com.resilientgeo.mesh.data.isNcdrNamespace
 import com.resilientgeo.mesh.ingest.ApplyState
 import java.time.Instant
 import org.json.JSONArray
@@ -13,11 +15,25 @@ import org.json.JSONObject
  */
 object EventPayloadMapper {
 
-    fun toMessage(event: EventEntity, now: Instant = Instant.now()): Map<String, Any?> =
-        JSONObject(event.eventJson)
-            .toMessageMap()
-            .toMutableMap()
-            .apply { put("apply_state", ApplyState.at(event.namespace, event.expiresAt, now).name) }
+    fun toMessage(event: EventBridgeRow, now: Instant = Instant.now()): Map<String, Any?> {
+        val payload = JSONObject(event.bridgePayloadJson ?: "{}")
+        return payload.toMessageMap().toMutableMap().apply {
+            put("apply_state", ApplyState.at(event.namespace, event.expiresAt, now).name)
+        }
+    }
+
+    fun toMessage(event: EventEntity, now: Instant = Instant.now()): Map<String, Any?> {
+        val payload = event.bridgePayloadJson?.let(::JSONObject) ?: JSONObject(event.eventJson).also {
+            if (isNcdrNamespace(event.namespace) || it.optString("source").equals("NCDR", true)) {
+                // Raw CAP records stay in Server private storage. Flutter only needs
+                // the normalized signed fields and source type/code for display.
+                it.optJSONObject("attributes")?.remove("source_record")
+            }
+        }
+        return payload.toMessageMap().toMutableMap().apply {
+            put("apply_state", ApplyState.at(event.namespace, event.expiresAt, now).name)
+        }
+    }
 
     private fun JSONObject.toMessageMap(): Map<String, Any?> {
         val values = LinkedHashMap<String, Any?>()

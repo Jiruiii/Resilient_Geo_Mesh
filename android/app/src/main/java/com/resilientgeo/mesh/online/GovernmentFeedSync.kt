@@ -1,6 +1,7 @@
 package com.resilientgeo.mesh.online
 
 import com.resilientgeo.mesh.data.supportsOfficialFeedDataset
+import com.resilientgeo.mesh.data.visibleNcdrCategoryCodes
 import com.resilientgeo.mesh.trust.Canonical
 import com.resilientgeo.mesh.trust.TrustedKeyStore
 import com.resilientgeo.mesh.trust.DeviceKeys
@@ -23,6 +24,7 @@ class GovernmentFeedSync(
     private val ingest: suspend (JSONObject) -> Boolean,
     private val now: () -> Instant = { Instant.now() },
     private val includeArea: (String) -> Boolean = { true },
+    private val includeNcdrCategory: (String) -> Boolean = { it in visibleNcdrCategoryCodes },
     private val revokedAtByCertificateId: suspend () -> Map<String, Instant> = { emptyMap() },
     private val onVerifiedGovernmentWarning: suspend (JSONObject) -> Unit = {},
 ) {
@@ -37,6 +39,8 @@ class GovernmentFeedSync(
             "Government feed rollback or conflicting revision"
         }
         var downloaded = 0
+        var selectedBytes = 0L
+        var selectedChunks = 0
         val datasets = feed.getJSONArray("datasets")
         val orderedDatasets = orderSourcesForIngestion((0 until datasets.length()).map { datasets.getJSONObject(it).getString("source_id") })
             .map { source -> (0 until datasets.length()).first { datasets.getJSONObject(it).getString("source_id") == source }
@@ -49,9 +53,17 @@ class GovernmentFeedSync(
             val manifest = dataset.getJSONObject("manifest")
             val entries = manifest.getJSONArray("chunks")
             val paths = dataset.getJSONArray("chunk_paths")
+            val hasCategoryIndex = sourceId == "ncdr" && entries.length() > 0 &&
+                entries.getJSONObject(0).has("category_code")
             for (j in 0 until entries.length()) {
                 val entry = entries.getJSONObject(j)
                 if (!includesArea(sourceId, entry.getString("area_id"), includeArea)) continue
+                if (hasCategoryIndex && !includeNcdrCategory(entry.optString("category_code"))) continue
+                selectedChunks += 1
+                selectedBytes += entry.getLong("size_bytes")
+                require(selectedChunks <= MAX_SELECTED_CHUNKS && selectedBytes <= MAX_SELECTED_BYTES) {
+                    "Selected government data exceeds the local cache limit"
+                }
                 val existing = cached(manifest.getString("dataset_id"), manifest.getString("namespace"), entry.getString("chunk_id"))
                 val chunk = if (existing?.optString("chunk_hash") == entry.getString("chunk_hash")) existing
                     else fetchWithRetry(base.resolve(paths.getString(j)).toString()).also { downloaded++ }
@@ -127,6 +139,8 @@ class GovernmentFeedSync(
             } finally { connection.disconnect() }
         }
         private const val MAX_BYTES = 8 * 1024 * 1024
+        private const val MAX_SELECTED_BYTES = 24L * 1024 * 1024
+        private const val MAX_SELECTED_CHUNKS = 4096
         private const val REVOCATION_SOURCE = "government-device-revocations"
         private val NATIONWIDE_SOURCES = setOf(
             "government-announcements", "government-device-announcements", REVOCATION_SOURCE,

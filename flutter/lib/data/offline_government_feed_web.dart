@@ -1,17 +1,19 @@
 import 'dart:convert';
 import 'dart:js_interop';
 
+import 'government_feed_scope.dart';
 import 'government_feed_models.dart';
 import 'map_models.dart';
 
 @JS('loadNLSCGovernmentFeed')
-external JSPromise<JSString> _loadNLSCGovernmentFeed();
+external JSPromise<JSString> _loadNLSCGovernmentFeed(JSString areaScope);
 
 @JS('getNLSCGovernmentFeedRevision')
 external JSPromise<JSNumber> _getNLSCGovernmentFeedRevision();
 
 Future<WebGovernmentFeedSnapshot> loadWebGovernmentFeed() async {
-  final raw = (await _loadNLSCGovernmentFeed().toDart).toDart;
+  final areaScope = await loadGovernmentFeedAreaScope();
+  final raw = (await _loadNLSCGovernmentFeed(areaScope.toJS).toDart).toDart;
   final decoded = jsonDecode(raw);
   if (decoded is! Map) {
     throw const FormatException('Government feed response must be an object');

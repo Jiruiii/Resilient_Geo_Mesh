@@ -27,6 +27,7 @@ import '../data/route_event_snapshot.dart';
 import '../data/map_search.dart';
 import '../data/map_search_asset.dart';
 import '../data/ncdr_map_filter.dart';
+import '../data/taiwan_administrative_area_directory.dart';
 import '../data/offline_address_pack_store.dart';
 import '../data/offline_map_asset_store.dart';
 import '../data/rescue_service.dart';
@@ -57,6 +58,7 @@ class MapScreen extends StatefulWidget {
     this.rescueService,
     this.onViewportSettled,
     this.sirenPanelBuilder,
+    this.administrativeAreaDirectory,
     this.notificationFocusEvent,
     this.notificationFocusRequestId = 0,
   });
@@ -92,6 +94,7 @@ class MapScreen extends StatefulWidget {
 
   /// Built by 06 Task 26; null hides the locator-siren entry point.
   final Widget Function(BuildContext, RescueFlowController)? sirenPanelBuilder;
+  final TaiwanAdministrativeAreaDirectory? administrativeAreaDirectory;
 
   @override
   State<MapScreen> createState() => _MapScreenState();
@@ -128,6 +131,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   bool _showShelters = true;
   bool _showMedical = true;
   bool _showEvents = true;
+  bool _showCountyWarningAreas = true;
   bool _showSupplies = true;
   bool _emergencyModeEnabled = false;
   StaticFeature? _selectedFeature;
@@ -140,6 +144,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   );
   MapSearchResult? _searchSelection;
   GeoPoint? _focusPoint;
+  GeoBounds? _focusBounds;
   int _focusRequestId = 0;
   String _searchText = '';
   CrowdReportDraft? _reportDraft;
@@ -217,6 +222,8 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
         _searchController.clear();
         _mapSearchResults = const <MapSearchResult>[];
         _focusPoint = point;
+        _focusBounds =
+            event.isNcdrMultiAreaWarning ? meshEventBounds(event) : null;
         _focusRequestId += 1;
       }
     }
@@ -825,7 +832,10 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     final now = DateTime.now().toUtc();
     return AttestationIndex.fromEvents(byId.values, now: now)
         .mapDisplayEvents(byId.values)
-        .where((event) => event.isShownAt(now))
+        .where(
+          (event) =>
+              event.isShownAt(now) || event.isUpcomingCwaCountyWarningAt(now),
+        )
         .where(isMapVisibleEvent)
         .toList(growable: false);
   }
@@ -1196,6 +1206,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                 showShelters: _showShelters,
                 showMedical: _showMedical,
                 showEvents: _showEvents,
+                showCountyWarningAreas: _showCountyWarningAreas,
                 showSupplies: _showSupplies,
                 onSuppliesChanged: (value) {
                   setState(() => _showSupplies = value);
@@ -1228,6 +1239,10 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                 },
                 onEventsChanged: (value) {
                   setState(() => _showEvents = value);
+                  modalSetState(() {});
+                },
+                onCountyWarningAreasChanged: (value) {
+                  setState(() => _showCountyWarningAreas = value);
                   modalSetState(() {});
                 },
                 onEmergencyModeChanged: (value) async {
@@ -1468,6 +1483,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     );
     setState(() {
       _focusPoint = coordinate;
+      _focusBounds = null;
       _focusRequestId += 1;
       _searchSelection = result;
       _pickTarget = _PickTarget.rescue;
@@ -1543,6 +1559,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
         locationHint: hint,
       );
       _focusPoint = coordinate;
+      _focusBounds = null;
       _focusRequestId += 1;
       _searchSelection = result;
       _reportSheetVisible = false;
@@ -1648,6 +1665,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     setState(() {
       _searchSelection = result;
       _focusPoint = result.coordinate;
+      _focusBounds = null;
       _selectedFeature = result.feature;
       _selectedEvent = null;
       _searchText = '';
@@ -1739,6 +1757,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     setState(() {
       _runtimeState = _runtimeState.copyWith(currentLocation: location);
       _focusPoint = location;
+      _focusBounds = null;
       _searchSelection = null;
       _focusRequestId += 1;
     });
@@ -1753,9 +1772,19 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     final visibleEvents = _visibleEvents;
     final mapEventsReady = !widget.staticFeaturesPending;
     final mapEvents = mapEventsReady ? visibleEvents : const <MeshEvent>[];
+    final areaWarnings =
+        _showEvents
+            ? visibleEvents
+                .where(
+                  (event) =>
+                      event.hasCompleteNcdrAreaMask || event.isCwaCountyWarning,
+                )
+                .toList(growable: false)
+            : const <MeshEvent>[];
     final visibleEventCount =
         mapEventsReady && _showEvents
             ? mapEvents
+                .where((event) => !event.isNcdrMultiAreaWarning)
                 .where((event) => meshEventFocusPoint(event) != null)
                 .length
             : 0;
@@ -1781,9 +1810,11 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
               incidents: _showEvents,
               supplies: _showSupplies,
             ),
+            areaWarnings: areaWarnings,
             showShelters: _showShelters,
             showMedical: _showMedical,
             showEvents: _showEvents || _showSupplies,
+            showCountyWarningAreas: _showEvents && _showCountyWarningAreas,
             onStaticFeatureSelected: _showStaticSelection,
             onEventSelected: _showEvent,
             onZoomPercentageChanged: _setZoomPercentage,
@@ -1796,6 +1827,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
             route: _routeStale ? null : _routeResult,
             searchSelection: _searchSelection,
             focusPoint: _focusPoint,
+            focusBounds: _focusBounds,
             focusRequestId: _focusRequestId,
           ),
           SafeArea(
@@ -1969,6 +2001,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
               alignment: Alignment.bottomCenter,
               child: FeatureDetailsSheet.event(
                 event: _selectedEvent!,
+                areaDirectory: widget.administrativeAreaDirectory,
                 corroboration: _corroborationOf(_selectedEvent!),
                 onClose: _closeDetails,
                 confirmedEarlierVersion: AttestationIndex.fromEvents(

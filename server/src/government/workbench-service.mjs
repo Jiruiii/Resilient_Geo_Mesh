@@ -7,6 +7,7 @@ import { CROWD_TTL_MS, crowdReportErrors } from '../../../pipeline/lib/crowd-rep
 import { GovernmentAuthError } from './auth-service.mjs';
 
 const ANNOUNCEMENT_CATEGORIES = new Set(['SAFETY', 'WEATHER', 'ROAD', 'SHELTER', 'SUPPLY_STATION', 'OTHER']);
+const LOCATION_REQUIRED_ANNOUNCEMENT_CATEGORIES = new Set(['ROAD', 'SHELTER', 'SUPPLY_STATION']);
 const SEVERITIES = new Set(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL', 'UNKNOWN']);
 const NATIONWIDE_AREA_ID = 'tw.national';
 const HASH_RE = /^sha256:[0-9a-f]{64}$/u;
@@ -17,7 +18,18 @@ function fail(code, statusCode = 400) {
   return new GovernmentAuthError(code, statusCode);
 }
 
-function validateAnnouncement(input, now) {
+function validateAffectedAreaIds(value, areaDirectory, errorCode) {
+  if (!Array.isArray(value) || value.length === 0 || value.some((areaId) => typeof areaId !== 'string')
+    || new Set(value).size !== value.length) throw fail(errorCode);
+  if (value.includes(NATIONWIDE_AREA_ID)) {
+    if (value.length !== 1) throw fail(errorCode);
+  } else if (!areaDirectory || value.some((areaId) => !areaDirectory.has(areaId))) {
+    throw fail(errorCode);
+  }
+  return [...value];
+}
+
+function validateAnnouncement(input, now, areaDirectory) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw fail('announcement_invalid');
   const title = typeof input.title === 'string' ? input.title.trim() : '';
   const content = typeof input.content === 'string' ? input.content.trim() : '';
@@ -47,9 +59,13 @@ function validateAnnouncement(input, now) {
         latitude < 20.5 || latitude > 26.8) throw fail('announcement_location_invalid');
     location = { longitude: Number(longitude.toFixed(6)), latitude: Number(latitude.toFixed(6)) };
   }
-  if (category === 'SUPPLY_STATION' && location === null) throw fail('announcement_location_invalid');
+  if (LOCATION_REQUIRED_ANNOUNCEMENT_CATEGORIES.has(category) && location === null) {
+    throw fail('announcement_location_invalid');
+  }
+  const affectedAreaIds = validateAffectedAreaIds(input.affected_area_ids, areaDirectory, 'announcement_scope_invalid');
   return {
     title, content, category, severity, area_id: NATIONWIDE_AREA_ID,
+    affected_area_ids: affectedAreaIds,
     expires_at: expiresAt.toISOString(), location,
   };
 }
@@ -67,7 +83,7 @@ function newDeviceCertificateRequest({ user, deviceId, subjectId, signingKeyId, 
   };
 }
 
-function validateGovernmentWarning(event, now) {
+function validateGovernmentWarning(event, now, areaDirectory) {
   if (validateEventShape(event).length > 0 || event.namespace !== 'official.announcement'
     || event.event_type !== 'GOVERNMENT_ANNOUNCEMENT' || event.source !== 'GOVERNMENT' || event.event_version !== 1) {
     throw fail('government_warning_invalid');
@@ -80,6 +96,11 @@ function validateGovernmentWarning(event, now) {
   if (!ANNOUNCEMENT_CATEGORIES.has(attributes.category)) throw fail('announcement_category_invalid');
   if (!SEVERITIES.has(event.severity)) throw fail('announcement_severity_invalid');
   if (attributes.area_id !== NATIONWIDE_AREA_ID || attributes.theme !== 'announcement') throw fail('government_warning_scope_invalid');
+  validateAffectedAreaIds(
+    attributes.affected_area_ids ?? [attributes.area_id],
+    areaDirectory,
+    'government_warning_scope_invalid',
+  );
 
   const issuedAt = new Date(event.issued_at);
   const expiresAt = new Date(event.expires_at);
@@ -104,7 +125,7 @@ function validateGovernmentWarning(event, now) {
   } else {
     throw fail('announcement_location_invalid');
   }
-  if (attributes.category === 'SUPPLY_STATION' && event.geometry.type !== 'Point') {
+  if (LOCATION_REQUIRED_ANNOUNCEMENT_CATEGORIES.has(attributes.category) && event.geometry.type !== 'Point') {
     throw fail('announcement_location_invalid');
   }
 }
@@ -175,7 +196,7 @@ export function createGovernmentWorkbenchService({ store, now = () => new Date()
     async uploadGovernmentWarning({ actor, event }) {
       if (actor?.role !== 'GOVERNMENT') throw fail('role_forbidden', 403);
       const receivedAt = now();
-      validateGovernmentWarning(event, receivedAt);
+      validateGovernmentWarning(event, receivedAt, config.areaDirectory);
       const verification = verifyEvent(event, null, {
         trustedKeyIds: config.trustedKeyIds,
         trustedKeys: config.trustedKeys,
@@ -273,14 +294,16 @@ export function createGovernmentWorkbenchService({ store, now = () => new Date()
 
     async createAnnouncement({ actorId, input }) {
       const createdAt = now();
-      const announcement = validateAnnouncement(input, createdAt);
+      const announcement = validateAnnouncement(input, createdAt, config.areaDirectory);
       const eventId = `announcement:${randomUUID()}`;
       const saved = await store.createAnnouncement({ eventId, announcement, actorId, now: createdAt });
       return { event_id: saved.event_id, event_version: saved.event_version, publication_status: 'QUEUED' };
     },
 
     async reviseAnnouncement({ actorId, eventId, input }) {
-      const saved = await store.reviseAnnouncement({ eventId, announcement: validateAnnouncement(input, now()), actorId, now: now() });
+      const currentTime = now();
+      const saved = await store.reviseAnnouncement({ eventId,
+        announcement: validateAnnouncement(input, currentTime, config.areaDirectory), actorId, now: currentTime });
       if (saved.error === 'announcement_not_found') throw fail('announcement_not_found', 404);
       if (saved.error === 'announcement_retracted') throw fail('announcement_retracted', 409);
       return { ...saved, publication_status: 'QUEUED' };

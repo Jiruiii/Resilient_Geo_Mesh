@@ -12,7 +12,7 @@ import {
 import {
   DEFAULT_NCDR_ENDPOINT,
   fetchNcdrHazards,
-  normalizeNcdrHazards,
+  normalizeNcdrFeed,
 } from '../sources/ncdr.mjs';
 import {
   DEFAULT_TDX_ENDPOINT,
@@ -143,6 +143,9 @@ function previousOutput(normalized) {
     events: normalized?.events ?? [],
     features: normalized?.features ?? [],
     status_events: normalized?.status_events ?? [],
+    ...(Array.isArray(normalized?.cancelled_event_ids)
+      ? { cancelledEventIds: normalized.cancelled_event_ids }
+      : {}),
   };
 }
 
@@ -211,12 +214,19 @@ async function defaultAdapter({ definition, scope, config, now, previousSnapshot
       detailConcurrency: env.NCDR_DETAIL_CONCURRENCY,
       previousSnapshot,
     });
-    const normalized = normalizeNcdrHazards(rawSnapshot, normalizedOptions);
+    const ncdrFeed = normalizeNcdrFeed(rawSnapshot, normalizedOptions);
+    const normalized = dynamicNormalized(
+      definition.sourceId,
+      rawSnapshot.retrieved_at,
+      ncdrFeed.events,
+      { cancelled_event_ids: ncdrFeed.cancelledEventIds },
+    );
     return {
       mode: 'live',
       rawSnapshot,
-      normalized: dynamicNormalized(definition.sourceId, rawSnapshot.retrieved_at, normalized),
-      events: normalized,
+      normalized,
+      events: ncdrFeed.events,
+      cancelledEventIds: ncdrFeed.cancelledEventIds,
     };
   }
 
@@ -516,6 +526,9 @@ export async function collectSource({
       rawSnapshot: collected.rawSnapshot,
       normalized,
       events: collected.events ?? normalized.events ?? [],
+      ...(Array.isArray(collected.cancelledEventIds) || Array.isArray(normalized.cancelled_event_ids)
+        ? { cancelledEventIds: collected.cancelledEventIds ?? normalized.cancelled_event_ids }
+        : {}),
       features: collected.features ?? normalized.features ?? [],
       status_events: collected.status_events ?? normalized.status_events ?? [],
       coordinateReport: collected.coordinateReport ?? normalized.coordinate_report,

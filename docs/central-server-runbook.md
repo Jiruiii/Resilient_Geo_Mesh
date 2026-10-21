@@ -12,7 +12,7 @@ Azure 手動部署 workflow 使用 GitHub secret `GOVERNMENT_SIGNING_PRIVATE_KEY
 
 Server 預設收集邊界如下：
 
-- 核心災害 feed：NCDR 全台事件（公開出版排除 `BACKGROUND`）與 CWA 地震、天氣特報、颱風。
+- 核心災害 feed：NCDR 全台有效事件（包含 `BACKGROUND` 通知與「其他」類型）與 CWA 地震、天氣特報、颱風。NCDR 每筆事件會分類並按行政區、警示類型分包；簽章 manifest 仍列出完整索引，Web／Android 只下載使用者選定範圍內、符合截圖類型清單的分包。「其他」、停水、海洋污染與消防安全檢查重大不合格場所保留在 Server 完整資料中，不進入用戶端快取、轉傳、通知、未讀數或地圖。NCDR 背景事件可維持 `map_visible=false`，不顯示為地圖行動 marker。
 - 應變資源：全台靜態避難所位置與醫療院所，各自以獨立 layer 發布。避難所開設狀態不在目前收集範圍。
 - 暫停預設收集：TDX 道路事件與 OSM POI。兩者仍保留 adapter 與 registry，日後可明確指定 source 後單獨收集。
 
@@ -35,9 +35,15 @@ Android App 的中央 Server URL 仍由 `android/app/src/main/assets/trust/gover
 
 collector 會以排程呼叫官方來源、寫入 private source cache，再將已正規化且簽章的 feed/layer 寫入 public release。API request 不會觸發 upstream refresh。第一次成功的 signed feed 發布前，`/readyz` 維持 503 是預期行為。
 
+NCDR 的完整官方 raw snapshot 與私有正規化快取保存在 collector 的 private volume；公開事件會帶來源分類代碼，但不複製完整 `source_record`。NCDR manifest 以簽章保護每個 chunk 的 `category_code`、`area_id` 與路徑對應。Android 與 Web 驗證完整 feed／manifest 後，再依 `taipei`（雙北、全臺警報及未知區域）或 `all` 範圍，以及支援的 NCDR 類型挑選下載路徑。部署時先更新 Server 並確認 `/feed.json` 的 NCDR manifest 含 `category_code`，再發布新版 Web／Android；舊版 manifest 沒有分類索引時，客戶端為相容性會走舊版下載方式。
+
 既有 feed 若含舊版 `shelter-status` dataset，collector 部署後的下一次完整成功發布會從 current feed 移除它；舊 immutable revisions 與 private cache 仍保留作歷史稽核。靜態避難所 layer 仍會照原排程更新。
 
 Collector 的排程會將同時到期的來源排入單一序列佇列，避免來源競爭全域 lock 而被靜默跳過。每次排程會以本次成功結果加上其他來源的 last-known-good cache 組成完整結果集；來源缺少 cache，或狀態為 `partial`／`stale`／`unavailable`／`blocked_by_auth` 時，會保留目前 `current/feed.json`，不發布不完整版本。來源檢查成功且當下沒有有效告警時，零資料集仍可通過 schema、hash、signature 與 chunk 驗證並發布有效的簽章空 feed；來源失敗時則沿用上一個可信版本。Collector 與政府工作台發布 worker 都會取得共用發布鎖，並在 staging 完成驗證後才切換 current pointer。
+
+NCDR 預設每 5 分鐘檢查一次；Docker Compose 可用 `SCHEDULE_NCDR_MS` 覆寫，值以毫秒計。CWA 仍每 10 分鐘檢查一次。Android App 在前景與 Web 分頁開啟時各約每 5 分鐘檢查 Server 的簽章 feed；Android 背景同步由作業系統排程，沒有每 5 分鐘準時執行的保證。兩段輪詢彼此獨立，因此上游發布到 App 顯示會有額外延遲。
+
+CWA `W-C0033-001` 縣市級警報依原始地名配對正確的縣市 `area_id`。Collector private cache 保留完整原始紀錄，行政區邊界維持在 AreaCatalog；公開事件使用該縣市內的地圖參考點，並保留 `affected_area`、`coverage_level=county` 與 `map_location_kind=area_reference`，避免把龐大邊界傳到客戶端或把參考點當成強風實測位置。Web 與 Android 通知卡共用 Flutter 畫面顯示「影響範圍」。
 
 要只在重建後的首次 run 收集指定來源，可於 Compose 命令前設定 `COLLECTOR_INITIAL_SOURCE_IDS`。例如先只收醫療：
 

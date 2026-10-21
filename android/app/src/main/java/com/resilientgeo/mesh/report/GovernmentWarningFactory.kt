@@ -18,6 +18,7 @@ data class GovernmentWarningInput(
     val category: String,
     val severity: String,
     val expiresAt: Instant,
+    val affectedAreaIds: List<String>,
     val location: Location? = null,
 ) {
     data class Location(val longitude: Double, val latitude: Double)
@@ -35,6 +36,7 @@ object GovernmentWarningFactory {
     const val CONTENT_MAX_CODE_POINTS = 8000
     private val MAX_LIFETIME = Duration.ofDays(90)
     private val categories = setOf("SAFETY", "WEATHER", "ROAD", "SHELTER", "SUPPLY_STATION", "OTHER")
+    private val categoriesRequiringLocation = setOf("ROAD", "SHELTER", "SUPPLY_STATION")
     private val severities = setOf("LOW", "MEDIUM", "HIGH", "CRITICAL", "UNKNOWN")
     private val taiwanBounds = doubleArrayOf(116.5, 20.5, 122.5, 26.8)
 
@@ -50,8 +52,9 @@ object GovernmentWarningFactory {
         }
         if (input.category !in categories) errors += "announcement category is invalid"
         if (input.severity !in severities) errors += "announcement severity is invalid"
-        if (input.category == "SUPPLY_STATION" && input.location == null) {
-            errors += "supply station location is required"
+        if (!validAffectedAreaIds(input.affectedAreaIds)) errors += "announcement impact areas are invalid"
+        if (input.category in categoriesRequiringLocation && input.location == null) {
+            errors += "announcement location is required for this category"
         }
         val issued = issuedAt.truncatedTo(ChronoUnit.SECONDS)
         val expiry = input.expiresAt.truncatedTo(ChronoUnit.SECONDS)
@@ -100,6 +103,7 @@ object GovernmentWarningFactory {
             .put("content", input.content.trim())
             .put("category", input.category)
             .put("area_id", AREA_ID)
+            .put("affected_area_ids", JSONArray(input.affectedAreaIds))
             .put("theme", THEME)
             .put("has_map_location", input.location != null)
             .put("government_device_certificate", JSONObject(certificate.toString()))
@@ -149,6 +153,13 @@ object GovernmentWarningFactory {
         if (category !in categories || event.optString("severity") !in severities ||
             attributes.optString("area_id") != AREA_ID || attributes.optString("theme") != THEME
         ) errors += "government warning category or scope is invalid"
+        val affectedAreaIds = attributes.optJSONArray("affected_area_ids")
+        if (affectedAreaIds == null) {
+            if (attributes.optString("area_id") != AREA_ID) errors += "government warning impact areas are invalid"
+        } else if (affectedAreaIds.length() == 0 ||
+            (0 until affectedAreaIds.length()).any { index -> affectedAreaIds.opt(index) !is String } ||
+            !validAffectedAreaIds((0 until affectedAreaIds.length()).map { affectedAreaIds.getString(it) })
+        ) errors += "government warning impact areas are invalid"
         val issued = parseInstant(event.optString("issued_at"))
         val expiry = parseInstant(event.optString("expires_at"))
         if (issued == null || expiry == null || !expiry.isAfter(issued) || Duration.between(issued, expiry) > MAX_LIFETIME) {
@@ -156,8 +167,8 @@ object GovernmentWarningFactory {
         }
         val hasLocation = attributes.optBoolean("has_map_location", false)
         val geometry = event.optJSONObject("geometry")
-        if (category == "SUPPLY_STATION" && geometry?.optString("type") != "Point") {
-            errors += "supply station location is required"
+        if (category in categoriesRequiringLocation && geometry?.optString("type") != "Point") {
+            errors += "announcement location is required for this category"
         }
         if (geometry?.optString("type") == "Point") {
             val coordinates = geometry.optJSONArray("coordinates")
@@ -174,4 +185,10 @@ object GovernmentWarningFactory {
 
     private fun roundCoordinate(value: Double): Double = BigDecimal(value).setScale(6, RoundingMode.HALF_UP).toDouble()
     private fun parseInstant(value: String?): Instant? = runCatching { Instant.parse(value) }.getOrNull()
+
+    private fun validAffectedAreaIds(ids: List<String>): Boolean {
+        if (ids.isEmpty() || ids.distinct().size != ids.size) return false
+        if (AREA_ID in ids) return ids.size == 1
+        return ids.all(GovernmentAreaIds.canonicalIds::contains)
+    }
 }

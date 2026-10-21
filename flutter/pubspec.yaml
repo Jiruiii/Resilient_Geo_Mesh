@@ -57,6 +57,9 @@ flutter:
     - assets/map/styles/taiwan-light.json
     - assets/map/styles/taiwan-dark.json
     - assets/map/labels/taiwan-reference-labels.geojson
+    - assets/map/boundaries/cwa-county-warning.geojson
+    - assets/map/boundaries/taiwan-administrative-area-directory.json
+    - assets/map/boundaries/taiwan-administrative-area-index.json
     - assets/map/search/taiwan-roads.json
     - assets/map/pmtiles/taiwan.pmtiles
     - assets/map/pmtiles/taiwan-north.pmtiles

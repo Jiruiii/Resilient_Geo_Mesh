@@ -4,6 +4,47 @@ import 'package:resilientgeo_flutter/data/map_models.dart';
 import 'package:resilientgeo_flutter/data/maplibre_overlay.dart';
 
 void main() {
+  test('NCDR mask publishes only complete current multi-area boundaries', () {
+    MeshEvent warning(String id, bool complete, String expiresAt) => MeshEvent(
+      namespace: 'official.ncdr',
+      eventId: id,
+      eventVersion: 1,
+      eventType: 'NCDR_HAZARD',
+      severity: 'MEDIUM',
+      source: 'NCDR',
+      issuedAt: '2026-10-20T00:00:00Z',
+      expiresAt: expiresAt,
+      applyState: 'CURRENT',
+      geometry: const MultiPolygonGeometry(<List<List<GeoPoint>>>[
+        <List<GeoPoint>>[
+          <GeoPoint>[
+            GeoPoint(longitude: 120, latitude: 23),
+            GeoPoint(longitude: 121, latitude: 23),
+            GeoPoint(longitude: 121, latitude: 24),
+            GeoPoint(longitude: 120, latitude: 23),
+          ],
+        ],
+      ]),
+      attributes: <String, dynamic>{
+        'geometry_source': 'administrative_boundary',
+        'affected_area_count': 55,
+        'area_match_complete': complete,
+      },
+    );
+    final collection =
+        MapLibreOverlayData.ncdrAreaFeatureCollection(<MeshEvent>[
+          warning('complete', true, '2026-10-21T00:00:00Z'),
+          warning('partial', false, '2026-10-21T00:00:00Z'),
+          warning('expired', true, '2026-10-19T00:00:00Z'),
+        ], now: DateTime.utc(2026, 10, 20, 12));
+    final features = collection['features'] as List<dynamic>;
+    expect(features, hasLength(1));
+    expect(
+      (features.single as Map<String, dynamic>)['geometry'],
+      containsPair('type', 'MultiPolygon'),
+    );
+  });
+
   test(
     'event area rendering is disabled while the area UI is being redesigned',
     () {
@@ -63,15 +104,38 @@ void main() {
         geometry: PointGeometry(GeoPoint(longitude: 121.5, latitude: 25.0)),
         attributes: null,
       );
+      const multiPolygon = MeshEvent(
+        namespace: 'test',
+        eventId: 'multi-polygon-1',
+        eventVersion: 1,
+        eventType: 'WEATHER_WARNING',
+        severity: 'LOW',
+        source: 'CWA',
+        issuedAt: null,
+        expiresAt: null,
+        applyState: 'CURRENT',
+        geometry: MultiPolygonGeometry(<List<List<GeoPoint>>>[
+          <List<GeoPoint>>[
+            <GeoPoint>[
+              GeoPoint(longitude: 119.5, latitude: 23.5),
+              GeoPoint(longitude: 119.6, latitude: 23.5),
+              GeoPoint(longitude: 119.6, latitude: 23.6),
+              GeoPoint(longitude: 119.5, latitude: 23.5),
+            ],
+          ],
+        ]),
+        attributes: null,
+      );
 
       final collection = MapLibreOverlayData.eventFeatureCollection(<MeshEvent>[
         line,
         polygon,
+        multiPolygon,
         point,
       ]);
       final features = collection['features']! as List<Object?>;
 
-      expect(features, hasLength(2));
+      expect(features, hasLength(3));
       expect(
         (features[0] as Map<String, dynamic>)['geometry'],
         containsPair('type', 'LineString'),
@@ -84,6 +148,22 @@ void main() {
         ((features[1] as Map<String, dynamic>)['properties']
             as Map<String, dynamic>)['expired'],
         isTrue,
+      );
+      expect(
+        (features[2] as Map<String, dynamic>)['geometry'],
+        <String, dynamic>{
+          'type': 'MultiPolygon',
+          'coordinates': <List<List<List<double>>>>[
+            <List<List<double>>>[
+              <List<double>>[
+                <double>[119.5, 23.5],
+                <double>[119.6, 23.5],
+                <double>[119.6, 23.6],
+                <double>[119.5, 23.5],
+              ],
+            ],
+          ],
+        },
       );
     },
   );

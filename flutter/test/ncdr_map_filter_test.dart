@@ -3,21 +3,24 @@ import 'package:resilientgeo_flutter/data/map_models.dart';
 import 'package:resilientgeo_flutter/data/ncdr_map_filter.dart';
 
 void main() {
-  test('hides NCDR background events but keeps actionable events', () {
+  test('shows selected NCDR background categories on the map', () {
     final inspection = _event(
       'ncdr:inspection',
       mapVisible: false,
       relevance: 'BACKGROUND',
+      categoryLabel: '火災',
     );
     final evacuation = _event(
       'ncdr:evacuation',
       mapVisible: true,
       relevance: 'EVACUATION',
+      categoryLabel: '火災',
     );
     final routeChange = _event(
       'ncdr:route-change',
       mapVisible: true,
       relevance: 'ROUTE_CHANGE',
+      categoryLabel: '火災',
     );
 
     expect(
@@ -26,7 +29,44 @@ void main() {
         evacuation,
         routeChange,
       ]).map((event) => event.eventId),
-      <String?>['ncdr:evacuation', 'ncdr:route-change'],
+      <String?>['ncdr:inspection', 'ncdr:evacuation', 'ncdr:route-change'],
+    );
+  });
+
+  test('hides NCDR other categories from the map but keeps selected types', () {
+    final other = _event(
+      'ncdr:other',
+      mapVisible: true,
+      relevance: 'HIGH_IMPACT',
+      categoryLabel: '其他 NCDR 事件',
+    );
+    final fire = _event(
+      'ncdr:fire',
+      mapVisible: false,
+      relevance: 'BACKGROUND',
+      categoryLabel: '火災',
+    );
+    final heat = _event(
+      'ncdr:heat',
+      mapVisible: false,
+      relevance: 'BACKGROUND',
+      categoryLabel: '高溫',
+    );
+    final forest = _event(
+      'ncdr:forest',
+      mapVisible: false,
+      relevance: 'BACKGROUND',
+      categoryLabel: '國家森林遊樂區',
+    );
+
+    expect(
+      filterMapEvents(<MeshEvent>[
+        other,
+        fire,
+        heat,
+        forest,
+      ]).map((event) => event.eventId),
+      <String?>['ncdr:fire', 'ncdr:heat', 'ncdr:forest'],
     );
   });
 
@@ -164,6 +204,7 @@ MeshEvent _event(
   String id, {
   required bool mapVisible,
   required String relevance,
+  String? categoryLabel,
 }) => MeshEvent.fromJson(<String, dynamic>{
   'namespace': 'official.ncdr',
   'event_id': id,
@@ -174,5 +215,6 @@ MeshEvent _event(
   'attributes': <String, dynamic>{
     'map_visible': mapVisible,
     'operational_relevance': relevance,
+    if (categoryLabel != null) 'ncdr_category_label': categoryLabel,
   },
 });

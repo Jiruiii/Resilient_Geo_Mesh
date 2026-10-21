@@ -5,6 +5,31 @@
     return value;
   };
   const feedKeyIds = new Set(['government-feed-2026', 'central-server-2026']);
+  const visibleNcdrCategoryCodes = new Set([
+    'typhoon', 'earthquake', 'tsunami', 'flood', 'debris_landslide', 'rainfall',
+    'road_closed', 'air_defense', 'thunderstorm', 'infectious_disease', 'low_temperature',
+    'strong_wind', 'fog', 'fire', 'wildfire_risk', 'diversion_alarm', 'evacuation',
+    'radiation', 'high_temperature', 'volcano', 'ramp_connector_flood', 'wind_control_road',
+    'railway_accident', 'urgent_clinic', 'highway_condition', 'landslide_dam_warning',
+    'national_park_admission', 'local_government_report', 'public_natural_gas_report',
+    'national_forest_recreation', 'flood_sensor', 'giant_wave',
+  ]);
+  const visibleNcdrLabels = new Set([
+    '颱風', '地震', '海嘯', '淹水', '土石流及大規模崩塌', '降雨', '道路封閉', '防空',
+    '雷雨', '傳染病', '低溫', '強風', '濃霧', '火災', '林火危險度預警', '分洪警報',
+    '疏散避難', '輻射災害', '高溫', '火山', '交流道下地方連絡道淹水', '強風管制路段',
+    '鐵路事故', '急門診通報', '高速公路路況事件', '堰塞湖警戒', '國家公園入園示警',
+    '各直轄市縣市政府災情通報', '公用天然氣事業災情通報', '國家森林遊樂區', '淹水感測', '巨浪',
+  ]);
+  const legacyVisibleNcdrTypes = new Set([
+    'FIRE_WARNING', 'HEAT_WARNING', 'FOREST_ALERT', 'HEALTH_ALERT', 'FLOOD_WARNING',
+    'DEBRIS_FLOW_WARNING', 'LANDSLIDE_WARNING', 'RAINFALL_WARNING', 'EARTHQUAKE_WARNING',
+  ]);
+  const nationwideFeedSources = new Set([
+    'government-announcements', 'government-device-announcements', 'government-device-revocations',
+  ]);
+  const MAX_SELECTED_CHUNKS = 4096;
+  const MAX_SELECTED_BYTES = 24 * 1024 * 1024;
   const supportedDatasetIds = new Set([
     'ncdr', 'cwa-earthquake', 'cwa-warning', 'cwa-typhoon',
     'government-announcements', 'government-attestations', 'government-device-revocations',
@@ -40,6 +65,35 @@
       (event.namespace === 'official.live.ncdr' || event.namespace === 'official.ncdr');
   }
 
+  function isVisibleNcdrEvent(event) {
+    if (!isNcdrEvent(event)) return true;
+    const attributes = event.attributes ?? {};
+    const sourceType = String(attributes.ncdr_source_event_type ?? '').toLowerCase();
+    const sourceCode = String(attributes.ncdr_source_event_code ?? '').toLowerCase();
+    const rawRecord = JSON.stringify(attributes.source_record ?? {}).toLowerCase();
+    const normalizedType = String(event.event_type ?? '').toLowerCase();
+    if (['消防安全檢查', '重大不合格場所', 'dangerfield', '海洋污染', 'marinepollution',
+      'marine pollution', '停水', '供水', 'water supply', 'watersupply', 'wateroutage',
+      'safety_alert', 'water_supply_alert', 'marine_pollution_alert']
+      .some((value) => `${sourceType} ${sourceCode} ${normalizedType} ${rawRecord}`.includes(value))) return false;
+    const code = attributes.ncdr_category_code;
+    if (typeof code === 'string' && code.length > 0) return visibleNcdrCategoryCodes.has(code);
+    const label = attributes.ncdr_category_label;
+    if (typeof label === 'string' && visibleNcdrLabels.has(label.trim())) return true;
+    return legacyVisibleNcdrTypes.has(event.event_type);
+  }
+
+  function normalizeAreaScope(value = 'all') {
+    if (value === 'all' || value === 'taipei') return value;
+    throw new Error('告警下載範圍無效');
+  }
+
+  function includesArea(areaScope, source, areaId) {
+    if (areaScope === 'all' || nationwideFeedSources.has(source)) return true;
+    return typeof areaId === 'string' && (areaId === 'tw' || areaId === 'tw.unknown' ||
+      areaId.startsWith('tw.630') || areaId.startsWith('tw.650'));
+  }
+
   function isCwaEvent(event) {
     const namespace = event?.namespace;
     return event?.source === 'CWA' && typeof namespace === 'string' && (
@@ -70,7 +124,8 @@
     if (!await helper().verifySigned(value, keyId, signature)) throw new Error(`${description}簽章驗證失敗`);
   }
 
-  async function verifyFeedMetadata(feed, { now = Date.now(), allowExpired = false } = {}) {
+  async function verifyFeedMetadata(feed, { now = Date.now(), allowExpired = false, areaScope = 'all' } = {}) {
+    areaScope = normalizeAreaScope(areaScope);
     if (!feed || typeof feed !== 'object' || Array.isArray(feed) ||
         feed.schema_version !== 'government-feed-v1' || !Number.isSafeInteger(feed.revision) ||
         feed.revision < 1 || !Array.isArray(feed.sources) || !Array.isArray(feed.datasets) ||
@@ -91,7 +146,8 @@
     const seenSources = new Set();
     const manifests = [];
     let totalChunks = 0;
-    let totalBytes = 0;
+    let selectedBytes = 0;
+    let selectedChunkCount = 0;
     for (const dataset of feed.datasets) {
       const source = dataset?.source_id;
       if (typeof source !== 'string' || source.length === 0 || seenSources.has(source)) {
@@ -122,18 +178,43 @@
       await assertSignature(omit(manifest, ['signature']), manifest.signing_key_id, manifest.signature, '告警資料清單');
 
       totalChunks += manifest.chunks.length;
-      totalBytes += manifest.total_size_bytes;
-      if (!Number.isSafeInteger(manifest.total_size_bytes) || manifest.total_size_bytes < 1 ||
-          totalChunks > 4096 || totalBytes > 24 * 1024 * 1024) {
+      if (!Number.isSafeInteger(manifest.total_size_bytes) || manifest.total_size_bytes < 1 || totalChunks > 4096) {
         throw new Error('告警資料超出允許大小');
       }
+      const hasCategoryIndex = source === 'ncdr' && Object.hasOwn(manifest.chunks[0], 'category_code');
+      const selectedChunks = [];
+      let manifestBytes = 0;
       for (let index = 0; index < manifest.chunks.length; index += 1) {
         const path = dataset.chunk_paths[index];
+        const entry = manifest.chunks[index];
         if (path !== `releases/${manifest.dataset_version}/${source}/${index}.json`) {
           throw new Error('告警分塊路徑不安全');
         }
+        if (!Number.isSafeInteger(entry.size_bytes) || entry.size_bytes < 1 ||
+            !Number.isSafeInteger(entry.event_count) || entry.event_count < 1) {
+          throw new Error('告警分塊索引欄位無效');
+        }
+        manifestBytes += entry.size_bytes;
+        if (!includesArea(areaScope, source, entry.area_id)) continue;
+        if (source === 'ncdr' && hasCategoryIndex) {
+          if (typeof entry.category_code !== 'string' || !/^[a-z][a-z0-9_]{0,63}$/u.test(entry.category_code)) {
+            throw new Error('NCDR 類型索引無效');
+          }
+          if (!visibleNcdrCategoryCodes.has(entry.category_code)) continue;
+        } else if (source === 'ncdr' && Object.hasOwn(entry, 'category_code')) {
+          throw new Error('NCDR 類型索引不完整');
+        } else if (source !== 'ncdr' && Object.hasOwn(entry, 'category_code')) {
+          throw new Error('非 NCDR 分塊不應帶有 NCDR 類型');
+        }
+        selectedChunks.push({ index, path, expected: entry });
+        selectedBytes += entry.size_bytes;
+        selectedChunkCount += 1;
+        if (selectedBytes > MAX_SELECTED_BYTES || selectedChunkCount > MAX_SELECTED_CHUNKS) {
+          throw new Error('符合條件的告警資料超出允許大小');
+        }
       }
-      manifests.push({ source, manifest, paths: dataset.chunk_paths });
+      if (manifestBytes !== manifest.total_size_bytes) throw new Error('告警資料總大小與索引不符');
+      manifests.push({ source, manifest, paths: dataset.chunk_paths, selectedChunks, hasCategoryIndex });
     }
     return { manifests, hash: await helper().sha256(helper().canonicalize(feed)) };
   }
@@ -283,18 +364,16 @@
     const metadata = await verifyFeedMetadata(feed, options);
     if (!Array.isArray(documents)) throw new Error('告警分塊格式不符');
     const byPath = new Map(documents.map((document) => [document.path, document.chunk]));
-    const expectedPaths = metadata.manifests.flatMap(({ paths }) => paths);
+    const expectedPaths = metadata.manifests.flatMap(({ selectedChunks }) => selectedChunks.map(({ path }) => path));
     if (byPath.size !== expectedPaths.length || documents.length !== expectedPaths.length) {
       throw new Error('告警分塊數量不符');
     }
 
     const eventRecords = [];
-    for (const { source, manifest, paths } of metadata.manifests) {
+    for (const { source, manifest, selectedChunks } of metadata.manifests) {
       let datasetBytes = 0;
-      for (let index = 0; index < paths.length; index += 1) {
-        const path = paths[index];
+      for (const { index, path, expected } of selectedChunks) {
         const chunk = byPath.get(path);
-        const expected = manifest.chunks[index];
         if (!chunk || chunk.schema_version !== 'chunk-v0' || chunk.sequence !== index ||
             chunk.dataset_id !== manifest.dataset_id || chunk.namespace !== manifest.namespace ||
             chunk.dataset_version !== manifest.dataset_version || chunk.manifest_id !== manifest.manifest_id ||
@@ -321,11 +400,19 @@
             source === 'government-announcements' || source === 'government-device-revocations'
               ? 'GOVERNMENT' : source === 'government-attestations' ? 'GOV_ATTEST' : 'CWA';
           if (event.source !== expectedSource) throw new Error('官方告警來源不一致');
-          eventRecords.push({ event, namespace: manifest.namespace, source });
+          eventRecords.push({
+            event,
+            namespace: manifest.namespace,
+            source,
+            expectedCategory: expected.category_code,
+            expectedArea: expected.area_id,
+          });
         }
         datasetBytes += chunk.byte_length;
       }
-      if (datasetBytes !== manifest.total_size_bytes) throw new Error('告警資料總大小不一致');
+      if (datasetBytes !== selectedChunks.reduce((total, selected) => total + selected.expected.size_bytes, 0)) {
+        throw new Error('符合條件的告警資料總大小不一致');
+      }
     }
     const revokedAtByCertificateId = await collectRevocations(
       eventRecords.map(({ event }) => event),
@@ -334,12 +421,16 @@
     );
     const verificationOptions = { ...options, revokedAtByCertificateId };
     const events = [];
-    for (const { event, namespace } of eventRecords) {
+    for (const { event, namespace, expectedCategory, expectedArea } of eventRecords) {
       await verifyEvent(event, namespace, feed.signing_key_id, verificationOptions);
+      if (expectedCategory !== undefined &&
+          (event.attributes?.ncdr_category_code !== expectedCategory || event.attributes?.area_id !== expectedArea)) {
+        throw new Error('NCDR 事件類型或區域與簽章索引不一致');
+      }
       events.push(event);
     }
     const now = options.now === undefined ? Date.now() : new Date(options.now).getTime();
-    const cacheEvents = events.filter((event) => event.attributes.publication_retracted !== true &&
+    const cacheEvents = events.filter(isVisibleNcdrEvent).filter((event) => event.attributes.publication_retracted !== true &&
       timestamp(event.expires_at, 'expires_at') > now);
     return {
       revision: feed.revision,
@@ -352,16 +443,22 @@
     };
   }
 
-  async function verifyCachedRelease(stored) {
-    const metadata = await verifyFeedMetadata(stored?.feed, { allowExpired: true });
+  async function verifyCachedRelease(stored, areaScope = 'all') {
+    areaScope = normalizeAreaScope(areaScope);
+    const metadata = await verifyFeedMetadata(stored?.feed, { allowExpired: true, areaScope });
     if (stored.revision !== stored.feed.revision || stored.hash !== metadata.hash || !Array.isArray(stored.events)) {
       throw new Error('告警快取版本不一致');
     }
     const knownEvents = new Map();
-    for (const { manifest } of metadata.manifests) {
-      for (const entry of manifest.chunks) {
+    for (const { manifest, selectedChunks } of metadata.manifests) {
+      for (const { expected: entry } of selectedChunks) {
         for (const eventId of entry.event_ids ?? []) {
-          knownEvents.set(`${manifest.namespace}/${eventId}`, manifest.namespace);
+          knownEvents.set(`${manifest.namespace}/${eventId}`, {
+            namespace: manifest.namespace,
+            categoryCode: entry.category_code,
+            areaId: entry.area_id,
+            source: manifest.source,
+          });
         }
       }
     }
@@ -375,14 +472,21 @@
     for (const event of stored.events) {
       // Drop unsupported records from older browser caches while preserving
       // valid NCDR and CWA events for offline use.
-      if (!isSupportedEvent(event)) continue;
+      if (!isSupportedEvent(event) || !isVisibleNcdrEvent(event)) continue;
       const identity = `${event?.namespace}/${event?.event_id}`;
-      const namespace = knownEvents.get(identity);
-      if (!namespace || seen.has(identity)) throw new Error('告警快取內容與簽章清單不符');
+      const expected = knownEvents.get(identity);
+      // A valid event outside the currently selected area is absent from the
+      // selected manifest index. Prune it when the user narrows the scope.
+      if (!expected) continue;
+      if (seen.has(identity)) throw new Error('告警快取內容與簽章清單不符');
       seen.add(identity);
-      const payload = await verifyEvent(event, namespace, stored.feed.signing_key_id, {
+      const payload = await verifyEvent(event, expected.namespace, stored.feed.signing_key_id, {
         revokedAtByCertificateId,
       });
+      if (expected.categoryCode !== undefined &&
+          (event.attributes?.ncdr_category_code !== expected.categoryCode || event.attributes?.area_id !== expected.areaId)) {
+        throw new Error('NCDR 快取類型或區域與簽章索引不一致');
+      }
       const version = stored.feed.event_versions[identity];
       const fingerprintPayload = { ...payload };
       delete fingerprintPayload.event_version;
@@ -502,29 +606,32 @@
     cachePruneTimer = global.setTimeout(() => { void pruneCachedEvents(); }, delay);
   }
 
-  async function downloadRelease(feed) {
-    const metadata = await verifyFeedMetadata(feed);
-    const paths = metadata.manifests.flatMap(({ paths: datasetPaths }) => datasetPaths);
-    const documents = new Array(paths.length);
+  async function downloadRelease(feed, areaScope = 'all') {
+    areaScope = normalizeAreaScope(areaScope);
+    const metadata = await verifyFeedMetadata(feed, { areaScope });
+    const selectedChunks = metadata.manifests.flatMap(({ selectedChunks: entries }) => entries);
+    const documents = new Array(selectedChunks.length);
     let nextIndex = 0;
-    await Promise.all(Array.from({ length: Math.min(4, paths.length) }, async () => {
-      while (nextIndex < paths.length) {
+    await Promise.all(Array.from({ length: Math.min(4, selectedChunks.length) }, async () => {
+      while (nextIndex < selectedChunks.length) {
         const index = nextIndex++;
-        if (!isSafeChunkPath(paths[index])) {
+        const path = selectedChunks[index].path;
+        if (!isSafeChunkPath(path)) {
           throw new Error('告警分塊路徑不安全');
         }
-        documents[index] = { path: paths[index], chunk: await requestJson(`/${paths[index]}`, 8 * 1024 * 1024) };
+        documents[index] = { path, chunk: await requestJson(`/${path}`, 8 * 1024 * 1024) };
       }
     }));
-    return verifyGovernmentFeedRelease(feed, documents);
+    return verifyGovernmentFeedRelease(feed, documents, { areaScope });
   }
 
-  async function loadNLSCGovernmentFeed() {
+  async function loadNLSCGovernmentFeed(areaScope = 'all') {
+    areaScope = normalizeAreaScope(areaScope);
     let cached = null;
     try {
       const stored = await readCachedRelease();
       if (stored) {
-        const verified = await verifyCachedRelease(stored);
+        const verified = await verifyCachedRelease(stored, areaScope);
         cached = verified;
         if (verified.cacheEvents.length !== stored.events.length) {
           await writeCachedRelease({
@@ -542,7 +649,7 @@
 
     try {
       const feed = await requestJson('/feed.json', 8 * 1024 * 1024);
-      const release = await downloadRelease(feed);
+      const release = await downloadRelease(feed, areaScope);
       if (cached && (release.revision < cached.revision ||
           release.revision === cached.revision && release.hash !== cached.hash)) {
         throw new Error('告警 feed 版本回退或衝突');

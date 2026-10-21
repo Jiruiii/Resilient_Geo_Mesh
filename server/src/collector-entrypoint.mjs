@@ -197,7 +197,12 @@ export function createCollectorService({
   const publish = publisher ?? createPublisher({ config, signingKey, getNow: () => currentNow });
   const publishFailureStatus = createFailurePublisher({ config, getNow: () => currentNow });
   const collect = (options) => collectSources({ ...options, adapters });
-  const allSourceDefinitions = registry.filter((source) => sourceIds.includes(source.sourceId));
+  const allSourceDefinitions = registry
+    .filter((source) => sourceIds.includes(source.sourceId))
+    .map((source) => ({
+      ...source,
+      scheduleMs: config.scheduleMsBySource?.[source.sourceId] ?? source.scheduleMs,
+    }));
 
   async function collectCompleteSources(options) {
     const freshResults = await collect(options);

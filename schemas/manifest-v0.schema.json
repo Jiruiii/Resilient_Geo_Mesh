@@ -173,6 +173,11 @@
           "description": "Geographic slice this chunk belongs to. Lets a node decide whether the chunk intersects its area without downloading it.",
           "pattern": "^[a-z][a-z0-9._-]{0,63}$"
         },
+        "category_code": {
+          "type": "string",
+          "description": "Optional signed alert-category routing key; currently emitted for NCDR chunks.",
+          "pattern": "^[a-z][a-z0-9_]{0,63}$"
+        },
         "theme": {
           "type": "string",
           "pattern": "^[a-z][a-z0-9_-]{0,31}$"

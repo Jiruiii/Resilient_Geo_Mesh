@@ -86,25 +86,38 @@ function splitFeatures(features, options) {
   const targetSizeBytes = options.targetSizeBytes ?? 4096;
   const groups = [];
   let current = [];
-  for (const feature of features) {
-    const candidate = [...current, feature];
-    const candidateContent = {
+  let currentFeatureBytes = 0;
+
+  const emptyChunkBytes = (sequence) => {
+    const emptyContent = {
       dataset_id: options.datasetId,
       layer_id: options.layerId,
       namespace: options.namespace,
       dataset_version: options.datasetVersion,
-      sequence: groups.length,
+      sequence,
       priority: options.priority,
       created_at: options.createdAt,
       content_type: 'application/json',
       content_encoding: 'identity',
-      features: candidate,
+      features: [],
     };
-    if (current.length > 0 && Buffer.byteLength(canonicalize(candidateContent), 'utf8') > targetSizeBytes) {
+    // The [] placeholder contributes two bytes; feature bytes and commas are
+    // accounted for incrementally below.
+    return Buffer.byteLength(canonicalize(emptyContent), 'utf8') - 2;
+  };
+
+  let currentBaseBytes = emptyChunkBytes(0);
+  for (const feature of features) {
+    const featureBytes = Buffer.byteLength(canonicalize(feature), 'utf8');
+    const candidateFeatureBytes = currentFeatureBytes + featureBytes + (current.length > 0 ? 1 : 0);
+    if (current.length > 0 && currentBaseBytes + candidateFeatureBytes > targetSizeBytes) {
       groups.push(current);
       current = [feature];
+      currentBaseBytes = emptyChunkBytes(groups.length);
+      currentFeatureBytes = featureBytes;
     } else {
-      current = candidate;
+      current.push(feature);
+      currentFeatureBytes = candidateFeatureBytes;
     }
   }
   if (current.length > 0) groups.push(current);

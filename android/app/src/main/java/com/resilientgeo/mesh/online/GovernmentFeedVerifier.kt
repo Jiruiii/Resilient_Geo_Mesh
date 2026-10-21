@@ -33,7 +33,6 @@ object GovernmentFeedVerifier {
         require(datasets.length() <= 8) { "Too many government datasets" }
         val ids = mutableSetOf<String>()
         var total = 0
-        var totalBytes = 0L
         for (i in 0 until datasets.length()) {
             val dataset = datasets.getJSONObject(i)
             val source = dataset.getString("source_id")
@@ -55,12 +54,24 @@ object GovernmentFeedVerifier {
             val paths = dataset.getJSONArray("chunk_paths")
             require(chunks.length() == paths.length() && chunks.length() > 0)
             total += chunks.length()
-            totalBytes += manifest.getLong("total_size_bytes")
-            require(totalBytes in 1..24L * 1024 * 1024) { "Government release too large for relay cache" }
             require(total <= 4096) { "Too many chunks" }
+            var manifestBytes = 0L
+            val hasCategoryIndex = source == "ncdr" && chunks.getJSONObject(0).has("category_code")
             for (j in 0 until paths.length()) {
+                val entry = chunks.getJSONObject(j)
+                require(entry.getLong("size_bytes") > 0 && entry.getInt("event_count") > 0)
+                manifestBytes += entry.getLong("size_bytes")
+                if (source == "ncdr" && hasCategoryIndex) {
+                    val category = entry.optString("category_code")
+                    require(category.matches(Regex("^[a-z][a-z0-9_]{0,63}$"))) { "Invalid NCDR category metadata" }
+                } else if (source == "ncdr") {
+                    require(!entry.has("category_code")) { "Partial NCDR category index" }
+                } else {
+                    require(!entry.has("category_code")) { "Unexpected alert category metadata" }
+                }
                 require(paths.getString(j) == "releases/${manifest.getLong("dataset_version")}/$source/$j.json") { "Unsafe download path" }
             }
+            require(manifestBytes == manifest.getLong("total_size_bytes")) { "Government manifest byte count mismatch" }
         }
     }
 
@@ -100,6 +111,14 @@ object GovernmentFeedVerifier {
             require(supportsOfficialEvent(event.getString("namespace"), event.getString("source"))) { "Unsupported official source" }
             require(EventVerifier.verify(event, trust, now, revokedAtByCertificateId) is VerificationResult.Valid) {
                 "Invalid government event"
+            }
+            if (expected.has("category_code")) {
+                val attributes = event.optJSONObject("attributes")
+                require(event.optString("source").equals("NCDR", ignoreCase = true) &&
+                    attributes?.optString("area_id") == expected.optString("area_id") &&
+                    attributes?.optString("ncdr_category_code") == expected.optString("category_code")) {
+                    "NCDR chunk category or area mismatch"
+                }
             }
         }
     }

@@ -248,6 +248,12 @@ export function verifyManifest(manifest, publicKey, options = {}) {
   if (!publicKey || !verifyCanonical(manifestSignatureInput(manifest), manifest.signature, publicKey)) {
     return { valid: false, stage: 'signature', errors: ['manifest_signature_invalid'] };
   }
+  for (const entry of manifest.chunks) {
+    if (entry?.category_code !== undefined &&
+        (typeof entry.category_code !== 'string' || !/^[a-z][a-z0-9_]{0,63}$/u.test(entry.category_code))) {
+      return { valid: false, stage: 'schema', errors: ['chunk_category_code_invalid'] };
+    }
+  }
   const now = options.now ? new Date(options.now) : new Date();
   const expired = now >= parseTime(manifest.expires_at, 'expires_at');
   return { valid: true, expired, current: !expired, errors: [] };
@@ -287,7 +293,9 @@ export function verifyChunk(chunk, manifest, publicKey, options = {}) {
   }
   const expectedEntry = manifest.chunks.find((entry) => entry.chunk_id === chunk.chunk_id);
   if (!expectedEntry) return { valid: false, stage: 'manifest', errors: ['chunk_not_in_manifest'] };
-  if (expectedEntry.chunk_hash !== chunk.chunk_hash || expectedEntry.size_bytes !== chunk.byte_length || expectedEntry.event_count !== chunk.event_count) {
+  if (expectedEntry.chunk_hash !== chunk.chunk_hash || expectedEntry.size_bytes !== chunk.byte_length ||
+      expectedEntry.event_count !== chunk.event_count || expectedEntry.area_id !== chunk.area_id ||
+      expectedEntry.theme !== chunk.theme) {
     return { valid: false, stage: 'manifest', errors: ['chunk_metadata_mismatch'] };
   }
   if (!trustedKey(chunk, options.trustedKeyIds)) return { valid: false, stage: 'trust', errors: ['chunk signing_key_id is not trusted'] };
@@ -309,6 +317,10 @@ export function verifyChunk(chunk, manifest, publicKey, options = {}) {
   const eventResults = chunk.events.map((event) => verifyEvent(event, publicKey, options));
   const invalidEvent = eventResults.find((result) => !result.valid);
   if (invalidEvent) return { valid: false, stage: 'event', errors: ['chunk_contains_invalid_event'], eventResults };
+  if (expectedEntry.category_code !== undefined && chunk.events.some((event) =>
+    event.source?.toUpperCase() !== 'NCDR' || event.attributes?.ncdr_category_code !== expectedEntry.category_code)) {
+    return { valid: false, stage: 'manifest', errors: ['chunk_category_mismatch'], eventResults };
+  }
   if (chunk.events.length !== chunk.event_count) return { valid: false, stage: 'completeness', errors: ['event_count_mismatch'], eventResults };
   return { valid: true, current: eventResults.every((result) => result.current), eventResults, errors: [] };
 }

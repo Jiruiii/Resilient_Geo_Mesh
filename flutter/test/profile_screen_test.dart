@@ -4,11 +4,47 @@ import 'package:flutter/foundation.dart'
     show debugDefaultTargetPlatformOverride;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:resilientgeo_flutter/data/government_account_cache.dart';
 import 'package:resilientgeo_flutter/data/government_api.dart';
 import 'package:resilientgeo_flutter/data/map_bridge.dart';
+import 'package:resilientgeo_flutter/data/map_models.dart';
+import 'package:resilientgeo_flutter/data/taiwan_administrative_area_directory.dart';
+import 'package:resilientgeo_flutter/data/taiwan_administrative_area_index.dart';
 import 'package:resilientgeo_flutter/screens/profile_screen.dart';
 import 'package:resilientgeo_flutter/screens/government_workbench_screen.dart';
+
+final _profileAreaDirectory = TaiwanAdministrativeAreaDirectory.fromJson(
+  <String, Object?>{
+    'schema_version': 'taiwan-area-directory-v1',
+    'coverage': 'TW',
+    'target_coordinate_system': 'EPSG:4326',
+    'source_version': 'sha256:${'a' * 64}',
+    'area_count': 1,
+    'areas': <Map<String, Object?>>[
+      <String, Object?>{
+        'area_id': 'tw.63000',
+        'level': 'county',
+        'parent_area_id': null,
+        'county_name': '臺北市',
+        'town_name': null,
+      },
+    ],
+  },
+);
+final _profileAreaIndex = TaiwanAdministrativeAreaIndex.fromJson(
+  _profileAreaDirectory,
+  <String, Object?>{
+    'schema_version': 'taiwan-area-index-v1',
+    'coverage': 'TW',
+    'target_coordinate_system': 'EPSG:4326',
+    'source_version': _profileAreaDirectory.sourceVersion,
+    'area_count': 0,
+    'coordinate_encoding': 'flat-pairs-v1',
+    'areas': <Object?>[],
+    'coordinates': <double>[],
+  },
+);
 
 class _FakeGovernmentApi extends GovernmentApiClient {
   GovernmentUser? current;
@@ -128,6 +164,10 @@ class _DeviceAuthorizationBridge extends MapBridge {
       };
 
   @override
+  Future<MapInitialState> getInitialState() async =>
+      const MapInitialState(events: <MeshEvent>[], emergencyModeEnabled: true);
+
+  @override
   Future<List<Map<String, dynamic>>> listGovernmentWarningStatuses() async =>
       warningStatuses;
 
@@ -152,6 +192,8 @@ class _DeviceAuthorizationBridge extends MapBridge {
 }
 
 void main() {
+  setUp(() => SharedPreferences.setMockInitialValues(<String, Object>{}));
+
   test(
     'offline restore requires a currently valid cached government certificate',
     () async {
@@ -193,6 +235,10 @@ void main() {
   testWidgets(
     'government workbench displays real mesh and cloud warning states',
     (tester) async {
+      tester.view.physicalSize = const Size(800, 1600);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
       final api = _FakeGovernmentApi();
       final bridge = _DeviceAuthorizationBridge(
         'AUTHORIZED',
@@ -247,13 +293,19 @@ void main() {
       addTearDown(auth.dispose);
 
       await tester.pumpWidget(
-        MaterialApp(home: GovernmentWorkbenchScreen(auth: auth)),
+        MaterialApp(
+          home: GovernmentWorkbenchScreen(
+            auth: auth,
+            areaDirectory: _profileAreaDirectory,
+            areaIndex: _profileAreaIndex,
+          ),
+        ),
       );
       await tester.pumpAndSettle();
       await tester.tap(find.text('官方公告'));
       await tester.pumpAndSettle();
 
-      expect(find.text('待 mesh 同步'), findsWidgets);
+      expect(find.text('待 Mesh 同步'), findsWidgets);
       expect(find.text('待雲端補傳'), findsOneWidget);
       expect(find.text('待官方 feed 發布'), findsOneWidget);
       expect(find.text('已發布'), findsOneWidget);
@@ -290,6 +342,48 @@ void main() {
     expect(find.textContaining('版本化快照'), findsNothing);
     expect(find.byType(DropdownButtonFormField<ThemeMode>), findsOneWidget);
   });
+
+  testWidgets(
+    'profile opens notification area settings and saves a town selection',
+    (tester) async {
+      final directory = await TaiwanAdministrativeAreaDirectory.load();
+      Set<String>? savedAreas;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ProfileScreen(
+            themeMode: ThemeMode.system,
+            animationEnabled: true,
+            notificationAreaDirectory: directory,
+            notificationAreaIds: const <String>{'tw.national'},
+            onNotificationAreaIdsChanged:
+                (areaIds) async => savedAreas = areaIds,
+            onThemeModeChanged: (_) {},
+            onAnimationChanged: (_) {},
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('通知接收區域'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('只會篩選已同步到本機的事件'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('notification-area-choose')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('administrative-area-search')),
+        '永和區',
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('administrative-area-option-tw.65000040')),
+      );
+      await tester.tap(find.text('確認'));
+      await tester.pumpAndSettle();
+      expect(find.text('新北市 永和區'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('notification-area-save')));
+      await tester.pumpAndSettle();
+      expect(savedAreas, <String>{'tw.65000040'});
+    },
+  );
 
   testWidgets(
     'profile logs in with a non-email account and opens the workbench',
@@ -371,6 +465,8 @@ void main() {
           themeMode: ThemeMode.system,
           animationEnabled: true,
           governmentAuth: auth,
+          governmentAreaDirectory: _profileAreaDirectory,
+          governmentAreaIndex: _profileAreaIndex,
           onThemeModeChanged: (_) {},
           onAnimationChanged: (_) {},
         ),

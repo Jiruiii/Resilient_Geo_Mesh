@@ -749,6 +749,8 @@ GeoPoint? _focusCoordinate(MapGeometry? geometry) {
     PointGeometry(:final point) => <GeoPoint>[point],
     LineStringGeometry(:final points) => points,
     PolygonGeometry(:final rings) => rings.expand((ring) => ring).toList(),
+    MultiPolygonGeometry(:final polygons) =>
+      polygons.expand((rings) => rings.expand((ring) => ring)).toList(),
     _ => const <GeoPoint>[],
   };
   if (points.isEmpty) return null;

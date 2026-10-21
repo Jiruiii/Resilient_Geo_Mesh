@@ -420,10 +420,11 @@ export function createPostgresGovernmentStore(pool) {
     },
 
     async listAnnouncements() {
-      const result = await pool.query(`SELECT event_id,event_version,announcement_json,retracted,updated_at
+      const result = await pool.query(`SELECT event_id,event_version,announcement_json,retracted,created_at,updated_at
         FROM government_announcements ORDER BY updated_at DESC LIMIT 500`);
       return result.rows.map((row) => ({ event_id: row.event_id, event_version: row.event_version,
-        ...row.announcement_json, retracted: row.retracted, updated_at: row.updated_at.toISOString() }));
+        ...row.announcement_json, retracted: row.retracted, created_at: row.created_at.toISOString(),
+        updated_at: row.updated_at.toISOString() }));
     },
 
     async currentAnnouncementEvents() {

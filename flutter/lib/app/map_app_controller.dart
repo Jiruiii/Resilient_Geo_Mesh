@@ -9,8 +9,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../data/attestation_index.dart';
 import '../data/map_bridge.dart';
 import '../data/map_models.dart';
+import '../data/ncdr_category.dart';
 import '../data/ncdr_demo_events.dart';
 import '../data/ncdr_map_filter.dart';
+import '../data/notification_area_matcher.dart';
+import '../data/taiwan_administrative_area_directory.dart';
 import '../data/government_api.dart';
 import '../data/offline_government_feed.dart';
 import '../data/offline_map_web_static_layers.dart';
@@ -58,6 +61,7 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
   static const _readEventKeysPreference = 'map.read_event_keys';
   static const _deletedNotificationKeysPreference =
       'map.deleted_notification_keys';
+  static const _notificationAreaIdsPreference = 'map.notification_area_ids';
   static const _emptyStaticFeatureCollection = StaticFeatureCollection(
     schemaVersion: 'feature-v0',
     datasetId: 'resilientgeo-taiwan',
@@ -72,7 +76,8 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
   final WebGovernmentFeedLoader _webGovernmentFeedLoader;
   final RescueService? _rescueServiceOverride;
   late final RescueService rescueService =
-      _rescueServiceOverride ?? RescueService.forPlatform(bridge: bridge, isWeb: _isWeb);
+      _rescueServiceOverride ??
+      RescueService.forPlatform(bridge: bridge, isWeb: _isWeb);
   List<MeshEvent> _rescueNearby = const <MeshEvent>[];
   GeoPoint? _rescueCenter;
   DateTime? _rescueFetchedAt;
@@ -93,6 +98,10 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
   bool retryingEvents = false;
   final Set<String> _readEventKeys = <String>{};
   final Set<String> _deletedNotificationKeys = <String>{};
+  TaiwanAdministrativeAreaDirectory? _notificationAreaDirectory;
+  Set<String> _notificationAreaIds = const <String>{
+    TaiwanAdministrativeAreaDirectory.nationalAreaId,
+  };
   StaticFeatureCollection? staticFeatures;
   List<MeshEvent> persistedEvents = const <MeshEvent>[];
   MapInitialState initialState = const MapInitialState(
@@ -129,6 +138,16 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
   /// local list; the verified event stream remains intact for the map/cache.
   List<MeshEvent> get notificationEvents => events
       .where((event) => !isAttestationEvent(event))
+      .where(isNcdrCategoryVisibleInApp)
+      .where(
+        (event) =>
+            _notificationAreaDirectory == null ||
+            eventMatchesNotificationAreas(
+              event,
+              _notificationAreaIds,
+              _notificationAreaDirectory!,
+            ),
+      )
       .where(
         (event) => !_deletedNotificationKeys.contains(meshEventIdentity(event)),
       )
@@ -143,6 +162,12 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
       .toList(growable: false);
 
   int get notificationCount => unreadEvents.length;
+
+  TaiwanAdministrativeAreaDirectory? get notificationAreaDirectory =>
+      _notificationAreaDirectory;
+
+  Set<String> get notificationAreaIds =>
+      Set<String>.unmodifiable(_notificationAreaIds);
 
   Future<void> load() async {
     try {
@@ -305,9 +330,41 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> _loadPreferences() async {
+    try {
+      _notificationAreaDirectory =
+          await TaiwanAdministrativeAreaDirectory.load();
+    } on Object {
+      _notificationAreaDirectory = null;
+    }
     final preferences = await SharedPreferences.getInstance();
     themeMode = _themeModeFromName(preferences.getString(_themePreference));
     animationEnabled = preferences.getBool(_animationPreference) ?? true;
+    _notificationAreaIds = const <String>{
+      TaiwanAdministrativeAreaDirectory.nationalAreaId,
+    };
+    try {
+      final storedAreaIds = preferences.getStringList(
+        _notificationAreaIdsPreference,
+      );
+      final directory = _notificationAreaDirectory;
+      if (storedAreaIds != null &&
+          storedAreaIds.isNotEmpty &&
+          directory != null) {
+        final hasOnlyKnownIds = storedAreaIds.every(
+          (areaId) =>
+              areaId == TaiwanAdministrativeAreaDirectory.nationalAreaId ||
+              directory.areaById(areaId) != null,
+        );
+        final normalized = directory.normalizeSelection(storedAreaIds.toSet());
+        if (hasOnlyKnownIds && normalized.isNotEmpty) {
+          _notificationAreaIds = normalized;
+        }
+      }
+    } on Object {
+      _notificationAreaIds = const <String>{
+        TaiwanAdministrativeAreaDirectory.nationalAreaId,
+      };
+    }
     _readEventKeys
       ..clear()
       ..addAll(
@@ -422,6 +479,10 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
       _notifyIfAlive();
     }
   }
+
+  /// Reloads the browser's signed feed after its persisted download scope changes.
+  Future<void> refreshGovernmentFeed() =>
+      _refreshWebGovernmentFeed(manual: true);
 
   void _scheduleCloudAnnouncementRefresh({
     required String eventId,
@@ -566,12 +627,19 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
   void setRescueViewport(GeoPoint center) {
     final previous = _rescueCenter;
     _rescueCenter = center;
-    final moved = previous == null ||
+    final moved =
+        previous == null ||
         (previous.longitude - center.longitude).abs() > 0.01 ||
         (previous.latitude - center.latitude).abs() > 0.01;
-    final stale = _rescueFetchedAt == null || DateTime.now().difference(_rescueFetchedAt!) >= const Duration(seconds: 60);
+    final stale =
+        _rescueFetchedAt == null ||
+        DateTime.now().difference(_rescueFetchedAt!) >=
+            const Duration(seconds: 60);
     if (moved || stale) unawaited(_refreshRescueNearby());
-    _rescueTimer ??= Timer.periodic(const Duration(seconds: 60), (_) => unawaited(_refreshRescueNearby()));
+    _rescueTimer ??= Timer.periodic(
+      const Duration(seconds: 60),
+      (_) => unawaited(_refreshRescueNearby()),
+    );
   }
 
   Future<void> _refreshRescueNearby() async {
@@ -579,7 +647,9 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
     if (_disposed || center == null || _rescueFetching) return;
     _rescueFetching = true;
     try {
-      _rescueNearby = List<MeshEvent>.unmodifiable(await rescueService.nearby(RescueBounds.around(center)));
+      _rescueNearby = List<MeshEvent>.unmodifiable(
+        await rescueService.nearby(RescueBounds.around(center)),
+      );
       _rescueFetchedAt = DateTime.now();
       _publishEvents();
     } on RescueFailure {
@@ -596,7 +666,10 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
     for (final event in <MeshEvent>[...persistedEvents, ..._rescueNearby]) {
       final key = meshEventIdentity(event);
       final existing = byId[key];
-      if (existing == null || (event.eventVersion ?? 0) > (existing.eventVersion ?? 0)) byId[key] = event;
+      if (existing == null ||
+          (event.eventVersion ?? 0) > (existing.eventVersion ?? 0)) {
+        byId[key] = event;
+      }
     }
     return byId.values.toList(growable: false);
   }
@@ -634,6 +707,28 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
     if (!_readEventKeys.add(key)) return;
     _notifyIfAlive();
     await _persistNotificationKeys(_readEventKeysPreference, _readEventKeys);
+  }
+
+  Future<void> setNotificationAreaIds(Set<String> areaIds) async {
+    final directory = _notificationAreaDirectory;
+    if (directory == null || areaIds.isEmpty) return;
+    final hasOnlyKnownIds = areaIds.every(
+      (areaId) =>
+          areaId == TaiwanAdministrativeAreaDirectory.nationalAreaId ||
+          directory.areaById(areaId) != null,
+    );
+    if (!hasOnlyKnownIds) return;
+    final normalized = directory.normalizeSelection(areaIds);
+    if (normalized.isEmpty ||
+        normalized.length == _notificationAreaIds.length &&
+            normalized.containsAll(_notificationAreaIds)) {
+      return;
+    }
+    _notificationAreaIds = normalized;
+    _notifyIfAlive();
+    final preferences = await SharedPreferences.getInstance();
+    final sortedIds = normalized.toList()..sort();
+    await preferences.setStringList(_notificationAreaIdsPreference, sortedIds);
   }
 
   Future<void> markAllNotificationsRead() async {

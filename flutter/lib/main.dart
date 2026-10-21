@@ -107,7 +107,8 @@ class _MapAppHomeState extends State<_MapAppHome> {
   void _openNotificationOnMap(MeshEvent event) {
     unawaited(widget.controller.markEventRead(event));
     final point = meshEventFocusPoint(event);
-    if (!isMapVisibleEvent(event) || point == null) {
+    if (!isMapVisibleEvent(event) ||
+        (point == null && meshEventBounds(event) == null)) {
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
         ..showSnackBar(const SnackBar(content: Text('此通知沒有地圖位置')));
@@ -169,6 +170,8 @@ class _MapAppHomeState extends State<_MapAppHome> {
                   staticFeaturesPending: controller.staticFeaturesPending,
                   staticFeaturesFailed:
                       controller.staticFeatureLoadError != null,
+                  administrativeAreaDirectory:
+                      controller.notificationAreaDirectory,
                   initialState: controller.initialState,
                   bridge: controller.bridge,
                   eventUpdates: controller.eventUpdates,
@@ -177,13 +180,15 @@ class _MapAppHomeState extends State<_MapAppHome> {
                   active: _selectedIndex == 0,
                   rescueService: controller.rescueService,
                   onViewportSettled: controller.setRescueViewport,
-                  sirenPanelBuilder: (context, _) => SirenPanel(controller: widget.siren),
+                  sirenPanelBuilder:
+                      (context, _) => SirenPanel(controller: widget.siren),
                   notificationFocusEvent: _notificationFocusEvent,
                   notificationFocusRequestId: _notificationFocusRequestId,
                 ),
                 NotificationsScreen(
                   events: controller.notificationEvents,
                   readEventKeys: controller.readEventKeys,
+                  areaDirectory: controller.notificationAreaDirectory,
                   attestationSource: controller.events,
                   onEventRead: controller.markEventRead,
                   onEventMapRequested: _openNotificationOnMap,
@@ -195,6 +200,12 @@ class _MapAppHomeState extends State<_MapAppHome> {
                 ProfileScreen(
                   governmentAuth: controller.governmentAuth,
                   bridge: controller.bridge,
+                  onWebGovernmentFeedRefresh: controller.refreshGovernmentFeed,
+                  notificationAreaDirectory:
+                      controller.notificationAreaDirectory,
+                  notificationAreaIds: controller.notificationAreaIds,
+                  onNotificationAreaIdsChanged:
+                      controller.setNotificationAreaIds,
                   themeMode: controller.themeMode,
                   animationEnabled: controller.animationEnabled,
                   onThemeModeChanged: controller.setThemeMode,

@@ -29,6 +29,7 @@ function announcementEvent(row, now) {
       content: row.content,
       category: row.category,
       area_id: row.area_id,
+      affected_area_ids: row.affected_area_ids ?? [row.area_id ?? 'tw.national'],
       theme: 'announcement',
       has_map_location: Boolean(location),
       ...(retracted ? { publication_retracted: true, retraction_issued_at: now.toISOString() } : {}),

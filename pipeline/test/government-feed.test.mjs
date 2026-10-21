@@ -55,7 +55,7 @@ function governmentDeviceWarning({ namespace = 'official.announcement', certific
 function build(results, extra = {}) { return buildGovernmentFeed({ ...keys, now, results, ...extra }); }
 async function restore(output) { return readPreviousEvents(output.feed, async name => output.files.get(name), keys.publicKey); }
 
-test('public NCDR feed excludes BACKGROUND events while retaining operational events', () => {
+test('public NCDR feed retains BACKGROUND and operational events', () => {
   const output = build([{
     id: 'ncdr',
     status: 'ok',
@@ -66,11 +66,11 @@ test('public NCDR feed excludes BACKGROUND events while retaining operational ev
   }]);
 
   const publishedEvents = [...output.files.values()].flatMap((chunk) => chunk.events);
-  assert.deepEqual(publishedEvents.map((value) => value.event_id), ['ncdr:high-impact']);
-  assert.equal(output.feed.sources[0].event_count, 1);
+  assert.deepEqual(publishedEvents.map((value) => value.event_id), ['ncdr:background', 'ncdr:high-impact']);
+  assert.equal(output.feed.sources[0].event_count, 2);
 });
 
-test('public NCDR rebuild removes BACKGROUND events from the previous public ledger', () => {
+test('public NCDR rebuild retains valid BACKGROUND events from the previous ledger', () => {
   const first = build([{ id: 'ncdr', status: 'ok', events: [ncdrEvent('HIGH_IMPACT', 'ncdr:active')] }]);
   const second = build([{ id: 'ncdr', status: 'unavailable' }], {
     previous: first.feed,
@@ -83,7 +83,7 @@ test('public NCDR rebuild removes BACKGROUND events from the previous public led
   });
 
   const publishedEvents = [...second.files.values()].flatMap((chunk) => chunk.events);
-  assert.deepEqual(publishedEvents.map((value) => value.event_id), ['ncdr:active']);
+  assert.deepEqual(publishedEvents.map((value) => value.event_id), ['ncdr:active', 'ncdr:background']);
 });
 
 test('NCDR background filtering does not remove CWA official events', () => {

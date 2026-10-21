@@ -14,6 +14,7 @@ import '../data/supply_status.dart';
 import 'rescue_marker.dart';
 
 export '../data/supply_status.dart' show isSupplyStationEvent;
+export '../data/alert_category.dart' show governmentAnnouncementCategoryLabel;
 
 typedef StaticFeatureSelection = void Function(List<StaticFeature> features);
 typedef MeshEventSelection = void Function(MeshEvent event);
@@ -48,25 +49,23 @@ class MapIconCatalog {
   static const IconData locatorSound = LucideIcons.volume2;
   static const IconData supplyStation = LucideIcons.packageOpen;
 
-  static IconData forEvent(MeshEvent event) =>
-      isSupplyStationEvent(event)
-          ? supplyStation
-          : isSupplyEvent(event)
-          ? LucideIcons.box
-          : disaster;
+  static IconData forEvent(MeshEvent event) {
+    if (event.namespace == 'official.announcement') {
+      return switch (event.attributes?['category']) {
+        'SAFETY' => LucideIcons.shield,
+        'WEATHER' => LucideIcons.cloudSun,
+        'ROAD' => LucideIcons.road,
+        'SHELTER' => shelter,
+        'SUPPLY_STATION' => supplyStation,
+        'OTHER' => LucideIcons.info,
+        _ => disaster,
+      };
+    }
+    if (isSupplyStationEvent(event)) return supplyStation;
+    if (isSupplyEvent(event)) return LucideIcons.box;
+    return disaster;
+  }
 }
-
-String governmentAnnouncementCategoryLabel(Object? category) =>
-    switch (category) {
-      'SAFETY' => '安全提醒',
-      'WEATHER' => '天氣',
-      'ROAD' => '道路',
-      'SHELTER' => '避難收容',
-      'SUPPLY_STATION' => '物資站',
-      'OTHER' => '其他',
-      String value => value,
-      _ => '未分類',
-    };
 
 class MapMarkerData {
   const MapMarkerData({
@@ -126,9 +125,11 @@ class MapMarkerCluster {
 
   bool get hasCriticalEvent => members.any((marker) => marker.hasCriticalEvent);
 
-  int get rescueCount => members.fold(0, (total, marker) => total + marker.rescueCount);
+  int get rescueCount =>
+      members.fold(0, (total, marker) => total + marker.rescueCount);
 
-  int get urgentRescueCount => members.fold(0, (total, marker) => total + marker.urgentRescueCount);
+  int get urgentRescueCount =>
+      members.fold(0, (total, marker) => total + marker.urgentRescueCount);
 
   bool get hasUrgentRescue => members.any((marker) => marker.hasUrgentRescue);
 }
@@ -200,8 +201,13 @@ class MapLayers {
     final visibleEvents =
         showEvents
             ? events
-                .where((event) => event.isShownAt(eventNow))
+                .where(
+                  (event) =>
+                      event.isShownAt(eventNow) ||
+                      event.isUpcomingCwaCountyWarningAt(eventNow),
+                )
                 .where(isMapVisibleEvent)
+                .where((event) => !event.isNcdrMultiAreaWarning)
                 .where((event) => meshEventFocusPoint(event) != null)
                 .toList(growable: false)
             : const <MeshEvent>[];
@@ -448,12 +454,15 @@ class MapLayers {
         point,
         itemCount: 1,
         eventCount: 1,
-        hasCriticalEvent: rescue != null
-            ? rescue.urgency != RescueUrgency.medium
-            : event.severity == 'CRITICAL' || event.severity == 'HIGH',
+        hasCriticalEvent:
+            rescue != null
+                ? rescue.urgency != RescueUrgency.medium
+                : event.severity == 'CRITICAL' || event.severity == 'HIGH',
         rescueCount: rescue != null ? 1 : 0,
-        urgentRescueCount: rescue != null && rescue.urgency != RescueUrgency.medium ? 1 : 0,
-        hasUrgentRescue: rescue != null && rescue.urgency != RescueUrgency.medium,
+        urgentRescueCount:
+            rescue != null && rescue.urgency != RescueUrgency.medium ? 1 : 0,
+        hasUrgentRescue:
+            rescue != null && rescue.urgency != RescueUrgency.medium,
       );
     }
 
@@ -785,6 +794,11 @@ class MapLayers {
     }
     final point = meshEventFocusPoint(event)!;
     final name = eventName(event);
+    final statusSuffix = switch (event.effectiveApplyState) {
+      'EXPIRED' => '，已過期',
+      'UPCOMING' => '，尚未生效',
+      _ => '',
+    };
     return MapMarkerData(
       key: ValueKey<String>('event-marker-${meshEventIdentity(event)}'),
       point: point,
@@ -793,12 +807,12 @@ class MapLayers {
       child:
           compact
               ? _MapMarkerDot(
-                semanticLabel: '事件：$name${event.isExpired ? '，已過期' : ''}',
+                semanticLabel: '事件：$name$statusSuffix',
                 color: eventColor(event),
                 onTap: () => onSelected(event),
               )
               : _MapMarkerButton(
-                semanticLabel: '事件：$name${event.isExpired ? '，已過期' : ''}',
+                semanticLabel: '事件：$name$statusSuffix',
                 icon:
                     event.isExpired
                         ? MapIconCatalog.expiredEvent
@@ -1136,7 +1150,9 @@ String clusterSemanticLabel(MapMarkerCluster cluster, {String? areaName}) {
   if (cluster.medicalCount > 0) details.add('醫療${cluster.medicalCount}');
   if (cluster.eventCount > 0) details.add('事件${cluster.eventCount}');
   if (cluster.rescueCount > 0) {
-    details.add('求救點${cluster.rescueCount}，其中${cluster.urgentRescueCount}個高或危急');
+    details.add(
+      '求救點${cluster.rescueCount}，其中${cluster.urgentRescueCount}個高或危急',
+    );
   }
   final prefix = areaName == null ? '資料聚合' : '資料聚合：$areaName';
   return '$prefix，${cluster.itemCount}筆${details.isEmpty ? '' : '，${details.join('、')}'}';
@@ -1326,7 +1342,10 @@ class _MapClusterBubble extends StatelessWidget {
     label: semanticLabel,
     child: SizedBox.expand(
       child: Material(
-        color: hasCriticalEvent || hasUrgentRescue ? const Color(0xFFB42318) : shelterMarkerColor,
+        color:
+            hasCriticalEvent || hasUrgentRescue
+                ? const Color(0xFFB42318)
+                : shelterMarkerColor,
         elevation: 2,
         shadowColor: Colors.black45,
         shape: const CircleBorder(
@@ -1375,23 +1394,37 @@ class _MapClusterBubble extends StatelessWidget {
                       if (rescueCount > 0)
                         Text(
                           'SOS $rescueCount',
-                          style: const TextStyle(color: Colors.white, fontSize: 8, fontWeight: FontWeight.w800, height: 1.1),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 8,
+                            fontWeight: FontWeight.w800,
+                            height: 1.1,
+                          ),
                         ),
                     ],
                   )
                   : Center(
-                    child: rescueCount > 0
-                        ? const Text('!', style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w900, height: 1))
-                        : SizedBox(
-                          width: math.min(7, diameter * 0.4),
-                          height: math.min(7, diameter * 0.4),
-                          child: const DecoratedBox(
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              shape: BoxShape.circle,
+                    child:
+                        rescueCount > 0
+                            ? const Text(
+                              '!',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w900,
+                                height: 1,
+                              ),
+                            )
+                            : SizedBox(
+                              width: math.min(7, diameter * 0.4),
+                              height: math.min(7, diameter * 0.4),
+                              child: const DecoratedBox(
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
                             ),
-                          ),
-                        ),
                   ),
         ),
       ),

@@ -10,6 +10,7 @@ RUN npm ci --omit=dev && npm cache clean --force
 
 COPY pipeline ./pipeline
 COPY server ./server
+RUN mkdir -p /app/data
 COPY deploy/collector-entrypoint.mjs ./deploy/collector-entrypoint.mjs
 COPY deploy/api-entrypoint.mjs ./deploy/api-entrypoint.mjs
 

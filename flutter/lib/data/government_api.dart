@@ -30,6 +30,12 @@ class GovernmentApiException implements Exception {
     'crowd_report_expired' => '回報已超過有效期限，無法上傳或查證',
     'payload_hash_mismatch' => '回報內容已變更，請重新整理後再查證',
     'announcement_retracted' => '公告已撤回，無法再修改',
+    'announcement_scope_not_saved' =>
+      '修訂已送出，但伺服器回讀的公告版本或影響範圍與所選內容不同。請更新工作台 API 後重新修訂。',
+    'announcement_create_scope_not_saved' =>
+      '伺服器回讀的公告版本或影響範圍與所選內容不同。請更新工作台 API 後重新發布。',
+    'announcement_scope_unsupported' =>
+      '工作台 API 版本尚未支援公告影響範圍。請更新 API 後再發布，公告尚未送出。',
     _ when statusCode >= 500 => '服務暫時無法使用，請稍後重試',
     _ => '操作失敗（$code）',
   };
@@ -277,17 +283,31 @@ class GovernmentApiClient {
           .map((row) => Map<String, dynamic>.from(row))
           .toList(growable: false);
 
-  Future<Map<String, dynamic>> createAnnouncement(Map<String, Object?> input) =>
-      _send('POST', 'government/announcements', body: input);
+  Future<void> _requireAnnouncementScopeSupport() async {
+    final health = await _send('GET', 'healthz', authenticated: false);
+    if (health['announcement_scope_schema'] != 'affected_area_ids-v1') {
+      throw const GovernmentApiException('announcement_scope_unsupported', 409);
+    }
+  }
+
+  Future<Map<String, dynamic>> createAnnouncement(
+    Map<String, Object?> input,
+  ) async {
+    await _requireAnnouncementScopeSupport();
+    return _send('POST', 'government/announcements', body: input);
+  }
 
   Future<Map<String, dynamic>> reviseAnnouncement(
     String eventId,
     Map<String, Object?> input,
-  ) => _send(
-    'PUT',
-    'government/announcements/${Uri.encodeComponent(eventId)}',
-    body: input,
-  );
+  ) async {
+    await _requireAnnouncementScopeSupport();
+    return _send(
+      'PUT',
+      'government/announcements/${Uri.encodeComponent(eventId)}',
+      body: input,
+    );
+  }
 
   Future<Map<String, dynamic>> retractAnnouncement(String eventId) => _send(
     'DELETE',

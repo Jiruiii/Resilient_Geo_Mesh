@@ -78,17 +78,20 @@ test('publisher worker sends announcements through the signed central feed witho
     let current = await publishedEvent();
     assert.equal(current.event.attributes.has_map_location, false);
     assert.equal(current.event.attributes.title, '道路管制');
+    assert.deepEqual(current.event.attributes.affected_area_ids, ['tw.63000']);
     assert.equal(verifyEvent(current.event, key.publicKey, { trustedKeyIds: ['government-feed-2026'], now }).valid, true);
 
     const revisedAt = new Date(now.getTime() + 60_000);
     store.state.items = [{ id: 'outbox-2', aggregateType: 'ANNOUNCEMENT', aggregateId: 'announcement:1', aggregateVersion: 2,
       payload: { operation: 'REVISE' }, attempts: 1 }];
-    store.state.announcement = { ...store.state.announcement, event_version: 2, content: '請依現場指示改道。', updated_at: revisedAt.toISOString() };
+    store.state.announcement = { ...store.state.announcement, event_version: 2, content: '請依現場指示改道。',
+      affected_area_ids: ['tw.65000'], updated_at: revisedAt.toISOString() };
     await publishGovernmentOutboxBatch({ store, releaseRoot: root, signingKey: { ...key, keyId: 'government-feed-2026' },
       now: revisedAt, lockPath: path.join(root, 'private', 'collector.lock') });
     current = await publishedEvent();
     assert.equal(current.event.event_version, 2);
     assert.equal(current.event.attributes.content, '請依現場指示改道。');
+    assert.deepEqual(current.event.attributes.affected_area_ids, ['tw.65000']);
 
     const retractedAt = new Date(now.getTime() + 120_000);
     store.state.items = [{ id: 'outbox-3', aggregateType: 'ANNOUNCEMENT', aggregateId: 'announcement:1', aggregateVersion: 3,
@@ -98,6 +101,7 @@ test('publisher worker sends announcements through the signed central feed witho
       now: retractedAt, lockPath: path.join(root, 'private', 'collector.lock') });
     current = await publishedEvent();
     assert.equal(current.event.event_version, 3);
+    assert.deepEqual(current.event.attributes.affected_area_ids, ['tw.65000']);
     assert.equal(current.event.attributes.publication_retracted, true);
     assert.equal(current.feed.event_versions['official.announcement/announcement:1'].version, 3);
   } finally { await rm(root, { recursive: true, force: true }); }

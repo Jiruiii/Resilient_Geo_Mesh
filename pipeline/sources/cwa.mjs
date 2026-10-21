@@ -1,6 +1,7 @@
 import {
   isGeometryInBoundary,
   normalizeCoordinate,
+  representativePointInBoundary,
 } from '../lib/geo.mjs';
 import { areaMetadataForRecord, boundaryForRecord } from '../lib/coverage.mjs';
 import {
@@ -334,7 +335,7 @@ function curateGeometry(record, geometry, options) {
   return undefined;
 }
 
-function eventAttributes(record, theme, coverageLevel, geometry, options) {
+function eventAttributes(record, theme, coverageLevel, geometry, options, areaMetadata, mapLocationKind) {
   const area = record?.coverage_level === 'nationwide'
     ? {
       area_id: options.scope === 'taiwan' ? 'tw' : (options.areaId ?? 'tw'),
@@ -342,11 +343,12 @@ function eventAttributes(record, theme, coverageLevel, geometry, options) {
         ? { county_code: null, town_code: null, village_code: null }
         : {}),
     }
-    : areaMetadataForRecord(options, record, geometry);
+    : (areaMetadata ?? areaMetadataForRecord(options, record, geometry));
   return {
     ...area,
     theme,
     coverage_level: coverageLevel,
+    ...(mapLocationKind ? { map_location_kind: mapLocationKind } : {}),
     ...(options.coverage ? { coverage: options.coverage } : {}),
     alert_id: firstValue(
       record.EarthquakeNo,
@@ -377,7 +379,7 @@ function eventAttributes(record, theme, coverageLevel, geometry, options) {
   };
 }
 
-function makeEvent({ rawSnapshot, record, id, eventType, geometry, coverageLevel, theme, issuedAt, expiresAt, options, severity = 'UNKNOWN' }) {
+function makeEvent({ rawSnapshot, record, id, eventType, geometry, coverageLevel, theme, issuedAt, expiresAt, options, severity = 'UNKNOWN', areaMetadata, mapLocationKind }) {
   if (Date.parse(expiresAt) < Date.parse(issuedAt)) {
     throw new CwaSourceError(`CWA event ${id} expires before it is issued`, { code: 'CWA_TIME_INVALID' });
   }
@@ -393,7 +395,7 @@ function makeEvent({ rawSnapshot, record, id, eventType, geometry, coverageLevel
     event_version: eventVersion(record),
     issued_at: issuedAt,
     expires_at: expiresAt,
-    attributes: eventAttributes(record, theme, coverageLevel, geometry, options),
+    attributes: eventAttributes(record, theme, coverageLevel, geometry, options, areaMetadata, mapLocationKind),
     signature_algorithm: 'Ed25519',
     signing_key_id: options.signingKeyId ?? 'cwa-source-2026',
     provenance: {
@@ -467,6 +469,13 @@ function normalizeWarningRecord(record, index, rawSnapshot, options) {
   const geometry = geometryFromRecord(record);
   const curated = curateGeometry(record, geometry, options);
   if (!curated) return undefined;
+  const resolvedArea = options.areaResolver?.(record, geometry);
+  const areaMetadata = areaMetadataForRecord(options, record, geometry);
+  const countyReference = options.scope === 'taiwan' && !geometry
+    && resolvedArea?.level === 'county' && record.warning_kind !== 'typhoon';
+  const displayGeometry = countyReference
+    ? representativePointInBoundary(resolvedArea.geometry)
+    : curated.geometry;
   const issuedAt = normalizeTime(
     firstValue(record.Effective, record.effective, record.Sent, record.sent, record.IssueTime, record.issue_time),
     `CWA warning ${id} issued_at`,
@@ -480,12 +489,14 @@ function normalizeWarningRecord(record, index, rawSnapshot, options) {
     record,
     id,
     eventType: record.warning_kind === 'typhoon' ? 'TYPHOON_WARNING' : 'WEATHER_WARNING',
-    geometry: curated.geometry,
-    coverageLevel: curated.coverageLevel,
+    geometry: displayGeometry,
+    coverageLevel: countyReference ? 'county' : curated.coverageLevel,
     theme: record.warning_kind === 'typhoon' ? 'typhoon' : 'weather',
     issuedAt,
     expiresAt,
     options,
+    areaMetadata,
+    mapLocationKind: countyReference ? 'area_reference' : undefined,
     severity: normalizeSeverity(firstValue(record.Severity, record.severity, record.Urgency, record.urgency)),
   });
 }

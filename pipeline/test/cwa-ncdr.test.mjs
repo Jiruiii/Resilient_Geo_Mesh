@@ -21,6 +21,8 @@ import {
   normalizeNcdrHazards,
 } from '../sources/ncdr.mjs';
 import { makeRawSnapshot } from '../lib/source.mjs';
+import { isGeometryInBoundary } from '../lib/geo.mjs';
+import { areaBoundary, createAreaResolvers, normalizeAreaCatalog } from '../sources/areas.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const OFFICIAL_NEIHU_BOUNDARY = JSON.parse(readFileSync(
@@ -345,6 +347,43 @@ test('normalizes the CWA warning API shape with records grouped under location',
   assert.equal(events[0].attributes.source_record.hazard.info.phenomena, '豪雨');
 });
 
+test('county wind warnings publish compact reference points within the correct county', () => {
+  const square = (left, bottom, right, top) => [[
+    [left, bottom], [right, bottom], [right, top], [left, top], [left, bottom],
+  ]];
+  const catalog = normalizeAreaCatalog({ type: 'FeatureCollection', features: [
+    { type: 'Feature', properties: { COUNTYCODE: '65000', COUNTYNAME: '新北市' },
+      geometry: { type: 'Polygon', coordinates: square(121, 24, 122, 25) } },
+    { type: 'Feature', properties: { COUNTYCODE: '65000', COUNTYNAME: '新北市', TOWNCODE: '65000010', TOWNNAME: '板橋區' },
+      geometry: { type: 'Polygon', coordinates: square(121, 24, 121.2, 24.2) } },
+    { type: 'Feature', properties: { COUNTYCODE: '10016', COUNTYNAME: '澎湖縣' },
+      geometry: { type: 'MultiPolygon', coordinates: [square(119, 23, 119.8, 23.8), square(120, 23, 120.1, 23.1)] } },
+    { type: 'Feature', properties: { COUNTYCODE: '10016', COUNTYNAME: '澎湖縣', TOWNCODE: '10016010', TOWNNAME: '馬公市' },
+      geometry: { type: 'Polygon', coordinates: square(119, 23, 119.2, 23.2) } },
+  ] });
+  const payload = { success: true, result: { resource_id: 'W-C0033-001' }, records: {
+    location: ['新北市', '澎湖縣'].map((locationName, index) => ({
+      locationName,
+      geocode: index === 0 ? 65 : 10016,
+      hazardConditions: { hazards: [{ info: { phenomena: '陸上強風' }, validTime: {
+        startTime: '2026-10-21 11:00:00', endTime: '2026-10-21 23:00:00',
+      } }] },
+    })),
+  } };
+  const events = normalizeCwaWarnings(rawSnapshot('cwa-weather-warning', CWA_WARNING_ENDPOINT, payload), {
+    scope: 'taiwan', coverage: 'TW', boundary: areaBoundary(catalog), ...createAreaResolvers(catalog),
+  });
+  assert.deepEqual(events.map((event) => event.attributes.area_id), ['tw.65000', 'tw.10016']);
+  for (const event of events) {
+    assert.equal(event.geometry.type, 'Point');
+    assert.equal(event.attributes.map_location_kind, 'area_reference');
+    assert.equal(event.attributes.coverage_level, 'county');
+    assert.equal(isGeometryInBoundary(event.geometry,
+      catalog.areas.find((area) => area.area_id === event.attributes.area_id).geometry), true);
+  }
+  assert.deepEqual(events.map((event) => event.attributes.affected_area), ['新北市', '澎湖縣']);
+});
+
 test('normalizes the official CWA typhoon records.info shape as one nationwide warning', () => {
   const raw = rawSnapshot('cwa-typhoon-warning', 'https://opendata.cwa.gov.tw/api/v1/rest/datastore/W-C0034-001', {
     success: true,
@@ -627,6 +666,201 @@ test('normalizes CAP circles and category-specific NCDR events', () => {
   assert.equal(events[0].geometry.type, 'Point');
   assert.deepEqual(events[0].geometry.coordinates, [120.68659989934919, 24.136099938432526]);
   assert.equal(events[0].attributes.affected_area, '臺中市東區');
+});
+
+test('NCDR CAP with multiple named towns covers every listed town instead of the first national feature', () => {
+  const square = (left, bottom, right, top) => [[
+    [left, bottom], [right, bottom], [right, top], [left, top], [left, bottom],
+  ]];
+  const catalog = normalizeAreaCatalog({ type: 'FeatureCollection', features: [
+    { type: 'Feature', properties: { COUNTYCODE: '09007', COUNTYNAME: '連江縣', TOWNCODE: '09007010', TOWNNAME: '南竿鄉' },
+      geometry: { type: 'Polygon', coordinates: square(119.9, 26.0, 120.0, 26.1) } },
+    { type: 'Feature', properties: { COUNTYCODE: '65000', COUNTYNAME: '新北市', TOWNCODE: '65000210', TOWNNAME: '三芝區' },
+      geometry: { type: 'Polygon', coordinates: square(121.4, 25.2, 121.5, 25.3) } },
+    { type: 'Feature', properties: { COUNTYCODE: '10014', COUNTYNAME: '臺東縣', TOWNCODE: '10014160', TOWNNAME: '蘭嶼鄉' },
+      geometry: { type: 'Polygon', coordinates: square(121.4, 22.0, 121.6, 22.2) } },
+  ] });
+  const raw = rawSnapshot('ncdr-hazard-events', NCDR_ENDPOINT, {
+    details: [{ capid: 'CWA-STRONG-WIND-MULTI', payload: {
+      identifier: 'CWA-STRONG-WIND-MULTI', sent: RETRIEVED_AT,
+      info: [{ language: 'zh-TW', event: '陸上強風', effective: RETRIEVED_AT,
+        expires: NCDR_EXPIRES_AT, severity: 'Moderate', description: '多區強風',
+        area: [{ areaDesc: '新北市三芝區' }, { areaDesc: '台東縣蘭嶼鄉' }],
+      }],
+    } }], partial: false,
+  });
+  const [event] = normalizeNcdrHazards(raw, {
+    scope: 'taiwan', coverage: 'TW', boundary: areaBoundary(catalog), ...createAreaResolvers(catalog),
+  });
+
+  assert.equal(event.geometry.type, 'MultiPolygon');
+  assert.equal(event.geometry.coordinates.length, 2);
+  assert.deepEqual(event.attributes.affected_area_ids, ['tw.65000210', 'tw.10014160']);
+  assert.equal(event.attributes.area_match_complete, true);
+  const points = event.geometry.coordinates.flat(2);
+  assert.ok(points.some(([longitude, latitude]) => longitude > 121.4 && latitude > 25));
+  assert.ok(points.some(([longitude, latitude]) => longitude > 121.4 && latitude < 23));
+  assert.ok(points.every(([longitude]) => longitude > 121));
+});
+
+test('derived NCDR administrative mask removes redundant boundary points before publishing', () => {
+  const bottom = Array.from({ length: 101 }, (_, index) => [121 + index / 10000, 25]);
+  const catalog = normalizeAreaCatalog({ type: 'FeatureCollection', features: [{
+    type: 'Feature',
+    properties: { COUNTYCODE: '65000', COUNTYNAME: '新北市', TOWNCODE: '65000210', TOWNNAME: '三芝區' },
+    geometry: { type: 'Polygon', coordinates: [[...bottom, [121.01, 25.01], [121, 25.01], bottom[0]]] },
+  }] });
+  const raw = rawSnapshot('ncdr-hazard-events', NCDR_ENDPOINT, {
+    details: [{ capid: 'CWA-WIND-SIMPLE', payload: {
+      identifier: 'CWA-WIND-SIMPLE', sent: RETRIEVED_AT,
+      info: [{ language: 'zh-TW', event: '陸上強風', effective: RETRIEVED_AT,
+        expires: NCDR_EXPIRES_AT, severity: 'Moderate', description: '強風',
+        area: [{ areaDesc: '新北市三芝區' }],
+      }],
+    } }], partial: false,
+  });
+  const [event] = normalizeNcdrHazards(raw, {
+    scope: 'taiwan', boundary: areaBoundary(catalog), ...createAreaResolvers(catalog),
+  });
+
+  assert.ok(event.geometry.coordinates[0][0].length <= 6);
+  assert.deepEqual(event.geometry.coordinates[0][0][0], [121, 25]);
+  assert.deepEqual(event.geometry.coordinates[0][0].at(-1), [121, 25]);
+});
+
+test('a partially matched CAP area list is labelled incomplete rather than a full mask', () => {
+  const catalog = normalizeAreaCatalog({ type: 'FeatureCollection', features: [{
+    type: 'Feature',
+    properties: { COUNTYCODE: '65000', COUNTYNAME: '新北市', TOWNCODE: '65000210', TOWNNAME: '三芝區' },
+    geometry: { type: 'Polygon', coordinates: [[
+      [121.4, 25.2], [121.5, 25.2], [121.5, 25.3], [121.4, 25.2],
+    ]] },
+  }] });
+  const raw = rawSnapshot('ncdr-hazard-events', NCDR_ENDPOINT, {
+    details: [{ capid: 'CWA-WIND-PARTIAL', payload: {
+      identifier: 'CWA-WIND-PARTIAL', sent: RETRIEVED_AT,
+      info: [{ language: 'zh-TW', event: '陸上強風', effective: RETRIEVED_AT,
+        expires: NCDR_EXPIRES_AT, severity: 'Moderate', description: '強風',
+        area: [{ areaDesc: '新北市三芝區' }, { areaDesc: '不存在縣不存在鄉' }],
+      }],
+    } }], partial: false,
+  });
+  const [event] = normalizeNcdrHazards(raw, {
+    scope: 'taiwan', boundary: areaBoundary(catalog), ...createAreaResolvers(catalog),
+  });
+  assert.equal(event.attributes.area_match_complete, false);
+  assert.deepEqual(event.attributes.affected_area_ids, ['tw.65000210']);
+  assert.deepEqual(event.attributes.unmatched_area_names, ['不存在縣不存在鄉']);
+  assert.equal(event.attributes.map_visible, false);
+});
+
+test('village CAP names retain a parent town reference without coloring the whole town', () => {
+  const catalog = normalizeAreaCatalog({ type: 'FeatureCollection', features: [{
+    type: 'Feature',
+    properties: { COUNTYCODE: '64000', COUNTYNAME: '高雄市', TOWNCODE: '64000240', TOWNNAME: '路竹區' },
+    geometry: { type: 'Polygon', coordinates: [[
+      [120.2, 22.8], [120.3, 22.8], [120.3, 22.9], [120.2, 22.8],
+    ]] },
+  }] });
+  const raw = rawSnapshot('ncdr-hazard-events', NCDR_ENDPOINT, {
+    details: [{ capid: 'FIRE-VILLAGE-001', payload: {
+      identifier: 'FIRE-VILLAGE-001', sent: RETRIEVED_AT,
+      info: [{ language: 'zh-TW', event: '火災', effective: RETRIEVED_AT,
+        expires: NCDR_EXPIRES_AT, severity: 'Moderate', description: '火災',
+        area: [{ areaDesc: '高雄市路竹區新達里' }],
+      }],
+    } }], partial: false,
+  });
+  const [event] = normalizeNcdrHazards(raw, {
+    scope: 'taiwan', boundary: areaBoundary(catalog), ...createAreaResolvers(catalog),
+  });
+  assert.equal(event.attributes.area_match_complete, false);
+  assert.deepEqual(event.attributes.unmatched_area_names, ['高雄市路竹區新達里']);
+  assert.deepEqual(event.attributes.affected_area_ids, ['tw.64000240']);
+  assert.equal(event.attributes.map_visible, false);
+});
+
+test('an explicit CAP polygon takes precedence over administrative display boundaries', () => {
+  const catalog = normalizeAreaCatalog({ type: 'FeatureCollection', features: [{
+    type: 'Feature',
+    properties: { COUNTYCODE: '65000', COUNTYNAME: '新北市', TOWNCODE: '65000210', TOWNNAME: '三芝區' },
+    geometry: { type: 'Polygon', coordinates: [[
+      [121.4, 25.2], [121.5, 25.2], [121.5, 25.3], [121.4, 25.2],
+    ]] },
+  }] });
+  const raw = rawSnapshot('ncdr-hazard-events', NCDR_ENDPOINT, {
+    details: [{ capid: 'CWA-WIND-POLYGON', payload: {
+      identifier: 'CWA-WIND-POLYGON', sent: RETRIEVED_AT,
+      info: [{ language: 'zh-TW', event: '陸上強風', effective: RETRIEVED_AT,
+        expires: NCDR_EXPIRES_AT, severity: 'Moderate', description: '強風',
+        area: [{ areaDesc: '新北市三芝區', polygon: '25.21,121.41 25.21,121.42 25.22,121.42 25.21,121.41' }],
+      }],
+    } }], partial: false,
+  });
+  const [event] = normalizeNcdrHazards(raw, {
+    scope: 'taiwan', boundary: areaBoundary(catalog), ...createAreaResolvers(catalog),
+  });
+  assert.equal(event.geometry.type, 'Polygon');
+  assert.deepEqual(event.geometry.coordinates[0][0], [121.41, 25.21]);
+  assert.equal(event.attributes.geometry_source, undefined);
+});
+
+test('keeps fire-safety inspections and marine fire descriptions out of the fire category', () => {
+  const raw = rawSnapshot('ncdr-hazard-events', NCDR_ENDPOINT, {
+    details: [
+      {
+        capid: 'NFA-FIRE-INSPECTION-001',
+        payload: {
+          identifier: 'NFA-FIRE-INSPECTION-001',
+          sent: RETRIEVED_AT,
+          info: [{
+            language: 'zh-TW',
+            category: 'Other',
+            event: '消防安全檢查重大不合格場所',
+            eventCode: { valueName: 'profile:CAP-TWP:Event:1.0', value: 'Dangerfield' },
+            effective: RETRIEVED_AT,
+            expires: NCDR_EXPIRES_AT,
+            severity: 'Severe',
+            description: '新北市消防安全設備不合格',
+            area: [{ areaDesc: '新北市', circle: '25.0,121.5 1' }],
+          }],
+        },
+      },
+      {
+        capid: 'OCA-MARINE-FIRE-001',
+        payload: {
+          identifier: 'OCA-MARINE-FIRE-001',
+          sent: RETRIEVED_AT,
+          info: [{
+            language: 'zh-TW',
+            category: 'Env',
+            event: '海洋污染',
+            eventCode: { valueName: 'profile:CAP-TWP:Event:1.0', value: 'marinePollution' },
+            effective: RETRIEVED_AT,
+            expires: NCDR_EXPIRES_AT,
+            severity: 'Minor',
+            description: '旗津區中州漁港漁船火災',
+            area: [{ areaDesc: '高雄市', circle: '22.6,120.3 0.5' }],
+          }],
+        },
+      },
+    ],
+    partial: false,
+  });
+  const events = normalizeNcdrHazards(raw, {
+    boundary: {
+      type: 'Polygon',
+      coordinates: [[[119.0, 21.0], [123.0, 21.0], [123.0, 26.0], [119.0, 26.0], [119.0, 21.0]]],
+    },
+    scope: 'taiwan',
+    coverage: 'TW',
+    areaId: 'tw',
+  });
+
+  assert.equal(events.find((event) => event.event_id.endsWith('nfa-fire-inspection-001'))
+    .attributes.ncdr_category_label, '其他 NCDR 事件');
+  assert.equal(events.find((event) => event.event_id.endsWith('oca-marine-fire-001'))
+    .attributes.ncdr_category_label, '其他 NCDR 事件');
 });
 
 test('normalizes NCDR CAP polygons, excludes outside hazards, and retains expired events', () => {

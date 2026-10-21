@@ -8,6 +8,8 @@ import 'package:pointer_interceptor/pointer_interceptor.dart';
 
 import '../data/map_camera_projection.dart';
 import '../data/map_administrative.dart';
+import '../data/map_area_hit_test.dart';
+import '../data/cwa_county_warning_overlay.dart';
 import '../data/evacuation_models.dart';
 import '../data/map_models.dart';
 import '../data/map_runtime_state.dart';
@@ -30,9 +32,11 @@ class MapCanvas extends StatefulWidget {
     required this.runtimeState,
     required this.staticFeatures,
     required this.visibleEvents,
+    this.areaWarnings = const <MeshEvent>[],
     required this.showShelters,
     required this.showMedical,
     required this.showEvents,
+    this.showCountyWarningAreas = false,
     required this.onStaticFeatureSelected,
     required this.onEventSelected,
     required this.onZoomPercentageChanged,
@@ -49,6 +53,7 @@ class MapCanvas extends StatefulWidget {
     this.onRecenter,
     this.searchSelection,
     this.focusPoint,
+    this.focusBounds,
     this.focusRequestId = 0,
   });
 
@@ -60,9 +65,14 @@ class MapCanvas extends StatefulWidget {
   final MapRuntimeState runtimeState;
   final List<StaticFeature> staticFeatures;
   final List<MeshEvent> visibleEvents;
+
+  /// Verified area masks can render while static facilities are still being
+  /// checked; they do not create event point markers or affect event counts.
+  final List<MeshEvent> areaWarnings;
   final bool showShelters;
   final bool showMedical;
   final bool showEvents;
+  final bool showCountyWarningAreas;
   final StaticFeatureSelection onStaticFeatureSelected;
   final MeshEventSelection onEventSelected;
   final ValueChanged<int> onZoomPercentageChanged;
@@ -79,6 +89,7 @@ class MapCanvas extends StatefulWidget {
   final VoidCallback? onRecenter;
   final MapSearchResult? searchSelection;
   final GeoPoint? focusPoint;
+  final GeoBounds? focusBounds;
   final int focusRequestId;
 
   @override
@@ -91,10 +102,14 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
   static const _eventsSourceId = 'app-events';
   static const _eventsLineLayerId = 'app-events-lines';
   static const _eventsFillLayerId = 'app-events-polygons';
+  static const _countyWarningSourceId = 'app-cwa-county-warning-areas';
+  static const _countyWarningFillLayerId = 'app-cwa-county-warning-fill';
   static const _routeSourceId = 'app-evacuation-route';
   static const _routeLineLayerId = 'app-evacuation-route-line';
 
   final OfflineMapAssetStore _assetStore = OfflineMapAssetStore();
+  late final Future<Map<String, Map<String, dynamic>>> _countyBoundaries =
+      CwaCountyWarningOverlay.load();
   final ValueNotifier<Offset?> _radarScreenPosition = ValueNotifier(null);
   final ValueNotifier<bool> _tilesLoading = ValueNotifier(true);
   final MapMarkerOverlayNotifier<MapMarkerData> _markerOverlay =
@@ -110,6 +125,16 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
   Object? _styleError;
   bool _styleLoaded = false;
   bool _eventSourceReady = false;
+  bool _eventFillLayerReady = false;
+  bool _eventLineLayerReady = false;
+  Future<void>? _eventSetup;
+  bool _countyWarningSourceReady = false;
+  bool _countyWarningLayerReady = false;
+  Future<void>? _countyWarningSetup;
+  int _countyWarningSetupGeneration = -1;
+  int _countyWarningUpdateGeneration = 0;
+  Timer? _countyWarningExpiryTimer;
+  Timer? _ncdrWarningExpiryTimer;
   bool _routeSourceReady = false;
   bool _routeLayerReady = false;
   bool _markerRefreshScheduled = false;
@@ -185,11 +210,27 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
     }
     final eventsChanged =
         !_sameEventSnapshot(oldWidget.visibleEvents, widget.visibleEvents);
-    if (eventsChanged || oldWidget.showEvents != widget.showEvents) {
-      _overviewMarkerLayouts.clear();
-      _markerLayoutCache.invalidate();
-      unawaited(_updateEventSource());
-      _queueMarkerRefresh();
+    final areaWarningsChanged =
+        !_sameEventSnapshot(oldWidget.areaWarnings, widget.areaWarnings);
+    if (eventsChanged ||
+        areaWarningsChanged ||
+        oldWidget.showEvents != widget.showEvents ||
+        oldWidget.showCountyWarningAreas != widget.showCountyWarningAreas) {
+      if (eventsChanged || oldWidget.showEvents != widget.showEvents) {
+        _overviewMarkerLayouts.clear();
+        _markerLayoutCache.invalidate();
+        _queueMarkerRefresh();
+      }
+      unawaited(_ensureEventLayers());
+    }
+    if (eventsChanged ||
+        areaWarningsChanged ||
+        oldWidget.showCountyWarningAreas != widget.showCountyWarningAreas) {
+      if (_countyWarningLayerReady) {
+        unawaited(_updateCountyWarningSource());
+      } else if (widget.showCountyWarningAreas) {
+        unawaited(_ensureCountyWarningLayer());
+      }
     }
     if (oldWidget.route != widget.route) {
       unawaited(_ensureRouteLayer());
@@ -229,6 +270,8 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
     _pulseStartTimer?.cancel();
     _pulseStopTimer?.cancel();
     _zoomRequestTimer?.cancel();
+    _countyWarningExpiryTimer?.cancel();
+    _ncdrWarningExpiryTimer?.cancel();
     _pulseController.dispose();
     _radarScreenPosition.dispose();
     _tilesLoading.dispose();
@@ -270,6 +313,14 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
         _markerLayoutReady = false;
         _markerLayoutCache.invalidate();
         _eventSourceReady = false;
+        _eventFillLayerReady = false;
+        _eventLineLayerReady = false;
+        _eventSetup = null;
+        _countyWarningSourceReady = false;
+        _countyWarningLayerReady = false;
+        _countyWarningUpdateGeneration += 1;
+        _countyWarningExpiryTimer?.cancel();
+        _ncdrWarningExpiryTimer?.cancel();
         _routeSourceReady = false;
         _routeLayerReady = false;
       });
@@ -283,7 +334,11 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
   bool _recordNewEvents(List<MeshEvent> oldEvents) {
     final oldKeys = oldEvents.map(eventKey).toSet();
     final newEvents = widget.visibleEvents
-        .where((event) => !oldKeys.contains(eventKey(event)))
+        .where(
+          (event) =>
+              !oldKeys.contains(eventKey(event)) &&
+              !event.isNcdrMultiAreaWarning,
+        )
         .toList(growable: false);
     if (newEvents.isEmpty ||
         !_eventFocusGate.shouldFocusSnapshot(newEvents.map(eventKey))) {
@@ -326,7 +381,12 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
           requestId != widget.focusRequestId) {
         return;
       }
-      unawaited(_focus(point, animated: _animationsAllowed));
+      final bounds = widget.focusBounds;
+      if (bounds != null) {
+        unawaited(_focusArea(bounds, animated: _animationsAllowed));
+      } else {
+        unawaited(_focus(point, animated: _animationsAllowed));
+      }
     });
   }
 
@@ -525,6 +585,30 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
     widget.onZoomPercentageChanged(focusPercentage);
     final update = CameraUpdate.newLatLngZoom(_latLng(point), zoom);
     await _prepareNativeCameraBoundsForZoom(zoom);
+    if (animated) {
+      await controller.animateCamera(update, duration: _focusAnimationDuration);
+    } else {
+      await controller.moveCamera(update);
+    }
+    return true;
+  }
+
+  Future<bool> _focusArea(GeoBounds bounds, {required bool animated}) async {
+    final controller = _mapController;
+    if (controller == null || !_styleLoaded) return false;
+    _zoomRequestTimer?.cancel();
+    _zoomRequestGate.request();
+    await _prepareNativeCameraBoundsForZoom(MapCanvas.minZoom);
+    final update = CameraUpdate.newLatLngBounds(
+      LatLngBounds(
+        southwest: _latLng(bounds.southwest),
+        northeast: _latLng(bounds.northeast),
+      ),
+      left: 32,
+      top: 140,
+      right: 32,
+      bottom: 300,
+    );
     if (animated) {
       await controller.animateCamera(update, duration: _focusAnimationDuration);
     } else {
@@ -947,6 +1031,7 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
     _tilesLoading.value = true;
     _markerLayoutCache.invalidate();
     await _ensureEventLayers();
+    unawaited(_ensureCountyWarningLayer());
     await _ensureRouteLayer();
     _queueMarkerRefresh();
     if (_pendingEventFocus != null) {
@@ -960,21 +1045,35 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
     }
   }
 
-  Future<void> _ensureEventLayers() async {
+  Future<void> _ensureEventLayers() {
+    if (_eventSetup != null) return _eventSetup!;
+    final setup = _addEventLayers();
+    _eventSetup = setup;
+    return setup.whenComplete(() {
+      if (identical(_eventSetup, setup)) _eventSetup = null;
+    });
+  }
+
+  Future<void> _addEventLayers() async {
     final controller = _mapController;
-    if (!MapLibreOverlayData.showEventAreaOverlay ||
-        controller == null ||
-        !_styleLoaded) {
+    if (controller == null || !_styleLoaded) {
       return;
     }
+    final generation = _styleLoadGeneration;
     try {
       if (!_eventSourceReady) {
         await controller.addGeoJsonSource(
           _eventsSourceId,
-          MapLibreOverlayData.eventFeatureCollection(
-            widget.showEvents ? widget.visibleEvents : const <MeshEvent>[],
+          MapLibreOverlayData.ncdrAreaFeatureCollection(
+            widget.showEvents && widget.showCountyWarningAreas
+                ? widget.visibleEvents
+                : const <MeshEvent>[],
           ),
         );
+        if (!_countyStyleIsCurrent(controller, generation)) return;
+        _eventSourceReady = true;
+      }
+      if (!_eventFillLayerReady) {
         await controller.addFillLayer(
           _eventsSourceId,
           _eventsFillLayerId,
@@ -985,42 +1084,180 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
           ),
           enableInteraction: false,
         );
-        await controller.addLineLayer(
-          _eventsSourceId,
-          _eventsLineLayerId,
-          const LineLayerProperties(
-            lineColor: ['get', 'color'],
-            lineOpacity: 0.95,
-            lineWidth: ['get', 'line_width'],
-          ),
-          enableInteraction: false,
-        );
-        _eventSourceReady = true;
-      } else {
-        await _updateEventSource();
+        if (!_countyStyleIsCurrent(controller, generation)) return;
+        _eventFillLayerReady = true;
       }
-    } on Object {
-      // Keep the map usable if an older native MapLibre build cannot add a
-      // runtime layer. The Flutter marker overlay still remains available.
+      if (!_eventLineLayerReady) {
+        try {
+          await controller.addLineLayer(
+            _eventsSourceId,
+            _eventsLineLayerId,
+            const LineLayerProperties(
+              lineColor: ['get', 'color'],
+              lineOpacity: 0.65,
+              lineWidth: ['get', 'line_width'],
+            ),
+            enableInteraction: false,
+          );
+          if (!_countyStyleIsCurrent(controller, generation)) return;
+          _eventLineLayerReady = true;
+        } on Object catch (error) {
+          debugPrint('NCDR warning area outline setup failed: $error');
+        }
+      }
+      await _updateEventSource();
+    } on Object catch (error) {
+      debugPrint('NCDR warning area overlay setup failed: $error');
     }
   }
 
   Future<void> _updateEventSource() async {
-    if (!MapLibreOverlayData.showEventAreaOverlay ||
-        !_eventSourceReady ||
-        _mapController == null) {
+    if (!_eventSourceReady || _mapController == null) {
       return;
     }
+    _ncdrWarningExpiryTimer?.cancel();
     try {
+      final events =
+          widget.showEvents && widget.showCountyWarningAreas
+              ? widget.areaWarnings
+              : const <MeshEvent>[];
       await _mapController!.setGeoJsonSource(
         _eventsSourceId,
-        MapLibreOverlayData.eventFeatureCollection(
-          widget.showEvents ? widget.visibleEvents : const <MeshEvent>[],
-        ),
+        MapLibreOverlayData.ncdrAreaFeatureCollection(events),
       );
+      final now = DateTime.now().toUtc();
+      final expiries = events
+        .where((event) => event.hasCompleteNcdrAreaMask && event.isShownAt(now))
+        .map((event) => DateTime.tryParse(event.expiresAt ?? ''))
+        .whereType<DateTime>()
+        .where((expiry) => expiry.isAfter(now))
+        .toList(growable: false)..sort();
+      if (expiries.isNotEmpty) {
+        _ncdrWarningExpiryTimer = Timer(
+          expiries.first.difference(now),
+          () => unawaited(_updateEventSource()),
+        );
+      }
     } on Object {
       // A style replacement invalidates the old source; style callback will
       // rebuild it.
+    }
+  }
+
+  Future<void> _ensureCountyWarningLayer() {
+    if (!widget.showCountyWarningAreas ||
+        _mapController == null ||
+        !_styleLoaded) {
+      return Future<void>.value();
+    }
+    final generation = _styleLoadGeneration;
+    if (_countyWarningSetup != null &&
+        _countyWarningSetupGeneration == generation) {
+      return _countyWarningSetup!;
+    }
+    _countyWarningSetupGeneration = generation;
+    final setup = _addCountyWarningLayer(generation);
+    _countyWarningSetup = setup;
+    return setup.whenComplete(() {
+      if (identical(_countyWarningSetup, setup)) {
+        _countyWarningSetup = null;
+      }
+    });
+  }
+
+  Future<void> _addCountyWarningLayer(int generation) async {
+    final controller = _mapController;
+    if (controller == null) return;
+    try {
+      final counties = await _countyBoundaries;
+      if (!_countyStyleIsCurrent(controller, generation) ||
+          !widget.showCountyWarningAreas) {
+        return;
+      }
+      if (!_countyWarningSourceReady) {
+        await controller.addGeoJsonSource(
+          _countyWarningSourceId,
+          CwaCountyWarningOverlay.featureCollection(
+            widget.visibleEvents,
+            counties,
+          ),
+        );
+        if (!_countyStyleIsCurrent(controller, generation)) return;
+        _countyWarningSourceReady = true;
+      }
+      if (!_countyWarningLayerReady) {
+        await controller.addFillLayer(
+          _countyWarningSourceId,
+          _countyWarningFillLayerId,
+          const FillLayerProperties(
+            fillColor: '#F59E0B',
+            fillOpacity: 0.16,
+            fillOutlineColor: '#D97706',
+          ),
+          belowLayerId: 'taiwan-roads',
+          enableInteraction: false,
+        );
+        if (!_countyStyleIsCurrent(controller, generation)) return;
+        _countyWarningLayerReady = true;
+      }
+      await _updateCountyWarningSource();
+    } on Object catch (error) {
+      // The area mask is supplementary. Keep the map and CWA reference-point
+      // markers usable if the local asset or native fill layer is unavailable.
+      debugPrint('CWA county warning overlay setup failed: $error');
+    }
+  }
+
+  bool _countyStyleIsCurrent(
+    MapLibreMapController controller,
+    int generation,
+  ) =>
+      mounted &&
+      generation == _styleLoadGeneration &&
+      controller == _mapController &&
+      _styleLoaded;
+
+  Future<void> _updateCountyWarningSource() async {
+    final controller = _mapController;
+    if (!_countyWarningLayerReady || controller == null || !_styleLoaded) {
+      return;
+    }
+    final generation = _styleLoadGeneration;
+    final update = ++_countyWarningUpdateGeneration;
+    _countyWarningExpiryTimer?.cancel();
+    try {
+      final counties = await _countyBoundaries;
+      if (!_countyStyleIsCurrent(controller, generation) ||
+          !_countyWarningLayerReady) {
+        return;
+      }
+      final events =
+          widget.showCountyWarningAreas
+              ? widget.areaWarnings
+              : const <MeshEvent>[];
+      await controller.setGeoJsonSource(
+        _countyWarningSourceId,
+        CwaCountyWarningOverlay.featureCollection(events, counties),
+      );
+      if (!_countyStyleIsCurrent(controller, generation)) return;
+      if (update != _countyWarningUpdateGeneration) {
+        unawaited(_updateCountyWarningSource());
+        return;
+      }
+      final expiry = CwaCountyWarningOverlay.nextExpiry(events);
+      if (expiry != null) {
+        final remaining = expiry.difference(DateTime.now().toUtc());
+        _countyWarningExpiryTimer = Timer(
+          remaining > Duration.zero
+              ? remaining
+              : const Duration(milliseconds: 1),
+          () => unawaited(_updateCountyWarningSource()),
+        );
+      }
+    } on Object catch (error) {
+      // A style replacement invalidates the source; the next style callback
+      // restores the mask without affecting marker selection.
+      debugPrint('CWA county warning overlay update failed: $error');
     }
   }
 
@@ -1075,25 +1312,61 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
         _usesPlatformMap
             ? overlay.markers
             : _markers(zoom: _cameraPosition?.zoom);
+    final markerTapPoint = _nativeScreenPosition(Offset(point.x, point.y));
     final markerHits = hitTestMapMarkers(
       markers: markers,
       positions: overlay.positions,
-      point: _nativeScreenPosition(Offset(point.x, point.y)),
+      point: markerTapPoint,
       translation: overlay.translation,
     );
-    if (markerHits.isNotEmpty) {
-      markerHits.last.onTap();
+    final topMarker = markerHits.isEmpty ? null : markerHits.last;
+    if (topMarker != null && topMarker.kind != MapMarkerKind.cluster) {
+      topMarker.onTap();
+      return;
+    }
+    // Keep the visible center of a cluster as its drill-down target, while
+    // allowing taps on the rest of a covered warning area to select the mask.
+    if (topMarker != null) {
+      final markerCenter = overlay.positions[topMarker.key];
+      if (markerCenter != null &&
+          (markerTapPoint - (markerCenter + overlay.translation)).distance <=
+              math.min(topMarker.width, topMarker.height) * 0.28) {
+        topMarker.onTap();
+        return;
+      }
+    }
+
+    if (widget.showEvents && widget.showCountyWarningAreas) {
+      final coordinate = GeoPoint(
+        longitude: coordinates.longitude,
+        latitude: coordinates.latitude,
+      );
+      final areaWarning =
+          ncdrAreaWarningAtCoordinate(widget.areaWarnings, coordinate) ??
+          cwaCountyWarningAtCoordinate(
+            widget.areaWarnings,
+            await _countyBoundaries,
+            coordinate,
+          );
+      if (areaWarning != null) {
+        widget.onEventSelected(areaWarning);
+        return;
+      }
+    }
+
+    if (topMarker != null) {
+      topMarker.onTap();
       return;
     }
 
     final controller = _mapController;
-    if (MapLibreOverlayData.showEventAreaOverlay &&
-        controller != null &&
-        _eventSourceReady &&
-        widget.showEvents) {
+    if (controller != null &&
+        _eventFillLayerReady &&
+        widget.showEvents &&
+        widget.showCountyWarningAreas) {
       try {
         final rendered = await controller.queryRenderedFeatures(point, <String>[
-          _eventsLineLayerId,
+          if (_eventLineLayerReady) _eventsLineLayerId,
           _eventsFillLayerId,
         ], null);
         for (final feature in rendered) {
@@ -1101,7 +1374,7 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
           final properties = feature['properties'];
           final id = properties is Map ? properties['event_id'] : null;
           if (id is! String) continue;
-          final event = widget.visibleEvents.firstWhere(
+          final event = widget.areaWarnings.firstWhere(
             (candidate) => meshEventIdentity(candidate) == id,
             orElse:
                 () => const MeshEvent(
@@ -1557,7 +1830,15 @@ bool _sameEventSnapshot(List<MeshEvent> left, List<MeshEvent> right) {
         first.severity != second.severity ||
         first.applyState != second.applyState ||
         first.verification != second.verification ||
+        first.payloadHash != second.payloadHash ||
         first.attributes?['map_visible'] != second.attributes?['map_visible'] ||
+        first.attributes?['area_id'] != second.attributes?['area_id'] ||
+        first.attributes?['coverage_level'] !=
+            second.attributes?['coverage_level'] ||
+        first.attributes?['map_location_kind'] !=
+            second.attributes?['map_location_kind'] ||
+        first.attributes?['area_match_complete'] !=
+            second.attributes?['area_match_complete'] ||
         meshEventFocusPoint(first) != meshEventFocusPoint(second)) {
       return false;
     }

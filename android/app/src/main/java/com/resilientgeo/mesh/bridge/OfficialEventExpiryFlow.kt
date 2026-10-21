@@ -1,6 +1,6 @@
 package com.resilientgeo.mesh.bridge
 
-import com.resilientgeo.mesh.data.EventEntity
+import com.resilientgeo.mesh.data.OfficialEventExpiryRecord
 import java.time.Duration
 import java.time.Instant
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -20,11 +20,11 @@ private const val MAX_EXPIRY_RECHECK_MILLIS = 30_000L
  * the main thread when a duplicate is sent.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
-internal fun rowsWithOfficialExpiryPurge(
-    source: Flow<List<EventEntity>>,
+internal fun <T : OfficialEventExpiryRecord> rowsWithOfficialExpiryPurge(
+    source: Flow<List<T>>,
     now: () -> Instant = Instant::now,
     purgeExpired: suspend (Instant) -> Int,
-): Flow<List<EventEntity>> = channelFlow {
+): Flow<List<T>> = channelFlow {
     source.collectLatest { rows ->
         var observedAt = now()
         if (purgeExpired(observedAt) > 0) return@collectLatest
@@ -39,7 +39,7 @@ internal fun rowsWithOfficialExpiryPurge(
 }
 
 internal fun nextOfficialEventExpiryPollDelayMillis(
-    rows: List<EventEntity>,
+    rows: List<OfficialEventExpiryRecord>,
     now: Instant,
 ): Long {
     val nextExpiry = rows.asSequence()

@@ -28,6 +28,7 @@ import com.resilientgeo.mesh.trust.Canonical
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -86,8 +87,15 @@ class MeshRepository(
         VerifiedLayerCache(File(appContext.noBackupFilesDir, "verified-layers"))
     }
 
-    fun observeEvents(): Flow<List<EventEntity>> = db.eventDao().observeAll()
+    fun observeEvents(): Flow<List<EventEntity>> = db.eventDao()
+        .observeAppEventEntities(visibleNcdrCategoryCodes.toList())
+        .onStart { purgeUnsupportedOfficialEventData() }
         .map { events -> events.filterNot { isUnsupportedOfficialEventEntity(it) || isInternalOfficialEventEntity(it) } }
+
+    fun observeBridgeEvents(): Flow<List<EventBridgeRow>> = db.eventDao()
+        .observeAppEvents(visibleNcdrCategoryCodes.toList())
+        .onStart { purgeUnsupportedOfficialEventData() }
+        .map { events -> events.filterNot(::isUnsupportedOfficialBridgeRow) }
 
     /** Verified inventory rows used by the active opt-in Mesh service. */
     fun observePeerInventory(): Flow<List<ChunkEntity>> = chunkDao.observeAll()
@@ -1037,28 +1045,84 @@ class MeshRepository(
         db.eventDao().allSync().filterNot { isUnsupportedOfficialEventEntity(it) || isInternalOfficialEventEntity(it) }
     }
 
-    /** Remove old non-NCDR official events and relay chunks from existing installs. */
+    /** Compact, source_record-free event payloads for route evaluation. */
+    suspend fun compactEventJsonSnapshot(): List<String> = withContext(Dispatchers.IO) {
+        purgeUnsupportedOfficialEventData()
+        purgeExpiredOfficialEvents(Instant.now())
+        db.eventDao().bridgeSnapshotSync(visibleNcdrCategoryCodes.toList())
+            .filterNot(::isUnsupportedOfficialBridgeRow)
+            .mapNotNull { it.bridgePayloadJson }
+    }
+
+    /** Remove unsupported official categories and their relay chunks from existing installs. */
     suspend fun purgeUnsupportedOfficialEventData(): Int = withContext(Dispatchers.IO) {
         inventoryLock.withLock {
             if (unsupportedOfficialEventsPurged) return@withLock 0
 
-            val unsupportedEvents = db.eventDao().allSync().filter(::isUnsupportedOfficialEventEntity)
-            val unsupportedChunks = chunkDao.allSync().filter { entity ->
-                isUnsupportedOfficialNamespace(entity.namespace) ||
-                    runCatching {
-                        val chunk = JSONObject(chunkCacheFile(entity.datasetId, entity.namespace, entity.chunkId).readText())
-                        val events = chunk.optJSONArray("events") ?: JSONArray()
-                        (0 until events.length()).any { index ->
-                            isUnsupportedOfficialEventJson(events.getJSONObject(index))
+            val eventDao = db.eventDao()
+            // One full signed JSON row at a time keeps the legacy source_record
+            // backfill below the bridge's memory ceiling on older installs.
+            val batchSize = 1
+            var afterNamespace = ""
+            var afterEventId = ""
+            var removedEvents = 0
+            while (true) {
+                val page = eventDao.officialAfterSync(afterNamespace, afterEventId, batchSize)
+                if (page.isEmpty()) break
+                afterNamespace = page.last().namespace
+                afterEventId = page.last().eventId
+                val updates = mutableListOf<Pair<EventEntity, String>>()
+                val bridgeUpdates = mutableListOf<Pair<EventEntity, String>>()
+                val removals = mutableListOf<EventEntity>()
+                for (entity in page) {
+                    val payload = runCatching { JSONObject(entity.eventJson) }.getOrNull()
+                    if (payload == null || entity.namespace != payload.optString("namespace") ||
+                        !supportsOfficialEvent(entity.namespace, payload.optString("source"))) {
+                        removals += entity
+                        continue
+                    }
+                    if (isNcdrNamespace(entity.namespace) || payload.optString("source").equals("NCDR", true)) {
+                        val categoryCode = ncdrCategoryCode(payload)
+                        if (entity.ncdrCategoryCode != categoryCode) updates += entity to categoryCode
+                        if (categoryCode !in visibleNcdrCategoryCodes) removals += entity
+                    }
+                    if (entity.bridgePayloadJson == null) {
+                        compactBridgePayload(payload)?.let { bridgeUpdates += entity to it }
+                    }
+                }
+                db.runInTransaction {
+                    updates.forEach { (entity, categoryCode) ->
+                        eventDao.updateNcdrCategoryCodeSync(entity.namespace, entity.eventId, categoryCode)
+                    }
+                    bridgeUpdates.forEach { (entity, payloadJson) ->
+                        eventDao.updateBridgePayloadJsonSync(entity.namespace, entity.eventId, payloadJson)
+                    }
+                    removals.forEach { eventDao.deleteSync(it.namespace, it.eventId) }
+                }
+                removedEvents += removals.size
+            }
+
+            val unsupportedChunks = chunkDao.officialSync().filter { entity ->
+                if (isUnsupportedOfficialNamespace(entity.namespace)) return@filter true
+                runCatching {
+                    val chunk = JSONObject(chunkCacheFile(entity.datasetId, entity.namespace, entity.chunkId).readText())
+                    val events = chunk.optJSONArray("events") ?: JSONArray()
+                    val ncdrCategories = mutableSetOf<String>()
+                    for (index in 0 until events.length()) {
+                        val event = events.getJSONObject(index)
+                        if (isUnsupportedOfficialEventJson(event)) return@runCatching true
+                        if (isNcdrNamespace(event.optString("namespace")) || event.optString("source").equals("NCDR", true)) {
+                            ncdrCategories += ncdrCategoryCode(event)
                         }
-                    }.getOrDefault(false)
+                    }
+                    ncdrCategories.size > 1
+                }.getOrDefault(true)
             }
             db.runInTransaction {
-                unsupportedEvents.forEach { db.eventDao().deleteSync(it.namespace, it.eventId) }
                 unsupportedChunks.forEach(::dropChunk)
             }
             unsupportedOfficialEventsPurged = true
-            unsupportedEvents.size
+            removedEvents
         }
     }
 
@@ -1068,6 +1132,17 @@ class MeshRepository(
                 val payload = JSONObject(event.eventJson)
                 event.namespace != payload.optString("namespace") || isUnsupportedOfficialEventJson(payload)
             }.getOrDefault(true)
+
+    private fun isUnsupportedOfficialBridgeRow(event: EventBridgeRow): Boolean {
+        if (!event.namespace.startsWith("official.")) return false
+        val payloadJson = event.bridgePayloadJson ?: return true
+        return runCatching {
+            val payload = JSONObject(payloadJson)
+            event.namespace != payload.optString("namespace") ||
+                isUnsupportedOfficialEventJson(payload) ||
+                isInternalOfficialMetadata(event.namespace, payload.optJSONObject("attributes"))
+        }.getOrDefault(true)
+    }
 
     private fun isInternalOfficialEventEntity(event: EventEntity): Boolean =
         runCatching {
@@ -1100,7 +1175,9 @@ class MeshRepository(
     private fun isUnsupportedOfficialEventJson(event: JSONObject): Boolean {
         val namespace = event.optString("namespace")
         if (!namespace.startsWith("official.")) return false
-        return !supportsOfficialEvent(namespace, event.optString("source"))
+        if (!supportsOfficialEvent(namespace, event.optString("source"))) return true
+        return (isNcdrNamespace(namespace) || event.optString("source").equals("NCDR", true)) &&
+            !isVisibleNcdrEvent(event)
     }
 
     private fun isUnsupportedOfficialNamespace(namespace: String): Boolean =
@@ -1108,23 +1185,31 @@ class MeshRepository(
 
     /** Drop expired official payloads while preserving the signed version floor against peer replay. */
     fun purgeExpiredOfficialEvents(now: Instant = Instant.now()): Int {
-        val expired = db.eventDao().allSync().filter { event ->
-            event.namespace.startsWith("official.") &&
-                ApplyState.at(event.namespace, event.expiresAt, now) == ApplyState.EXPIRED
-        }
-        if (expired.isEmpty()) return 0
-        inventoryLock.withLock {
-            db.runInTransaction {
-                expired.forEach { event ->
-                    store.rememberVersion(event.namespace, event.eventId, event.eventVersion)
-                    db.eventDao().deleteSync(event.namespace, event.eventId)
+        return inventoryLock.withLock {
+            val dao = db.eventDao()
+            val batchSize = 128
+            var offset = 0
+            var removed = 0
+            while (true) {
+                val page = dao.officialExpiryPageSync(batchSize, offset)
+                if (page.isEmpty()) break
+                val expired = page.filter { ApplyState.at(it.namespace, it.expiresAt, now) == ApplyState.EXPIRED }
+                if (expired.isNotEmpty()) {
+                    db.runInTransaction {
+                        expired.forEach { event ->
+                            store.rememberVersion(event.namespace, event.eventId, event.eventVersion)
+                            dao.deleteSync(event.namespace, event.eventId)
+                        }
+                        // Chunks can contain expired signed payload bytes. Remove the
+                        // official relay inventory too; peers will fetch a current release.
+                        chunkDao.officialSync().forEach(::dropChunk)
+                    }
                 }
-                // Chunks can contain expired signed payload bytes. Remove the
-                // official relay inventory too; peers will fetch a current release.
-                chunkDao.officialSync().forEach(::dropChunk)
+                removed += expired.size
+                offset += page.size - expired.size
             }
+            removed
         }
-        return expired.size
     }
 
     private fun activeReportCount(signingKeyId: String, now: Instant): Int =
