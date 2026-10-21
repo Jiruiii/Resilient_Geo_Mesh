@@ -11,6 +11,44 @@ import 'package:resilientgeo_flutter/data/maplibre_map_config.dart';
 import 'package:resilientgeo_flutter/widgets/map_layers.dart';
 
 void main() {
+  test('multi-area NCDR alert has no arbitrary point marker', () {
+    const warning = MeshEvent(
+      namespace: 'official.ncdr',
+      eventId: 'ncdr:wind',
+      eventVersion: 1,
+      eventType: 'NCDR_HAZARD',
+      severity: 'MEDIUM',
+      source: 'NCDR',
+      issuedAt: '2026-10-20T00:00:00Z',
+      expiresAt: '2026-10-21T00:00:00Z',
+      applyState: 'CURRENT',
+      geometry: MultiPolygonGeometry(<List<List<GeoPoint>>>[
+        <List<GeoPoint>>[
+          <GeoPoint>[
+            GeoPoint(longitude: 120, latitude: 23),
+            GeoPoint(longitude: 121, latitude: 23),
+            GeoPoint(longitude: 120, latitude: 23),
+          ],
+        ],
+      ]),
+      attributes: <String, dynamic>{
+        'geometry_source': 'administrative_boundary',
+        'affected_area_count': 55,
+        'area_match_complete': true,
+      },
+    );
+    final markers = MapLayers.buildMarkers(
+      features: const <StaticFeature>[],
+      events: const <MeshEvent>[warning],
+      showShelters: false,
+      showMedical: false,
+      showEvents: true,
+      onStaticFeatureSelected: (_) {},
+      onEventSelected: (_) {},
+      now: DateTime.utc(2026, 10, 20, 12),
+    );
+    expect(markers, isEmpty);
+  });
   test('does not render expired events on the map', () {
     final current = _event(
       'ncdr:current',
@@ -40,6 +78,41 @@ void main() {
       markers.single.key,
       ValueKey<String>('event-marker-${meshEventIdentity(current)}'),
     );
+  });
+
+  test('future CWA county forecast keeps its tappable map point', () {
+    const warning = MeshEvent(
+      namespace: 'official.live.cwa-warning',
+      eventId: 'cwa:warning:w-c0033-001:10004:2026-10-21-11:00:00:0',
+      eventVersion: 1,
+      eventType: 'WEATHER_WARNING',
+      severity: 'UNKNOWN',
+      source: 'CWA',
+      issuedAt: '2026-10-21T03:00:00Z',
+      expiresAt: '2026-10-21T15:00:00Z',
+      applyState: 'CURRENT',
+      geometry: PointGeometry(GeoPoint(longitude: 121.5, latitude: 25)),
+      attributes: <String, dynamic>{
+        'area_id': 'tw.10004',
+        'coverage_level': 'county',
+        'map_location_kind': 'area_reference',
+      },
+    );
+    MeshEvent? selected;
+    final markers = MapLayers.buildMarkers(
+      features: const <StaticFeature>[],
+      events: const <MeshEvent>[warning],
+      showShelters: false,
+      showMedical: false,
+      showEvents: true,
+      onStaticFeatureSelected: (_) {},
+      onEventSelected: (event) => selected = event,
+      now: DateTime.utc(2026, 10, 20, 9),
+    );
+
+    expect(markers, hasLength(1));
+    markers.single.onTap();
+    expect(selected, warning);
   });
 
   test('renders a selected NCDR background category on the map', () {

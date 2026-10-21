@@ -6,6 +6,47 @@ import 'package:resilientgeo_flutter/data/map_models.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  test('multi-area NCDR bounds cover every affected island', () {
+    const warning = MeshEvent(
+      namespace: 'official.ncdr',
+      eventId: 'ncdr:wind',
+      eventVersion: 1,
+      eventType: 'NCDR_HAZARD',
+      severity: 'MEDIUM',
+      source: 'NCDR',
+      issuedAt: '2026-10-20T00:00:00Z',
+      expiresAt: '2026-10-21T00:00:00Z',
+      applyState: 'CURRENT',
+      geometry: MultiPolygonGeometry(<List<List<GeoPoint>>>[
+        <List<GeoPoint>>[
+          <GeoPoint>[
+            GeoPoint(longitude: 119, latitude: 26),
+            GeoPoint(longitude: 120, latitude: 26),
+            GeoPoint(longitude: 119, latitude: 26),
+          ],
+        ],
+        <List<GeoPoint>>[
+          <GeoPoint>[
+            GeoPoint(longitude: 122, latitude: 22),
+            GeoPoint(longitude: 122, latitude: 23),
+            GeoPoint(longitude: 122, latitude: 22),
+          ],
+        ],
+      ]),
+      attributes: <String, dynamic>{
+        'geometry_source': 'administrative_boundary',
+        'affected_area_count': 55,
+        'area_match_complete': true,
+      },
+    );
+
+    expect(warning.isNcdrMultiAreaWarning, isTrue);
+    expect(warning.hasCompleteNcdrAreaMask, isTrue);
+    final bounds = meshEventBounds(warning)!;
+    expect(bounds.southwest, const GeoPoint(longitude: 119, latitude: 22));
+    expect(bounds.northeast, const GeoPoint(longitude: 122, latitude: 26));
+  });
+
   test('parses a static LineString feature with its exact coordinates', () {
     final feature = StaticFeature.fromJson(<String, dynamic>{
       'id': 'osm:way:1014301596',
@@ -208,6 +249,25 @@ void main() {
 
     expect(event.isCurrentAt(DateTime.utc(2026, 9, 26, 4)), isFalse);
   });
+
+  test(
+    'labels a future time window as upcoming even when Android state is current',
+    () {
+      final start = DateTime.now().toUtc().add(const Duration(days: 1));
+      final event = MeshEvent.fromJson(<String, dynamic>{
+        'namespace': 'official.live.cwa-warning',
+        'event_id': 'cwa:warning:future',
+        'event_version': 1,
+        'event_type': 'WEATHER_WARNING',
+        'issued_at': start.toIso8601String(),
+        'expires_at': start.add(const Duration(hours: 12)).toIso8601String(),
+        'apply_state': 'CURRENT',
+      });
+
+      expect(event.effectiveApplyState, 'UPCOMING');
+      expect(event.isCurrentAt(), isFalse);
+    },
+  );
 
   test('preserves real shelter root metadata and nullable availability', () {
     final shelter = StaticFeature.fromJson(<String, dynamic>{

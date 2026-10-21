@@ -6,8 +6,163 @@ import 'package:resilientgeo_flutter/data/location_controller.dart';
 import 'package:resilientgeo_flutter/data/map_models.dart';
 import 'package:resilientgeo_flutter/screens/map_screen.dart';
 import 'package:resilientgeo_flutter/widgets/feature_details_sheet.dart';
+import 'package:resilientgeo_flutter/widgets/map_canvas.dart';
 
 void main() {
+  testWidgets('NCDR notification focuses the full affected extent', (
+    tester,
+  ) async {
+    const warning = MeshEvent(
+      namespace: 'official.ncdr',
+      eventId: 'ncdr:multi-wind',
+      eventVersion: 2,
+      eventType: 'NCDR_HAZARD',
+      severity: 'MEDIUM',
+      source: 'NCDR',
+      issuedAt: '2026-10-20T00:00:00Z',
+      expiresAt: '2099-01-01T00:00:00Z',
+      applyState: 'CURRENT',
+      geometry: MultiPolygonGeometry(<List<List<GeoPoint>>>[
+        <List<GeoPoint>>[
+          <GeoPoint>[
+            GeoPoint(longitude: 119, latitude: 26),
+            GeoPoint(longitude: 120, latitude: 26),
+            GeoPoint(longitude: 119, latitude: 26),
+          ],
+        ],
+        <List<GeoPoint>>[
+          <GeoPoint>[
+            GeoPoint(longitude: 122, latitude: 22),
+            GeoPoint(longitude: 122, latitude: 23),
+            GeoPoint(longitude: 122, latitude: 22),
+          ],
+        ],
+      ]),
+      attributes: <String, dynamic>{
+        'geometry_source': 'administrative_boundary',
+        'affected_area_count': 55,
+        'area_match_complete': true,
+        'map_visible': true,
+      },
+    );
+    await tester.pumpWidget(
+      _testApp(
+        features: const <StaticFeature>[],
+        events: const <MeshEvent>[warning],
+      ),
+    );
+    await _finishMapLoad(tester);
+    await tester.pumpWidget(
+      _testApp(
+        features: const <StaticFeature>[],
+        events: const <MeshEvent>[warning],
+        notificationFocusEvent: warning,
+        notificationFocusRequestId: 1,
+      ),
+    );
+    await tester.pump();
+    final canvas = tester.widget<MapCanvas>(find.byType(MapCanvas));
+    expect(
+      canvas.focusBounds?.southwest,
+      const GeoPoint(longitude: 119, latitude: 22),
+    );
+    expect(
+      canvas.focusBounds?.northeast,
+      const GeoPoint(longitude: 122, latitude: 26),
+    );
+  });
+
+  testWidgets('NCDR details label administrative mask as an affected area', (
+    tester,
+  ) async {
+    const warning = MeshEvent(
+      namespace: 'official.ncdr',
+      eventId: 'ncdr:wind',
+      eventVersion: 2,
+      eventType: 'NCDR_HAZARD',
+      severity: 'MEDIUM',
+      source: 'NCDR',
+      issuedAt: '2026-10-20T00:00:00Z',
+      expiresAt: '2099-01-01T00:00:00Z',
+      applyState: 'CURRENT',
+      geometry: MultiPolygonGeometry(<List<List<GeoPoint>>>[
+        <List<GeoPoint>>[
+          <GeoPoint>[
+            GeoPoint(longitude: 120, latitude: 23),
+            GeoPoint(longitude: 121, latitude: 23),
+            GeoPoint(longitude: 120, latitude: 23),
+          ],
+        ],
+      ]),
+      attributes: <String, dynamic>{
+        'affected_area': '新北市三芝區；臺東縣蘭嶼鄉',
+        'geometry_source': 'administrative_boundary',
+        'affected_area_count': 2,
+        'area_match_complete': true,
+      },
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: FeatureDetailsSheet.event(event: warning, onClose: () {}),
+        ),
+      ),
+    );
+    expect(find.textContaining('警報涵蓋行政區（非精確風害位置）'), findsOneWidget);
+  });
+
+  testWidgets('long NCDR area details scroll without overflowing', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 480);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final warning = MeshEvent(
+      namespace: 'official.ncdr',
+      eventId: 'ncdr:wind-long-details',
+      eventVersion: 1,
+      eventType: 'NCDR_HAZARD',
+      severity: 'MEDIUM',
+      source: 'NCDR',
+      issuedAt: '2026-10-20T00:00:00Z',
+      expiresAt: '2099-01-01T00:00:00Z',
+      applyState: 'CURRENT',
+      geometry: const MultiPolygonGeometry(<List<List<GeoPoint>>>[
+        <List<GeoPoint>>[
+          <GeoPoint>[
+            GeoPoint(longitude: 120, latitude: 23),
+            GeoPoint(longitude: 121, latitude: 23),
+            GeoPoint(longitude: 120, latitude: 23),
+          ],
+        ],
+      ]),
+      attributes: <String, dynamic>{
+        'affected_area': List<String>.filled(55, '新北市三芝區').join('；'),
+        'geometry_source': 'administrative_boundary',
+        'affected_area_count': 55,
+        'area_match_complete': true,
+      },
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: FeatureDetailsSheet.event(event: warning, onClose: () {}),
+        ),
+      ),
+    );
+
+    expect(tester.takeException(), isNull);
+    expect(find.byType(SingleChildScrollView), findsOneWidget);
+    await tester.drag(
+      find.byType(SingleChildScrollView),
+      const Offset(0, -500),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('資料狀態：有效'), findsOneWidget);
+  });
+
   testWidgets('county warning map details name its area reference point', (
     tester,
   ) async {
@@ -31,6 +186,37 @@ void main() {
     expect(find.text('影響範圍：澎湖縣（縣市級警報）'), findsOneWidget);
     expect(find.text('地圖位置：影響範圍參考點（非告警發生的精確位置）'), findsOneWidget);
   });
+
+  testWidgets(
+    'forecast warning map details do not call its start publication',
+    (tester) async {
+      final start = DateTime.now().toUtc().add(const Duration(days: 1));
+      final event = MeshEvent(
+        namespace: 'official.live.cwa-warning',
+        eventId: 'cwa:warning:w-c0033-001:10004:2026-10-21-11:00:00:0',
+        eventVersion: 1,
+        eventType: 'WEATHER_WARNING',
+        severity: 'UNKNOWN',
+        source: 'CWA',
+        issuedAt: start.toIso8601String(),
+        expiresAt: start.add(const Duration(hours: 12)).toIso8601String(),
+        applyState: 'CURRENT',
+        geometry: const PointGeometry(GeoPoint(longitude: 121.5, latitude: 25)),
+        attributes: const <String, dynamic>{},
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: FeatureDetailsSheet.event(event: event, onClose: () {}),
+          ),
+        ),
+      );
+
+      expect(find.text('發布時間：來源未提供'), findsOneWidget);
+      expect(find.textContaining('影響時段開始：'), findsOneWidget);
+      expect(find.textContaining('資料狀態：尚未生效'), findsOneWidget);
+    },
+  );
 
   test('parses point, line, and polygon event geometries', () {
     final point = MeshEvent.fromJson(
@@ -146,6 +332,59 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.widget<Switch>(find.byType(Switch).at(2)).value, isFalse);
     expect(find.bySemanticsLabel('事件：內湖模擬淹水，已過期'), findsNothing);
+  });
+
+  testWidgets('county warning area switch keeps its own state', (tester) async {
+    await tester.pumpWidget(_testApp(features: const <StaticFeature>[]));
+    await _finishMapLoad(tester);
+
+    await tester.tap(find.bySemanticsLabel('圖層設定'));
+    await tester.pumpAndSettle();
+    final areaSwitch = find.widgetWithText(SwitchListTile, '警報影響範圍');
+    final eventSwitch = find.widgetWithText(SwitchListTile, '災情事件');
+    expect(tester.widget<SwitchListTile>(areaSwitch).value, isTrue);
+    expect(tester.widget<SwitchListTile>(eventSwitch).value, isTrue);
+    expect(
+      tester.widget<MapCanvas>(find.byType(MapCanvas)).showCountyWarningAreas,
+      isTrue,
+    );
+
+    await tester.ensureVisible(areaSwitch);
+    await tester.tap(areaSwitch);
+    await tester.pumpAndSettle();
+    expect(tester.widget<SwitchListTile>(areaSwitch).value, isFalse);
+    expect(tester.widget<SwitchListTile>(eventSwitch).value, isTrue);
+    expect(
+      tester.widget<MapCanvas>(find.byType(MapCanvas)).showCountyWarningAreas,
+      isFalse,
+    );
+
+    await tester.ensureVisible(eventSwitch);
+    await tester.tap(eventSwitch);
+    await tester.pumpAndSettle();
+    expect(tester.widget<SwitchListTile>(areaSwitch).value, isFalse);
+    expect(tester.widget<SwitchListTile>(eventSwitch).value, isFalse);
+    expect(
+      tester.widget<MapCanvas>(find.byType(MapCanvas)).showCountyWarningAreas,
+      isFalse,
+    );
+
+    await tester.ensureVisible(areaSwitch);
+    await tester.tap(areaSwitch);
+    await tester.pumpAndSettle();
+    expect(tester.widget<SwitchListTile>(areaSwitch).value, isTrue);
+    expect(
+      tester.widget<MapCanvas>(find.byType(MapCanvas)).showCountyWarningAreas,
+      isFalse,
+    );
+
+    await tester.ensureVisible(eventSwitch);
+    await tester.tap(eventSwitch);
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<MapCanvas>(find.byType(MapCanvas)).showCountyWarningAreas,
+      isTrue,
+    );
   });
 
   testWidgets('local search selects a shelter and opens its details', (
@@ -270,6 +509,8 @@ Widget _testApp({
   required List<StaticFeature> features,
   List<MeshEvent> events = const <MeshEvent>[],
   LocationController? locationController,
+  MeshEvent? notificationFocusEvent,
+  int notificationFocusRequestId = 0,
 }) => MaterialApp(
   home: MapScreen(
     staticFeatures: StaticFeatureCollection(
@@ -280,6 +521,8 @@ Widget _testApp({
     ),
     initialState: MapInitialState(events: events, emergencyModeEnabled: false),
     locationController: locationController,
+    notificationFocusEvent: notificationFocusEvent,
+    notificationFocusRequestId: notificationFocusRequestId,
   ),
 );
 

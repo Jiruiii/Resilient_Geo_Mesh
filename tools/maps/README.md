@@ -4,6 +4,21 @@
 
 地圖使用 `flutter/assets/map/pmtiles/` 內的五個向量套件：全台概覽與北、中、南、東分區。Android 安裝時將內建 Flutter assets 複製到 App 私有目錄供 PMTiles 隨機讀取；Web 直接讀取隨建置輸出的資產。Server 不提供 `/maps/*` 路由，也不參與底圖更新。相機縮放和台灣可視邊界以 [Map_description.md](../../Map_description.md) 所列程式設定為準。
 
+## CWA 縣市警報影響範圍
+
+Web 與 Android 的「警報影響範圍」圖層使用同一份顯示專用縣市邊界：
+`flutter/assets/map/boundaries/cwa-county-warning.geojson`。它從 Server 保留的
+`data/boundaries/geojson/county.geojson` 簡化產生，僅供淡色遮罩顯示；縣市配對
+仍以 collector 的完整行政區資料和事件 `area_id` 為準。重建方式：
+
+```bash
+python3 tools/maps/build_county_warning_boundaries.py
+```
+
+App 只對目前有效、具有 `coverage_level=county` 和
+`map_location_kind=area_reference` 的 CWA 告警，依 `area_id` 顯示遮罩；
+同縣市只顯示一次。遮罩不參與地圖點選，告警參考點仍可選取。
+
 ## OSM 去重、字形與回歸驗證（2026-10-11）
 
 `deduplicate_pmtiles.py` 依 north、central、south、east 順序保留唯一圖磚；相同座標若內容不同會拒絕合併，完成後再比對全部圖磚雜湊。輸出必須使用獨立目錄，不覆寫輸入。替換 App 資產時須同步更新 `offline_map_manifest.dart` 的 SHA-256。

@@ -17,6 +17,13 @@ class GeoPoint {
   int get hashCode => Object.hash(longitude, latitude);
 }
 
+class GeoBounds {
+  const GeoBounds({required this.southwest, required this.northeast});
+
+  final GeoPoint southwest;
+  final GeoPoint northeast;
+}
+
 sealed class MapGeometry {
   const MapGeometry();
 
@@ -216,15 +223,79 @@ class MeshEvent {
 
   /// Keep the UI correct between native expiry ticks and while returning from background.
   String? get effectiveApplyState {
+    final issued = _parseEventTime(issuedAt);
+    final now = DateTime.now().toUtc();
     final expires = _parseEventTime(expiresAt);
-    if (applyState == 'EXPIRED' ||
-        (expires != null && !expires.isAfter(DateTime.now().toUtc()))) {
+    if (applyState == 'EXPIRED' || (expires != null && !expires.isAfter(now))) {
       return 'EXPIRED';
+    }
+    if ((applyState == null || applyState == 'CURRENT') &&
+        issued != null &&
+        issued.isAfter(now)) {
+      return 'UPCOMING';
     }
     return applyState;
   }
 
   bool get isExpired => effectiveApplyState == 'EXPIRED';
+
+  /// W-C0033 records use validTime.startTime as issued_at because the REST
+  /// response has no publication timestamp. Public chunks omit source_record,
+  /// so identify those events by their stable dataset prefix too.
+  bool get hasCwaWarningValidTime {
+    if (source?.toUpperCase() != 'CWA' || eventType != 'WEATHER_WARNING') {
+      return false;
+    }
+    if (eventId?.toLowerCase().startsWith('cwa:warning:w-c0033-001:') == true) {
+      return true;
+    }
+    final sourceRecord = attributes?['source_record'];
+    if (sourceRecord is! Map) return false;
+    final hazard = sourceRecord['hazard'];
+    if (hazard is! Map) return false;
+    final validTime = hazard['validTime'];
+    return validTime is Map && validTime['startTime'] is String;
+  }
+
+  bool get isCwaCountyWarning =>
+      (namespace == 'official.cwa' ||
+          namespace?.startsWith('official.cwa.') == true ||
+          namespace == 'official.live.cwa' ||
+          namespace?.startsWith('official.live.cwa-') == true ||
+          namespace?.startsWith('official.live.cwa.') == true) &&
+      source?.toUpperCase() == 'CWA' &&
+      eventType == 'WEATHER_WARNING' &&
+      attributes?['coverage_level'] == 'county' &&
+      attributes?['map_location_kind'] == 'area_reference';
+
+  /// Administrative CAP areas are a coverage mask, not a point of impact.
+  bool get isNcdrMultiAreaWarning =>
+      source?.toUpperCase() == 'NCDR' &&
+      attributes?['geometry_source'] == 'administrative_boundary' &&
+      (attributes?['affected_area_count'] is num) &&
+      (attributes!['affected_area_count'] as num) > 1;
+
+  bool get hasCompleteNcdrAreaMask =>
+      isNcdrMultiAreaWarning &&
+      attributes?['area_match_complete'] == true &&
+      geometry is MultiPolygonGeometry;
+
+  /// A warning already present in the official feed may describe tomorrow's
+  /// affected period. Show its reference point and county mask as a forecast.
+  bool isUpcomingCwaCountyWarningAt([DateTime? now]) {
+    if (!isCwaCountyWarning ||
+        !hasCwaWarningValidTime ||
+        (applyState != null && applyState != 'CURRENT')) {
+      return false;
+    }
+    final reference = (now ?? DateTime.now()).toUtc();
+    final start = _parseEventTime(issuedAt);
+    final end = _parseEventTime(expiresAt);
+    return start != null &&
+        start.isAfter(reference) &&
+        end != null &&
+        end.isAfter(reference);
+  }
 
   /// Dynamic shelter status from FIRE_AGENCY is retired and must not enter
   /// the active map or alert stream.
@@ -287,6 +358,36 @@ GeoPoint? meshEventFocusPoint(MeshEvent event) => switch (event.geometry) {
   ),
   _ => null,
 };
+
+GeoBounds? meshEventBounds(MeshEvent event) {
+  final geometry = event.geometry;
+  final points = switch (geometry) {
+    PointGeometry(:final point) => <GeoPoint>[point],
+    LineStringGeometry(:final points) => points,
+    PolygonGeometry(:final rings) => rings.expand((ring) => ring),
+    MultiPolygonGeometry(:final polygons) => polygons.expand(
+      (rings) => rings.expand((ring) => ring),
+    ),
+    _ => const <GeoPoint>[],
+  };
+  final iterator = points.iterator;
+  if (!iterator.moveNext()) return null;
+  var west = iterator.current.longitude;
+  var east = west;
+  var south = iterator.current.latitude;
+  var north = south;
+  while (iterator.moveNext()) {
+    final point = iterator.current;
+    if (point.longitude < west) west = point.longitude;
+    if (point.longitude > east) east = point.longitude;
+    if (point.latitude < south) south = point.latitude;
+    if (point.latitude > north) north = point.latitude;
+  }
+  return GeoBounds(
+    southwest: GeoPoint(longitude: west, latitude: south),
+    northeast: GeoPoint(longitude: east, latitude: north),
+  );
+}
 
 List<List<GeoPoint>> _largestPolygon(List<List<List<GeoPoint>>> polygons) {
   var largest = const <List<GeoPoint>>[];

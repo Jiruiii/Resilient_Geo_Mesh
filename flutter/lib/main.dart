@@ -107,7 +107,8 @@ class _MapAppHomeState extends State<_MapAppHome> {
   void _openNotificationOnMap(MeshEvent event) {
     unawaited(widget.controller.markEventRead(event));
     final point = meshEventFocusPoint(event);
-    if (!isMapVisibleEvent(event) || point == null) {
+    if (!isMapVisibleEvent(event) ||
+        (point == null && meshEventBounds(event) == null)) {
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
         ..showSnackBar(const SnackBar(content: Text('此通知沒有地圖位置')));

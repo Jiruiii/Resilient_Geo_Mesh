@@ -112,6 +112,40 @@ void main() {
     expect(find.byIcon(MapIconCatalog.supplyStation), findsOneWidget);
   });
 
+  testWidgets('NCDR notification shows its normalized alert category', (
+    tester,
+  ) async {
+    const event = MeshEvent(
+      namespace: 'official.live.ncdr',
+      eventId: 'ncdr:fire:notification',
+      eventVersion: 1,
+      eventType: 'FIRE_WARNING',
+      severity: 'LOW',
+      source: 'NCDR',
+      issuedAt: '2026-10-21T00:00:00Z',
+      expiresAt: '2099-01-01T00:00:00Z',
+      applyState: 'CURRENT',
+      geometry: PointGeometry(GeoPoint(longitude: 121.5, latitude: 25)),
+      attributes: <String, dynamic>{
+        'title': '火災臨時屋',
+        'ncdr_category_code': 'fire',
+        'ncdr_category_label': '火災',
+      },
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: NotificationsScreen(
+          events: const <MeshEvent>[event],
+          onEventRead: (_) {},
+        ),
+      ),
+    );
+
+    expect(find.textContaining('告警分類：火災'), findsOneWidget);
+    expect(find.textContaining('事件類型：FIRE_WARNING'), findsOneWidget);
+  });
+
   testWidgets(
     'CWA county warning names its affected area and reference point',
     (tester) async {
@@ -128,6 +162,8 @@ void main() {
         geometry: PointGeometry(GeoPoint(longitude: 121.5, latitude: 25)),
         attributes: <String, dynamic>{
           'affected_area': '新北市',
+          'source_description': '陸上強風',
+          'theme': 'weather',
           'coverage_level': 'county',
           'map_location_kind': 'area_reference',
         },
@@ -142,9 +178,47 @@ void main() {
       );
 
       expect(find.textContaining('影響範圍：新北市（縣市級警報）'), findsOneWidget);
+      expect(find.textContaining('告警分類：強風'), findsOneWidget);
       expect(find.textContaining('地圖位置：影響範圍參考點'), findsOneWidget);
     },
   );
+
+  testWidgets('forecast warning shows affected period and upcoming status', (
+    tester,
+  ) async {
+    final start = DateTime.now().toUtc().add(const Duration(days: 1));
+    final warning = MeshEvent(
+      namespace: 'official.live.cwa-warning',
+      eventId: 'cwa:warning:w-c0033-001:10004:2026-10-21-11:00:00:0',
+      eventVersion: 1,
+      eventType: 'WEATHER_WARNING',
+      severity: 'UNKNOWN',
+      source: 'CWA',
+      issuedAt: start.toIso8601String(),
+      expiresAt: start.add(const Duration(hours: 12)).toIso8601String(),
+      applyState: 'CURRENT',
+      geometry: const PointGeometry(GeoPoint(longitude: 121.5, latitude: 25)),
+      attributes: const <String, dynamic>{
+        'affected_area': '新竹縣',
+        'coverage_level': 'county',
+        'map_location_kind': 'area_reference',
+      },
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: NotificationsScreen(
+          events: <MeshEvent>[warning],
+          onEventRead: (_) {},
+        ),
+      ),
+    );
+
+    expect(find.textContaining('狀態：尚未生效'), findsOneWidget);
+    expect(find.textContaining('發布時間：來源未提供'), findsOneWidget);
+    expect(find.textContaining('影響時段開始：'), findsOneWidget);
+    expect(find.textContaining('影響時段結束：'), findsOneWidget);
+    expect(find.textContaining('發布：${warning.issuedAt}'), findsNothing);
+  });
 }
 
 MeshEvent _notice(String id) => MeshEvent(

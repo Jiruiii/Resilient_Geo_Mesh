@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../data/attestation_index.dart';
 import '../data/crowd_report_models.dart';
 import '../data/display_time.dart';
+import '../data/government_announcement_time.dart';
 import '../data/map_models.dart';
 import '../data/rescue_request_models.dart';
 import '../data/supply_status.dart';
@@ -56,41 +57,55 @@ class FeatureDetailsSheet extends StatelessWidget {
       borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
       child: SafeArea(
         top: false,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 12, 12, 20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              Center(
-                child: Container(
-                  height: 4,
-                  width: 36,
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.outlineVariant,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 8),
-              Row(
-                children: <Widget>[
-                  Expanded(
-                    child: Text(
-                      title,
-                      style: Theme.of(context).textTheme.titleLarge,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.sizeOf(context).height * 0.78,
+          ),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 12, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Center(
+                  child: Container(
+                    height: 4,
+                    width: 36,
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.outlineVariant,
+                      borderRadius: BorderRadius.circular(2),
                     ),
                   ),
-                  IconButton(
-                    tooltip: '關閉詳情',
-                    onPressed: onClose,
-                    icon: const Icon(Icons.close),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: <Widget>[
+                    Expanded(
+                      child: Text(
+                        title,
+                        style: Theme.of(context).textTheme.titleLarge,
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: '關閉詳情',
+                      onPressed: onClose,
+                      icon: const Icon(Icons.close),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Flexible(
+                  fit: FlexFit.loose,
+                  child: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: body,
+                    ),
                   ),
-                ],
-              ),
-              const SizedBox(height: 6),
-              ...body,
-            ],
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -194,12 +209,19 @@ class FeatureDetailsSheet extends StatelessWidget {
       _DetailLine('事件類型', _text(event.eventType)),
       if (!isSupplyStationEvent(event))
         _DetailLine('嚴重度', _text(event.severity)),
-      if (cwaWarning &&
+      if ((cwaWarning || event.isNcdrMultiAreaWarning) &&
           affectedArea is String &&
           affectedArea.trim().isNotEmpty)
         _DetailLine(
           '影響範圍',
           '${affectedArea.trim()}${event.attributes?['coverage_level'] == 'county' ? '（縣市級警報）' : ''}',
+        ),
+      if (event.isNcdrMultiAreaWarning)
+        _DetailLine(
+          '地圖範圍',
+          event.hasCompleteNcdrAreaMask
+              ? '警報涵蓋行政區（非精確風害位置）'
+              : '部分影響區域缺少邊界，未顯示遮罩',
         ),
       if (areaReference) const _DetailLine('地圖位置', '影響範圍參考點（非告警發生的精確位置）'),
       _DetailLine(
@@ -207,8 +229,19 @@ class FeatureDetailsSheet extends StatelessWidget {
         _geometryText(event.geometry),
       ),
       _DetailLine('來源', _text(event.source)),
-      _DetailLine('發佈時間', _text(event.issuedAt)),
-      _DetailLine('到期時間', _text(event.expiresAt)),
+      if (event.hasCwaWarningValidTime) const _DetailLine('發布時間', '來源未提供'),
+      _DetailLine(
+        event.hasCwaWarningValidTime ? '影響時段開始' : '發佈時間',
+        event.hasCwaWarningValidTime
+            ? _taiwanEventTime(event.issuedAt)
+            : _text(event.issuedAt),
+      ),
+      _DetailLine(
+        event.hasCwaWarningValidTime ? '影響時段結束' : '到期時間',
+        event.hasCwaWarningValidTime
+            ? _taiwanEventTime(event.expiresAt)
+            : _text(event.expiresAt),
+      ),
       _DetailLine('資料狀態', _eventState(event)),
     ];
   }
@@ -316,10 +349,18 @@ class _VerificationNotice extends StatelessWidget {
 
 String _eventState(MeshEvent event) => switch (event.effectiveApplyState) {
   'CURRENT' => '有效',
+  'UPCOMING' => '尚未生效',
   'EXPIRED' => '已過期',
   'UNVERIFIED' => '未驗證',
   _ => '無資料',
 };
+
+String _taiwanEventTime(String? value) {
+  final parsed = DateTime.tryParse(value ?? '');
+  return parsed == null
+      ? _text(value)
+      : GovernmentAnnouncementTime.formatTaiwan(parsed.toUtc());
+}
 
 String _geometryText(MapGeometry? geometry) => switch (geometry) {
   PointGeometry(:final point) => '點位（${point.latitude}, ${point.longitude}）',

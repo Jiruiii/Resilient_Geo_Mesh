@@ -7,10 +7,12 @@ class LayerFilterPanel extends StatelessWidget {
     required this.showShelters,
     required this.showMedical,
     required this.showEvents,
+    required this.showCountyWarningAreas,
     required this.emergencyModeEnabled,
     required this.onSheltersChanged,
     required this.onMedicalChanged,
     required this.onEventsChanged,
+    required this.onCountyWarningAreasChanged,
     required this.onEmergencyModeChanged,
     this.disasterType,
     this.onDisasterTypeChanged,
@@ -22,12 +24,14 @@ class LayerFilterPanel extends StatelessWidget {
   final bool showShelters;
   final bool showMedical;
   final bool showEvents;
+  final bool showCountyWarningAreas;
   final bool showSupplies;
   final ValueChanged<bool>? onSuppliesChanged;
   final bool emergencyModeEnabled;
   final ValueChanged<bool> onSheltersChanged;
   final ValueChanged<bool> onMedicalChanged;
   final ValueChanged<bool> onEventsChanged;
+  final ValueChanged<bool> onCountyWarningAreasChanged;
   final ValueChanged<bool> onEmergencyModeChanged;
   final DisasterType? disasterType;
   final ValueChanged<DisasterType?>? onDisasterTypeChanged;
@@ -56,6 +60,12 @@ class LayerFilterPanel extends StatelessWidget {
               title: const Text('災情事件'),
               value: showEvents,
               onChanged: onEventsChanged,
+            ),
+            SwitchListTile(
+              title: const Text('警報影響範圍'),
+              subtitle: const Text('淡色顯示氣象縣市警報與 NCDR 影響鄉鎮；點選色塊可查看警報'),
+              value: showCountyWarningAreas,
+              onChanged: onCountyWarningAreasChanged,
             ),
             const Divider(),
             if (onSuppliesChanged != null)

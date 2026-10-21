@@ -4,6 +4,47 @@ import 'package:resilientgeo_flutter/data/map_models.dart';
 import 'package:resilientgeo_flutter/data/maplibre_overlay.dart';
 
 void main() {
+  test('NCDR mask publishes only complete current multi-area boundaries', () {
+    MeshEvent warning(String id, bool complete, String expiresAt) => MeshEvent(
+      namespace: 'official.ncdr',
+      eventId: id,
+      eventVersion: 1,
+      eventType: 'NCDR_HAZARD',
+      severity: 'MEDIUM',
+      source: 'NCDR',
+      issuedAt: '2026-10-20T00:00:00Z',
+      expiresAt: expiresAt,
+      applyState: 'CURRENT',
+      geometry: const MultiPolygonGeometry(<List<List<GeoPoint>>>[
+        <List<GeoPoint>>[
+          <GeoPoint>[
+            GeoPoint(longitude: 120, latitude: 23),
+            GeoPoint(longitude: 121, latitude: 23),
+            GeoPoint(longitude: 121, latitude: 24),
+            GeoPoint(longitude: 120, latitude: 23),
+          ],
+        ],
+      ]),
+      attributes: <String, dynamic>{
+        'geometry_source': 'administrative_boundary',
+        'affected_area_count': 55,
+        'area_match_complete': complete,
+      },
+    );
+    final collection =
+        MapLibreOverlayData.ncdrAreaFeatureCollection(<MeshEvent>[
+          warning('complete', true, '2026-10-21T00:00:00Z'),
+          warning('partial', false, '2026-10-21T00:00:00Z'),
+          warning('expired', true, '2026-10-19T00:00:00Z'),
+        ], now: DateTime.utc(2026, 10, 20, 12));
+    final features = collection['features'] as List<dynamic>;
+    expect(features, hasLength(1));
+    expect(
+      (features.single as Map<String, dynamic>)['geometry'],
+      containsPair('type', 'MultiPolygon'),
+    );
+  });
+
   test(
     'event area rendering is disabled while the area UI is being redesigned',
     () {

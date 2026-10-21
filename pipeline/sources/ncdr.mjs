@@ -3,6 +3,7 @@ import {
   normalizeCoordinate,
 } from '../lib/geo.mjs';
 import { areaMetadataForRecord, boundaryForRecord } from '../lib/coverage.mjs';
+import { simplifyDisplayGeometry } from '../lib/display-geometry.mjs';
 import {
   makeRawSnapshot,
   requestJson,
@@ -125,6 +126,7 @@ function capRecordToFlatRecord(record) {
     urgency: firstValue(info.urgency, info.Urgency),
     description: firstValue(info.description, info.Description, info.headline, info.Headline),
     areaDesc: firstValue(areaDescription, record.areaDesc, record.AreaDesc),
+    cap_areas: areas,
     polygon: firstValue(polygon, record.polygon, record.Polygon),
     circle: firstValue(areaWithCircle?.circle, areaWithCircle?.Circle, record.circle, record.Circle),
     source_record: record,
@@ -660,7 +662,63 @@ function sourceVersion(rawSnapshot, record, id) {
   ));
 }
 
+const displayGeometryCache = new WeakMap();
+
+function displayGeometryForArea(area) {
+  const original = area.geometry;
+  let display = displayGeometryCache.get(original);
+  if (!display) {
+    display = simplifyDisplayGeometry(original);
+    displayGeometryCache.set(original, display);
+  }
+  return display;
+}
+
 function curatedGeometry(record, geometry, options) {
+  if (!geometry && Array.isArray(record.cap_areas) && record.cap_areas.length > 0
+    && typeof options.areaResolver === 'function') {
+    const matched = [];
+    const unmatched = [];
+    for (const capArea of record.cap_areas) {
+      const name = String(firstValue(capArea.areaDesc, capArea.AreaDesc) ?? '').trim();
+      const area = name ? options.areaResolver({ AreaDesc: name }, undefined) : undefined;
+      const normalized = value => String(value ?? '').replaceAll('台', '臺').replace(/\s+/gu, '');
+      const resolvedName = area?.level === 'county'
+        ? area.county_name
+        : `${area?.county_name ?? ''}${area?.town_name ?? ''}`;
+      const exact = normalized(name) === normalized(resolvedName);
+      // The current official catalog ends at township level. A village CAP
+      // name can use its parent town as storage geometry, but the mask must
+      // remain incomplete until a verified village boundary is available.
+      const parentTownOnly = area?.level === 'town'
+        && normalized(name).startsWith(normalized(resolvedName))
+        && /[里村]$/u.test(normalized(name));
+      if (!area || (!exact && !parentTownOnly)
+        || !['Polygon', 'MultiPolygon'].includes(area.geometry?.type)) {
+        unmatched.push(name || '未命名區域');
+        continue;
+      }
+      if (parentTownOnly) unmatched.push(name);
+      if (!matched.some((candidate) => candidate.area_id === area.area_id)) matched.push(area);
+    }
+    if (matched.length === 0) {
+      throw new NcdrSourceError('NCDR CAP areas have no verified administrative geometry', {
+        code: 'NCDR_AREAS_UNRESOLVED',
+      });
+    }
+    const polygons = matched.flatMap((area) => {
+      const display = displayGeometryForArea(area);
+      return display.type === 'Polygon' ? [display.coordinates] : display.coordinates;
+    });
+    return {
+      geometry: { type: 'MultiPolygon', coordinates: polygons },
+      coverageLevel: matched.length > 1 ? 'multi_area' : matched[0].level,
+      affectedAreaIds: matched.map((area) => area.area_id),
+      affectedAreaCount: record.cap_areas.length,
+      areaMatchComplete: unmatched.length === 0,
+      unmatchedAreaNames: unmatched,
+    };
+  }
   const boundary = boundaryForRecord(options, record, geometry);
   if (geometry) {
     try {
@@ -734,6 +792,7 @@ function normalizeRecord(record, index, rawSnapshot, options) {
   // back to the nationwide boundary; resolving that huge fallback polygon
   // against every catalog area would repeat a very expensive scan.
   const area = areaMetadataForRecord(options, record, geometry);
+  if (curated.affectedAreaIds?.length === 1) area.area_id = curated.affectedAreaIds[0];
   return {
     schema_version: 'event-v0',
     namespace: options.namespace ?? 'official.ncdr',
@@ -750,6 +809,15 @@ function normalizeRecord(record, index, rawSnapshot, options) {
       ...area,
       theme,
       coverage_level: curated.coverageLevel,
+      ...(curated.affectedAreaIds ? {
+        affected_area_ids: curated.affectedAreaIds,
+        affected_area_count: curated.affectedAreaCount,
+        area_match_complete: curated.areaMatchComplete,
+        ...(curated.unmatchedAreaNames.length > 0
+          ? { unmatched_area_names: curated.unmatchedAreaNames }
+          : {}),
+        geometry_source: 'administrative_boundary',
+      } : {}),
       ...(options.coverage ? { coverage: options.coverage } : {}),
       alert_id: firstValue(record.CAPID, record.capid, record.identifier, record.Identifier, record.alert_id) ?? id,
       ncdr_category_code: ncdrCategory.code,
@@ -761,7 +829,7 @@ function normalizeRecord(record, index, rawSnapshot, options) {
       affected_area: affectedArea,
       source_description: sourceDescription,
       operational_relevance: operationalRelevance,
-      map_visible: operationalRelevance !== 'BACKGROUND',
+      map_visible: operationalRelevance !== 'BACKGROUND' && curated.areaMatchComplete !== false,
       original_unit: firstValue(record.unit, record.Unit, record.units, record.Units),
       source_record: record.source_record ?? record,
     },

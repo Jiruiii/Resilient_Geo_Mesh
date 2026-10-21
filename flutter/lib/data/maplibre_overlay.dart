@@ -8,9 +8,27 @@ import 'map_models.dart';
 class MapLibreOverlayData {
   const MapLibreOverlayData._();
 
-  /// Area fills are temporarily hidden while the disaster-area interaction
-  /// is being redesigned. Point markers remain available for selection.
+  /// Generic disaster-area fills remain disabled. Verified NCDR administrative
+  /// masks use the separate ncdrAreaFeatureCollection path below.
   static const bool showEventAreaOverlay = false;
+
+  static Map<String, dynamic> ncdrAreaFeatureCollection(
+    Iterable<MeshEvent> events, {
+    DateTime? now,
+  }) {
+    final collection = eventFeatureCollection(
+      events.where(
+        (event) => event.hasCompleteNcdrAreaMask && event.isShownAt(now),
+      ),
+    );
+    for (final feature
+        in collection['features'] as List<Map<String, dynamic>>) {
+      final properties = feature['properties'] as Map<String, dynamic>;
+      properties['opacity'] = 0.22;
+      properties['line_width'] = 1.5;
+    }
+    return collection;
+  }
 
   static Map<String, dynamic> eventFeatureCollection(
     Iterable<MeshEvent> events,

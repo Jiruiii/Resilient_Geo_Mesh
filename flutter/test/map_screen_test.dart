@@ -4,11 +4,56 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:resilientgeo_flutter/data/map_models.dart';
 import 'package:resilientgeo_flutter/screens/map_screen.dart';
+import 'package:resilientgeo_flutter/widgets/map_canvas.dart';
 import 'package:resilientgeo_flutter/widgets/map_layers.dart'
     show MapIconCatalog;
 import 'package:resilientgeo_flutter/widgets/map_zoom_controls.dart';
 
 void main() {
+  testWidgets(
+    'verified warning area masks remain available while static data verifies',
+    (tester) async {
+      const warning = MeshEvent(
+        namespace: 'official.ncdr',
+        eventId: 'ncdr:wind:multi-area',
+        eventVersion: 1,
+        eventType: 'NCDR_HAZARD',
+        severity: 'MEDIUM',
+        source: 'NCDR',
+        issuedAt: '2026-10-20T00:00:00Z',
+        expiresAt: '2099-01-01T00:00:00Z',
+        applyState: 'CURRENT',
+        geometry: MultiPolygonGeometry(<List<List<GeoPoint>>>[
+          <List<GeoPoint>>[
+            <GeoPoint>[
+              GeoPoint(longitude: 120, latitude: 23),
+              GeoPoint(longitude: 121, latitude: 23),
+              GeoPoint(longitude: 120, latitude: 23),
+            ],
+          ],
+        ]),
+        attributes: <String, dynamic>{
+          'geometry_source': 'administrative_boundary',
+          'affected_area_count': 55,
+          'area_match_complete': true,
+          'map_visible': true,
+          'ncdr_category_code': 'strong_wind',
+          'ncdr_category_label': '強風',
+        },
+      );
+
+      await tester.pumpWidget(
+        _testApp(pending: true, events: const <MeshEvent>[warning]),
+      );
+      await tester.pump();
+
+      final map = tester.widget<MapCanvas>(find.byType(MapCanvas));
+      expect(map.visibleEvents, isEmpty);
+      expect(map.areaWarnings, <MeshEvent>[warning]);
+      expect(map.showCountyWarningAreas, isTrue);
+    },
+  );
+
   test('does not bundle the old static point snapshot', () async {
     await expectLater(
       rootBundle.loadString('assets/data/taiwan/static-features.json'),
@@ -204,6 +249,7 @@ void main() {
 
 Widget _testApp({
   List<StaticFeature> features = const <StaticFeature>[],
+  List<MeshEvent> events = const <MeshEvent>[],
   bool pending = false,
   bool failed = false,
   String? snapshotAt = '2026-09-03T02:00:32Z',
@@ -217,9 +263,6 @@ Widget _testApp({
     ),
     staticFeaturesPending: pending,
     staticFeaturesFailed: failed,
-    initialState: const MapInitialState(
-      events: <MeshEvent>[],
-      emergencyModeEnabled: false,
-    ),
+    initialState: MapInitialState(events: events, emergencyModeEnabled: false),
   ),
 );
