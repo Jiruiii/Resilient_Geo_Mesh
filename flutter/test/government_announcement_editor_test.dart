@@ -196,28 +196,33 @@ void main() {
   testWidgets('announcement groups show dates and sort by selected date', (
     tester,
   ) async {
+    tester.view.physicalSize = const Size(430, 1600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
     final api = _FakeGovernmentApi(
       announcements: <Map<String, dynamic>>[
         <String, dynamic>{
-          'event_id': 'announcement:later-published',
+          'event_id': 'z-announcement:later-published',
           'event_version': 1,
           'title': '較晚發布',
           'content': '公告內容',
           'category': 'SAFETY',
           'area_id': 'tw.national',
-          'created_at': '2026-10-20T04:00:00Z',
+          'updated_at': '2026-10-20T04:00:00Z',
           'expires_at': '2099-10-24T00:00:00Z',
           'retracted': false,
         },
         <String, dynamic>{
-          'event_id': 'announcement:earlier-deadline',
+          'event_id': 'a-announcement:earlier-deadline',
           'event_version': 1,
           'title': '較早截止',
           'content': '公告內容',
           'category': 'SAFETY',
           'area_id': 'tw.national',
-          'created_at': '2026-10-19T04:00:00Z',
-          'expires_at': '2099-10-22T00:00:00Z',
+          'updated_at': '2026-10-19T04:00:00Z',
+          'expires_at': '2000-10-22T00:00:00Z',
           'retracted': false,
         },
       ],
@@ -247,9 +252,10 @@ void main() {
     await tester.tap(find.text('安全提醒（2）'));
     await tester.pumpAndSettle();
     expect(find.text('發布日期：2026/10/20 12:00:00'), findsOneWidget);
+    final expiredTitle = find.text('較早截止 · 已過期');
     expect(
       tester.getTopLeft(find.text('較晚發布')).dy,
-      lessThan(tester.getTopLeft(find.text('較早截止')).dy),
+      lessThan(tester.getTopLeft(expiredTitle).dy),
     );
 
     await tester.tap(find.text('發布日期（新到舊）'));
@@ -257,7 +263,7 @@ void main() {
     await tester.tap(find.text('截止日期（近到遠）'));
     await tester.pumpAndSettle();
     expect(
-      tester.getTopLeft(find.text('較早截止')).dy,
+      tester.getTopLeft(expiredTitle).dy,
       lessThan(tester.getTopLeft(find.text('較晚發布')).dy),
     );
   });

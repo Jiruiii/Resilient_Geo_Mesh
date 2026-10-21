@@ -514,8 +514,8 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen>
     Map<String, dynamic> first,
     Map<String, dynamic> second,
   ) {
-    final firstPublished = _announcementDate(first['created_at']);
-    final secondPublished = _announcementDate(second['created_at']);
+    final firstPublished = _announcementPublishedDate(first);
+    final secondPublished = _announcementPublishedDate(second);
     final firstDeadline = _announcementDate(first['expires_at']);
     final secondDeadline = _announcementDate(second['expires_at']);
     final (firstDate, secondDate, newestFirst) = switch (_announcementSort) {
@@ -551,8 +551,18 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen>
   DateTime? _announcementDate(Object? value) =>
       value is String ? DateTime.tryParse(value)?.toUtc() : null;
 
+  DateTime? _announcementPublishedDate(Map<String, dynamic> item) =>
+      _announcementDate(item['updated_at']) ??
+      _announcementDate(item['created_at']) ??
+      _announcementDate(item['issued_at']);
+
   String _announcementDateLabel(Object? value) {
     final date = _announcementDate(value);
+    return date == null ? '未提供' : GovernmentAnnouncementTime.formatTaiwan(date);
+  }
+
+  String _announcementPublishedDateLabel(Map<String, dynamic> item) {
+    final date = _announcementPublishedDate(item);
     return date == null ? '未提供' : GovernmentAnnouncementTime.formatTaiwan(date);
   }
 
@@ -642,7 +652,7 @@ class _GovernmentWorkbenchScreenState extends State<GovernmentWorkbenchScreen>
             ),
             const SizedBox(height: 4),
             Text(
-              '發布日期：${_announcementDateLabel(item['created_at'])}',
+              '發布日期：${_announcementPublishedDateLabel(item)}',
               style: TextStyle(color: muted),
             ),
             Text(
