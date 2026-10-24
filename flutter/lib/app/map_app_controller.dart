@@ -7,6 +7,8 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../data/attestation_index.dart';
+import '../data/flutter_test_environment.dart';
+import '../data/map_basemap.dart';
 import '../data/map_bridge.dart';
 import '../data/map_models.dart';
 import '../data/ncdr_category.dart';
@@ -39,7 +41,10 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
     RescueService? rescueService,
     WebGovernmentFeedRevisionLoader? webGovernmentFeedRevisionLoader,
     GovernmentAuthController? governmentAuthController,
+    EmapReachabilityProbe? emapProbe,
   }) : bridge = bridge ?? MapBridge(),
+       // Widget tests must not reach the network unless they inject a probe.
+       _emapProbe = emapProbe ?? (isFlutterTest ? null : MapBasemap.probeEmap),
        governmentAuth = governmentAuthController ?? GovernmentAuthController(),
        _demoEventLoader = demoEventLoader ?? _loadBundledNcdrDemoEvents,
        _isWeb = isWeb ?? kIsWeb,
@@ -58,6 +63,7 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
 
   static const _themePreference = 'map.theme_mode';
   static const _animationPreference = 'map.animation_enabled';
+  static const _basemapPreference = 'map.basemap_mode';
   static const _readEventKeysPreference = 'map.read_event_keys';
   static const _deletedNotificationKeysPreference =
       'map.deleted_notification_keys';
@@ -84,6 +90,9 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
   Timer? _rescueTimer;
   bool _rescueFetching = false;
   final WebGovernmentFeedRevisionLoader _webGovernmentFeedRevisionLoader;
+  final EmapReachabilityProbe? _emapProbe;
+  Timer? _emapProbeTimer;
+  bool _emapProbing = false;
   final StreamController<List<MeshEvent>> _eventUpdates =
       StreamController<List<MeshEvent>>.broadcast();
 
@@ -110,6 +119,12 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
   );
   ThemeMode themeMode = ThemeMode.system;
   bool animationEnabled = true;
+  MapBasemapMode basemapMode = MapBasemapMode.auto;
+
+  /// Result of the latest NLSC probe; false until a probe succeeds.
+  bool emapReachable = false;
+  bool get emapVisible =>
+      MapBasemap.emapVisible(mode: basemapMode, emapReachable: emapReachable);
   bool nativeBridgeAvailable = false;
   bool isLoading = true;
 
@@ -339,6 +354,10 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
     final preferences = await SharedPreferences.getInstance();
     themeMode = _themeModeFromName(preferences.getString(_themePreference));
     animationEnabled = preferences.getBool(_animationPreference) ?? true;
+    basemapMode = MapBasemapMode.fromName(
+      preferences.getString(_basemapPreference),
+    );
+    _restartEmapProbe();
     _notificationAreaIds = const <String>{
       TaiwanAdministrativeAreaDirectory.nationalAreaId,
     };
@@ -686,6 +705,7 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
     _eventUpdates.add(List<MeshEvent>.unmodifiable(_publishedEvents));
     _scheduleExpiryRefresh();
     _notifyIfAlive();
+    _restartEmapProbe();
     if (nativeBridgeAvailable) unawaited(_syncQueuedCrowdReports());
     if (_isWeb && !nativeBridgeAvailable) {
       unawaited(_refreshWebGovernmentFeed());
@@ -793,9 +813,48 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
     await preferences.setBool(_animationPreference, value);
   }
 
+  Future<void> setBasemapMode(MapBasemapMode value) async {
+    if (basemapMode == value) return;
+    basemapMode = value;
+    _notifyIfAlive();
+    _restartEmapProbe();
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setString(_basemapPreference, value.name);
+  }
+
+  /// Only auto mode depends on reachability, so other modes stay offline-quiet.
+  void _restartEmapProbe() {
+    _emapProbeTimer?.cancel();
+    _emapProbeTimer = null;
+    if (_disposed ||
+        _emapProbe == null ||
+        basemapMode != MapBasemapMode.auto) {
+      return;
+    }
+    unawaited(_probeEmap());
+    _emapProbeTimer = Timer.periodic(MapBasemap.probeInterval, (_) {
+      unawaited(_probeEmap());
+    });
+  }
+
+  Future<void> _probeEmap() async {
+    final probe = _emapProbe;
+    if (probe == null || _emapProbing || _disposed) return;
+    _emapProbing = true;
+    try {
+      final reachable = await probe();
+      if (_disposed || reachable == emapReachable) return;
+      emapReachable = reachable;
+      _notifyIfAlive();
+    } finally {
+      _emapProbing = false;
+    }
+  }
+
   @override
   void dispose() {
     _disposed = true;
+    _emapProbeTimer?.cancel();
     governmentAuth.onDeviceWarningCreated = null;
     governmentAuth.onCloudAnnouncementChanged = null;
     WidgetsBinding.instance.removeObserver(this);

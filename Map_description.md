@@ -58,6 +58,19 @@ z8.5 以下的概覽視野會依裝置畫布大小動態放寬相機邊界，確
 
 因此 z16–z17 是套件資料之上的 MapLibre overzoom。相機可視邊界和各 PMTiles 的資料 bounds 不同；不能只用相機邊界推定每一處都有同樣的圖磚細節。
 
+## 線上國土測繪圖資（NLSC EMAP）
+
+2026-10-24 起，Web 與 Android 可在有網路時以 NLSC「臺灣通用電子地圖」WMTS 作為底圖：
+
+- 圖磚：`https://wmts.nlsc.gov.tw/wmts/EMAP/default/GoogleMapsCompatible/{z}/{y}/{x}`（JPEG、256 px、`Access-Control-Allow-Origin: *`），source bounds 為經度 118.0–122.2、緯度 21.5–26.5，source maxzoom 19。
+- 程式：`flutter/lib/data/map_basemap.dart` 在載入樣式時把 raster source／layer 加在所有 OSM 圖層之上，預設隱藏；`MapCanvas` 只以 `setLayerVisibility` 切換，不重新載入樣式，因此事件、警報、路線圖層與 Flutter 標記不會重建。
+- 模式：自動（預設）／國土測繪圖資／離線 OSM，存於 SharedPreferences `map.basemap_mode`。自動模式每 60 秒與 App 回到前景時探測一張約 2.4 KB 的海面圖磚（`12/1791/3436`，Web 以 `cache: no-store`），可連線才顯示 EMAP。
+- 深色模式：同一圖層以 raster 濾鏡反轉亮度（`raster-brightness-min` 0.86／`-max` 0.08）、色相轉 180°、降低飽和度。
+- 備援：OSM PMTiles 一律在下方渲染，單張 EMAP 圖磚失敗時顯示 OSM。
+- 圖層順序：CWA 縣市警報面原本放在 OSM `taiwan-roads` 之下，現改為放在 NCDR 警報面之下、所有底圖（含 EMAP）之上，兩種底圖都看得到。OSM 模式下道路線會在 16% 透明的警報面下方。
+- 不變：道路搜尋索引、門牌包與步行路網仍為離線 OSM 資料；路線在 EMAP 上可能與 EMAP 道路有數公尺差異。政府公告選點地圖維持離線 OSM。
+- 授權標示：`© 內政部國土測繪中心`（MapLibre attribution）。
+
 ## NLSC 底圖試用紀錄（歷史，非目前底圖）
 
 保留在根目錄的 `TaiwanEMap6.mbtiles` 是 NLSC「臺灣通用電子地圖」原始 MBTiles。這份資料只供追溯先前的底圖試用；NLSC 轉出的 PMTiles、manifest、Web／Android 下載器、底圖選擇介面及 Server `/maps/*` 發布路徑已移除。NLSC 圖磚不會由目前 App 載入或下載。

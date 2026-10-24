@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 
 import '../data/government_announcement_time.dart';
 import '../data/government_api.dart';
+import '../data/map_basemap.dart';
 import '../data/map_bridge.dart';
 import '../data/taiwan_administrative_area_directory.dart';
 import '../data/taiwan_administrative_area_index.dart';
+import '../widgets/basemap_selector.dart';
 import 'notification_area_selection_screen.dart';
 import 'sync_status_screen.dart';
 import 'government_sync_screen.dart';
@@ -27,6 +29,9 @@ class ProfileScreen extends StatelessWidget {
     this.onNotificationAreaIdsChanged,
     this.governmentAreaDirectory,
     this.governmentAreaIndex,
+    this.basemapMode = MapBasemapMode.auto,
+    this.emapVisible = false,
+    this.onBasemapModeChanged,
   }) : assert(
          (governmentAreaDirectory == null) == (governmentAreaIndex == null),
        );
@@ -44,6 +49,9 @@ class ProfileScreen extends StatelessWidget {
   onNotificationAreaIdsChanged;
   final TaiwanAdministrativeAreaDirectory? governmentAreaDirectory;
   final TaiwanAdministrativeAreaIndex? governmentAreaIndex;
+  final MapBasemapMode basemapMode;
+  final bool emapVisible;
+  final ValueChanged<MapBasemapMode>? onBasemapModeChanged;
 
   Future<void> _openNotificationAreaSettings(BuildContext context) async {
     final directory = notificationAreaDirectory;
@@ -186,6 +194,14 @@ class ProfileScreen extends StatelessWidget {
                     if (value != null) onThemeModeChanged(value);
                   },
                 ),
+                if (onBasemapModeChanged case final onChanged?) ...<Widget>[
+                  const SizedBox(height: 12),
+                  BasemapSelector(
+                    mode: basemapMode,
+                    emapVisible: emapVisible,
+                    onChanged: onChanged,
+                  ),
+                ],
                 SwitchListTile.adaptive(
                   contentPadding: EdgeInsets.zero,
                   title: const Text('事件動畫'),

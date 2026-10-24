@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../data/evacuation_models.dart';
+import '../data/map_basemap.dart';
+import 'basemap_selector.dart';
 
 class LayerFilterPanel extends StatelessWidget {
   const LayerFilterPanel({
@@ -19,6 +21,9 @@ class LayerFilterPanel extends StatelessWidget {
     this.onOpenSyncStatus,
     this.showSupplies = true,
     this.onSuppliesChanged,
+    this.basemapMode = MapBasemapMode.auto,
+    this.emapVisible = false,
+    this.onBasemapModeChanged,
   });
 
   final bool showShelters;
@@ -36,6 +41,9 @@ class LayerFilterPanel extends StatelessWidget {
   final DisasterType? disasterType;
   final ValueChanged<DisasterType?>? onDisasterTypeChanged;
   final VoidCallback? onOpenSyncStatus;
+  final MapBasemapMode basemapMode;
+  final bool emapVisible;
+  final ValueChanged<MapBasemapMode>? onBasemapModeChanged;
 
   @override
   Widget build(BuildContext context) => SafeArea(
@@ -46,6 +54,15 @@ class LayerFilterPanel extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
             Text('圖層設定', style: Theme.of(context).textTheme.titleLarge),
+            if (onBasemapModeChanged case final onChanged?)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                child: BasemapSelector(
+                  mode: basemapMode,
+                  emapVisible: emapVisible,
+                  onChanged: onChanged,
+                ),
+              ),
             SwitchListTile(
               title: const Text('避難所'),
               value: showShelters,

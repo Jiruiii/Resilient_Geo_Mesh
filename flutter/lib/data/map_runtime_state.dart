@@ -11,6 +11,7 @@ class MapRuntimeState {
     required this.zoomPercentage,
     required this.currentLocation,
     required this.animationEnabled,
+    this.emapVisible = false,
   }) : assert(zoomPercentage >= 0 && zoomPercentage <= 100);
 
   final ThemeMode themeMode;
@@ -18,11 +19,15 @@ class MapRuntimeState {
   final GeoPoint? currentLocation;
   final bool animationEnabled;
 
+  /// Whether the online NLSC EMAP raster covers the offline OSM base map.
+  final bool emapVisible;
+
   MapRuntimeState copyWith({
     ThemeMode? themeMode,
     int? zoomPercentage,
     Object? currentLocation = _unchangedLocation,
     bool? animationEnabled,
+    bool? emapVisible,
   }) => MapRuntimeState(
     themeMode: themeMode ?? this.themeMode,
     zoomPercentage: zoomPercentage ?? this.zoomPercentage,
@@ -31,6 +36,7 @@ class MapRuntimeState {
             ? this.currentLocation
             : currentLocation as GeoPoint?,
     animationEnabled: animationEnabled ?? this.animationEnabled,
+    emapVisible: emapVisible ?? this.emapVisible,
   );
 }
 

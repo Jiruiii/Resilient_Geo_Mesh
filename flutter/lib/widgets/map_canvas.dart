@@ -9,6 +9,7 @@ import 'package:pointer_interceptor/pointer_interceptor.dart';
 import '../data/map_camera_projection.dart';
 import '../data/map_administrative.dart';
 import '../data/map_area_hit_test.dart';
+import '../data/map_basemap.dart';
 import '../data/cwa_county_warning_overlay.dart';
 import '../data/evacuation_models.dart';
 import '../data/map_models.dart';
@@ -24,8 +25,9 @@ import '../data/flutter_test_environment.dart';
 import 'map_layers.dart';
 import 'map_zoom_controls.dart';
 
-/// The single MapLibre renderer used by the app. Remote and raster tile
-/// providers are intentionally absent from this widget.
+/// The single MapLibre renderer used by the app. The offline OSM PMTiles are
+/// always rendered; the optional NLSC EMAP raster only covers them while
+/// [MapRuntimeState.emapVisible] is true.
 class MapCanvas extends StatefulWidget {
   const MapCanvas({
     super.key,
@@ -207,6 +209,9 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
     }
     if (oldWidget.runtimeState.themeMode != widget.runtimeState.themeMode) {
       _loadStyle();
+    }
+    if (oldWidget.runtimeState.emapVisible != widget.runtimeState.emapVisible) {
+      unawaited(_applyEmapVisibility());
     }
     final eventsChanged =
         !_sameEventSnapshot(oldWidget.visibleEvents, widget.visibleEvents);
@@ -1030,6 +1035,7 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
     _markerLayoutReady = false;
     _tilesLoading.value = true;
     _markerLayoutCache.invalidate();
+    unawaited(_applyEmapVisibility());
     await _ensureEventLayers();
     unawaited(_ensureCountyWarningLayer());
     await _ensureRouteLayer();
@@ -1042,6 +1048,22 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
     if (focus != null) {
       _lastFocusRequestId = widget.focusRequestId;
       _scheduleLatestFocus(focus, widget.focusRequestId);
+    }
+  }
+
+  /// The EMAP layer exists in every style; only its visibility follows the
+  /// base map mode, so app overlays are never rebuilt by a base map switch.
+  Future<void> _applyEmapVisibility() async {
+    final controller = _mapController;
+    if (controller == null || !_styleLoaded) return;
+    try {
+      await controller.setLayerVisibility(
+        MapBasemap.emapLayerId,
+        widget.runtimeState.emapVisible,
+      );
+    } on Object catch (error) {
+      // OSM stays visible underneath, so a failed toggle never blanks the map.
+      debugPrint('EMAP base map visibility update failed: $error');
     }
   }
 
@@ -1194,7 +1216,9 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
             fillOpacity: 0.16,
             fillOutlineColor: '#D97706',
           ),
-          belowLayerId: 'taiwan-roads',
+          // Above the EMAP raster (the top base map layer) but below the
+          // NCDR areas and route, whichever base map is visible.
+          belowLayerId: _eventFillLayerReady ? _eventsFillLayerId : null,
           enableInteraction: false,
         );
         if (!_countyStyleIsCurrent(controller, generation)) return;
