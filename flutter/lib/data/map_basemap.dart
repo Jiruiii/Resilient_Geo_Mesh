@@ -25,9 +25,9 @@ enum MapBasemapMode {
   };
 
   String get description => switch (this) {
-    MapBasemapMode.auto => '可連線時使用國土測繪圖資，離線時改用 OSM',
-    MapBasemapMode.emap => '一律使用國土測繪圖資，無法載入處以 OSM 補上',
-    MapBasemapMode.osm => '只使用內建離線地圖，不連網',
+    MapBasemapMode.auto => '有網路用圖資，離線用 OSM',
+    MapBasemapMode.emap => '一律使用線上圖資',
+    MapBasemapMode.osm => '只用內建地圖，不連網',
   };
 
   static MapBasemapMode fromName(String? value) => switch (value) {
@@ -76,10 +76,10 @@ class MapBasemap {
       dark
           ? const <String, Object>{
             'raster-brightness-min': 0.86,
-            'raster-brightness-max': 0.08,
+            'raster-brightness-max': 0.15,
             'raster-hue-rotate': 180,
-            'raster-saturation': -0.35,
-            'raster-contrast': 0.05,
+            'raster-saturation': -0.3,
+            'raster-contrast': -0.05,
           }
           : const <String, Object>{};
 
