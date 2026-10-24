@@ -12,7 +12,8 @@ enum MapBasemapMode {
   /// EMAP while the NLSC tile server answers, otherwise offline OSM.
   auto,
 
-  /// Always draw EMAP; tiles that cannot load reveal the OSM layer below.
+  /// Always draw EMAP, even offline. Viewed areas stay cached; elsewhere
+  /// native MapLibre may stretch low-zoom EMAP tiles instead of showing OSM.
   emap,
 
   /// Offline OSM only, as before EMAP support.
@@ -26,7 +27,7 @@ enum MapBasemapMode {
 
   String get description => switch (this) {
     MapBasemapMode.auto => '有網路用圖資，離線用 OSM',
-    MapBasemapMode.emap => '一律使用線上圖資',
+    MapBasemapMode.emap => '一律用圖資，離線可能模糊',
     MapBasemapMode.osm => '只用內建地圖，不連網',
   };
 
@@ -57,6 +58,7 @@ class MapBasemap {
     'https://wmts.nlsc.gov.tw/wmts/EMAP/default/GoogleMapsCompatible/12/1791/3436',
   );
   static const Duration probeInterval = Duration(seconds: 60);
+  static const Duration cameraProbeThrottle = Duration(seconds: 10);
 
   /// Outside Taiwan NLSC answers with blank tiles; keep OSM visible there.
   static const List<double> emapBounds = <double>[118.0, 21.5, 122.2, 26.5];

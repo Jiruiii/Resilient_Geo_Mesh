@@ -195,6 +195,31 @@ void main() {
       expect(probes, 2);
     });
 
+    test('camera settles re-probe only in auto mode and are throttled', () async {
+      var probes = 0;
+      final controller = MapAppController(
+        bridge: _EmptyVerifiedBridge(),
+        emapProbe: () async {
+          probes += 1;
+          return true;
+        },
+      );
+      addTearDown(controller.dispose);
+      await controller.load();
+      await pumpEventQueue();
+      expect(probes, 1);
+
+      // Just probed: a camera settle inside the throttle window is skipped.
+      controller.refreshEmapReachability();
+      await pumpEventQueue();
+      expect(probes, 1);
+
+      await controller.setBasemapMode(MapBasemapMode.osm);
+      controller.refreshEmapReachability();
+      await pumpEventQueue();
+      expect(probes, 1);
+    });
+
     test('a slow probe finishing after dispose is ignored', () async {
       final controller = MapAppController(
         bridge: _EmptyVerifiedBridge(),

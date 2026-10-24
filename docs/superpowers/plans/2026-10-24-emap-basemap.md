@@ -41,4 +41,5 @@
   - 深色：濾鏡可讀；把暗部從 0.08 調到 0.15，避免純黑。
   - 圖層設定面板與個人設定的「底圖」下拉選單都能切換並同步；手機寬度原說明文字會被截斷，已縮短。
   - 道路搜尋（離線索引）與選取後定位：EMAP／OSM 都正常。
+- ⚠️ 暫時性驗證修改（不得提交，驗完要還原）：`flutter/lib/debug/mesh_drill_app.dart` 有標記 `TEMP-EMAP-VERIFY` 的兩行，讓演練 App 強制 EMAP，用來在 Android 驗證避難所、物資站、路線疊在 EMAP 上。還原：`git checkout -- flutter/lib/debug/mesh_drill_app.dart`。
   - Web 本機無後端，避難所／醫療簽章圖層、feed 為 404（兩種底圖相同，非本次造成），這些點位功能改在 Android 驗。

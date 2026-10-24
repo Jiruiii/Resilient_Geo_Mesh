@@ -182,7 +182,10 @@ class _MapAppHomeState extends State<_MapAppHome> {
                   onBasemapModeChanged: controller.setBasemapMode,
                   active: _selectedIndex == 0,
                   rescueService: controller.rescueService,
-                  onViewportSettled: controller.setRescueViewport,
+                  onViewportSettled: (center) {
+                    controller.setRescueViewport(center);
+                    controller.refreshEmapReachability();
+                  },
                   sirenPanelBuilder:
                       (context, _) => SirenPanel(controller: widget.siren),
                   notificationFocusEvent: _notificationFocusEvent,

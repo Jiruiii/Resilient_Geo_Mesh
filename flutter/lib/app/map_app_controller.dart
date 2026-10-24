@@ -93,6 +93,7 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
   final EmapReachabilityProbe? _emapProbe;
   Timer? _emapProbeTimer;
   bool _emapProbing = false;
+  DateTime? _lastEmapProbeAt;
   final StreamController<List<MeshEvent>> _eventUpdates =
       StreamController<List<MeshEvent>>.broadcast();
 
@@ -837,10 +838,24 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
     });
   }
 
+  /// Called when the map camera settles. Native MapLibre stretches cached
+  /// low-zoom EMAP tiles over areas it cannot fetch, so a lost connection is
+  /// detected at the next pan instead of waiting for the periodic probe.
+  void refreshEmapReachability() {
+    if (basemapMode != MapBasemapMode.auto) return;
+    final last = _lastEmapProbeAt;
+    if (last != null &&
+        DateTime.now().difference(last) < MapBasemap.cameraProbeThrottle) {
+      return;
+    }
+    unawaited(_probeEmap());
+  }
+
   Future<void> _probeEmap() async {
     final probe = _emapProbe;
     if (probe == null || _emapProbing || _disposed) return;
     _emapProbing = true;
+    _lastEmapProbeAt = DateTime.now();
     try {
       final reachable = await probe();
       if (_disposed || reachable == emapReachable) return;

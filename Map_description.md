@@ -66,7 +66,7 @@ z8.5 以下的概覽視野會依裝置畫布大小動態放寬相機邊界，確
 - 程式：`flutter/lib/data/map_basemap.dart` 在載入樣式時把 raster source／layer 加在所有 OSM 圖層之上，預設隱藏；`MapCanvas` 只以 `setLayerVisibility` 切換，不重新載入樣式，因此事件、警報、路線圖層與 Flutter 標記不會重建。
 - 模式：自動（預設）／國土測繪圖資／離線 OSM，存於 SharedPreferences `map.basemap_mode`。自動模式每 60 秒與 App 回到前景時探測一張約 2.4 KB 的海面圖磚（`12/1791/3436`，Web 以 `cache: no-store`），可連線才顯示 EMAP。
 - 深色模式：同一圖層以 raster 濾鏡反轉亮度（`raster-brightness-min` 0.86／`-max` 0.15）、色相轉 180°、降低飽和度。
-- 備援：OSM PMTiles 一律在下方渲染，單張 EMAP 圖磚失敗時顯示 OSM。
+- 備援：OSM PMTiles 一律在下方渲染。Web 單張 EMAP 圖磚失敗時直接露出 OSM；Android 原生 MapLibre 會先把已快取的低 zoom EMAP 放大補位（畫面模糊），所以自動模式除了 60 秒探測，地圖停止移動時也會再探測（最多每 10 秒一次），連不上就隱藏 EMAP。手動「國土測繪圖資」模式不探測，離線時看過的區域用快取、其他區域可能模糊，選單已註明。
 - 圖層順序：CWA 縣市警報面原本放在 OSM `taiwan-roads` 之下，現改為放在 NCDR 警報面之下、所有底圖（含 EMAP）之上，兩種底圖都看得到。OSM 模式下道路線會在 16% 透明的警報面下方。
 - 不變：道路搜尋索引、門牌包與步行路網仍為離線 OSM 資料；路線在 EMAP 上可能與 EMAP 道路有數公尺差異。政府公告選點地圖維持離線 OSM。
 - 授權標示：`© 內政部國土測繪中心`（MapLibre attribution）。
