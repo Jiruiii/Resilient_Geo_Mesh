@@ -122,8 +122,8 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
   bool animationEnabled = true;
   MapBasemapMode basemapMode = MapBasemapMode.auto;
 
-  /// Result of the latest NLSC probe; false until a probe succeeds.
-  bool emapReachable = false;
+  /// Result of the latest NLSC probe; null until the first probe finishes.
+  bool? emapReachable;
   bool get emapVisible =>
       MapBasemap.emapVisible(mode: basemapMode, emapReachable: emapReachable);
   bool nativeBridgeAvailable = false;
@@ -823,13 +823,14 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
     await preferences.setString(_basemapPreference, value.name);
   }
 
-  /// Only auto mode depends on reachability, so other modes stay offline-quiet.
+  /// Offline OSM mode never contacts NLSC; both EMAP modes need reachability
+  /// so they can fall back to OSM offline.
   void _restartEmapProbe() {
     _emapProbeTimer?.cancel();
     _emapProbeTimer = null;
     if (_disposed ||
         _emapProbe == null ||
-        basemapMode != MapBasemapMode.auto) {
+        basemapMode == MapBasemapMode.osm) {
       return;
     }
     unawaited(_probeEmap());
@@ -842,7 +843,7 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
   /// low-zoom EMAP tiles over areas it cannot fetch, so a lost connection is
   /// detected at the next pan instead of waiting for the periodic probe.
   void refreshEmapReachability() {
-    if (basemapMode != MapBasemapMode.auto) return;
+    if (basemapMode == MapBasemapMode.osm) return;
     final last = _lastEmapProbeAt;
     if (last != null &&
         DateTime.now().difference(last) < MapBasemap.cameraProbeThrottle) {

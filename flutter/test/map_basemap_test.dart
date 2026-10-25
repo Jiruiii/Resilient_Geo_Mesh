@@ -120,11 +120,26 @@ void main() {
       );
       expect(
         MapBasemap.emapVisible(mode: MapBasemapMode.emap, emapReachable: false),
-        isTrue,
+        isFalse,
       );
       expect(
         MapBasemap.emapVisible(mode: MapBasemapMode.osm, emapReachable: true),
         isFalse,
+      );
+    });
+
+    test('before the first probe auto waits on OSM and EMAP mode starts on EMAP', () {
+      expect(
+        MapBasemap.emapVisible(mode: MapBasemapMode.auto, emapReachable: null),
+        isFalse,
+      );
+      expect(
+        MapBasemap.emapVisible(mode: MapBasemapMode.emap, emapReachable: null),
+        isTrue,
+      );
+      expect(
+        MapBasemap.emapVisible(mode: MapBasemapMode.emap, emapReachable: true),
+        isTrue,
       );
     });
 
@@ -165,13 +180,14 @@ void main() {
       expect(notifications, greaterThan(0));
     });
 
-    test('manual modes stop probing and persist the choice', () async {
+    test('EMAP mode falls back to OSM offline; OSM mode never probes', () async {
+      var reachable = false;
       var probes = 0;
       final controller = MapAppController(
         bridge: _EmptyVerifiedBridge(),
         emapProbe: () async {
           probes += 1;
-          return false;
+          return reachable;
         },
       );
       addTearDown(controller.dispose);
@@ -179,23 +195,33 @@ void main() {
       await pumpEventQueue();
       expect(probes, 1);
 
+      // Offline: the forced EMAP mode also shows OSM.
       await controller.setBasemapMode(MapBasemapMode.emap);
+      await pumpEventQueue();
+      expect(probes, 2);
+      expect(controller.emapVisible, isFalse);
+
+      reachable = true;
       controller.didChangeAppLifecycleState(AppLifecycleState.resumed);
       await pumpEventQueue();
-      expect(probes, 1);
+      expect(probes, 3);
       expect(controller.emapVisible, isTrue);
 
       await controller.setBasemapMode(MapBasemapMode.osm);
+      controller.didChangeAppLifecycleState(AppLifecycleState.resumed);
+      controller.refreshEmapReachability();
+      await pumpEventQueue();
+      expect(probes, 3);
       expect(controller.emapVisible, isFalse);
       final preferences = await SharedPreferences.getInstance();
       expect(preferences.getString('map.basemap_mode'), 'osm');
 
       await controller.setBasemapMode(MapBasemapMode.auto);
       await pumpEventQueue();
-      expect(probes, 2);
+      expect(probes, 4);
     });
 
-    test('camera settles re-probe only in auto mode and are throttled', () async {
+    test('camera settles re-probe unless offline OSM and are throttled', () async {
       var probes = 0;
       final controller = MapAppController(
         bridge: _EmptyVerifiedBridge(),
@@ -228,7 +254,7 @@ void main() {
       await controller.load();
       controller.dispose();
       await pumpEventQueue();
-      expect(controller.emapReachable, isFalse);
+      expect(controller.emapReachable, isNull);
     });
 
     test('restores a stored mode on load', () async {

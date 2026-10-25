@@ -55,7 +55,7 @@ class MapScreen extends StatefulWidget {
     this.themeMode = ThemeMode.system,
     this.animationEnabled = true,
     this.basemapMode = MapBasemapMode.auto,
-    this.emapReachable = false,
+    this.emapReachable,
     this.onBasemapModeChanged,
     this.active = true,
     this.routeClock,
@@ -84,7 +84,8 @@ class MapScreen extends StatefulWidget {
   final ThemeMode themeMode;
   final bool animationEnabled;
   final MapBasemapMode basemapMode;
-  final bool emapReachable;
+  /// Null until the first NLSC probe finishes.
+  final bool? emapReachable;
   final ValueChanged<MapBasemapMode>? onBasemapModeChanged;
   final bool active;
 

@@ -9,11 +9,12 @@ import 'map_basemap_probe_io.dart'
 /// The offline OSM PMTiles package is always installed underneath; NLSC EMAP
 /// is an optional online raster drawn on top of it.
 enum MapBasemapMode {
-  /// EMAP while the NLSC tile server answers, otherwise offline OSM.
+  /// OSM until a probe confirms NLSC answers, then EMAP.
   auto,
 
-  /// Always draw EMAP, even offline. Viewed areas stay cached; elsewhere
-  /// native MapLibre may stretch low-zoom EMAP tiles instead of showing OSM.
+  /// EMAP until a probe finds NLSC unreachable, then OSM. Offline fallback is
+  /// required because native MapLibre stretches cached low-zoom EMAP tiles
+  /// over areas it cannot fetch instead of revealing OSM.
   emap,
 
   /// Offline OSM only, as before EMAP support.
@@ -27,7 +28,7 @@ enum MapBasemapMode {
 
   String get description => switch (this) {
     MapBasemapMode.auto => '有網路用圖資，離線用 OSM',
-    MapBasemapMode.emap => '一律用圖資，離線可能模糊',
+    MapBasemapMode.emap => '優先用圖資，離線改 OSM',
     MapBasemapMode.osm => '只用內建地圖，不連網',
   };
 
@@ -63,12 +64,13 @@ class MapBasemap {
   /// Outside Taiwan NLSC answers with blank tiles; keep OSM visible there.
   static const List<double> emapBounds = <double>[118.0, 21.5, 122.2, 26.5];
 
+  /// [emapReachable] is null until the first probe finishes.
   static bool emapVisible({
     required MapBasemapMode mode,
-    required bool emapReachable,
+    required bool? emapReachable,
   }) => switch (mode) {
-    MapBasemapMode.auto => emapReachable,
-    MapBasemapMode.emap => true,
+    MapBasemapMode.auto => emapReachable == true,
+    MapBasemapMode.emap => emapReachable != false,
     MapBasemapMode.osm => false,
   };
 
