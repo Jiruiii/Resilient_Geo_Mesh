@@ -39,6 +39,16 @@
 - 選項 1：維持現狀（手動模式＝使用者明確要 EMAP，看過的區域離線仍可用快取）。
 - 選項 2：手動模式離線時也退回 OSM（跟自動模式幾乎相同，差別只剩「不檢查就先顯示」）。
 
+## 2026-10-25 晚：本機 Server 真實資料驗收（Android 模擬器）
+
+- Server：api／collector 用目前程式重建（舊容器 collector 一直 `MEDICAL_LAYER_VERSION_MISMATCH`），`/readyz` ready、feed revision 329。
+- 真實資料疊在 EMAP 上：醫療院所、避難所標記、7 筆事件、CWA 強風縣市警報面（在 EMAP 之上，圖層順序修改有效）。標記位置在 EMAP／OSM 完全一致；OSM 模式畫面與 main 版逐格相同。
+- 找到並修正本次造成的 bug（commit d059960）：圖層面板開著時切換底圖或探測結果改變 → Debug 版紅畫面「setState() called during build」。改為下一個 frame 才刷新面板；新增回歸測試，修正前會失敗、修正後通過；實機切換正常。
+- 流暢度（Debug 版，約 2.5 萬筆設施標記，16 次拖曳）：EMAP p95 77–105 ms；OSM p95 89–117 ms，兩者相同水準。
+- 既有問題（main 也一樣，非本次造成）：
+  1. **全台真實資料下逃生路線計算失敗**：「路線計算失敗，請稍後再試」，logcat 為 Java `OutOfMemoryError`（heap 已用 191/192 MB）。main 版同樣步驟同樣失敗。演練資料（2 筆）時路線正常。需另外討論修正方式。
+  2. **偶發 ANR**：首次下載／驗證約 2.5 萬筆圖層時出現 3 次；之後 main 與分支各 4–5 次啟動皆未重現（start_project.md 也有記載）。
+
 ## 紀錄
 
 - 文件已更新：`flutter/README.md`、`Map_description.md`（新增「線上國土測繪圖資（NLSC EMAP）」章節）。
