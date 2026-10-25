@@ -253,7 +253,11 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
         oldWidget.emapReachable != widget.emapReachable;
     if (basemapChanged) {
       _basemapMode = widget.basemapMode;
-      _layerPanelSetState?.call(() {});
+      // didUpdateWidget runs inside the parent's build; the open layer sheet
+      // may only be marked dirty after this frame.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _layerPanelSetState?.call(() {});
+      });
     }
     final preferencesChanged =
         oldWidget.themeMode != widget.themeMode ||
