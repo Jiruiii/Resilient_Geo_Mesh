@@ -20,6 +20,7 @@ import '../data/evacuation_models.dart';
 import '../data/government_api.dart';
 import '../data/location_controller.dart';
 import '../data/map_administrative.dart';
+import '../data/map_basemap.dart';
 import '../data/map_models.dart';
 import '../data/maplibre_map_config.dart';
 import '../data/map_runtime_state.dart';
@@ -53,6 +54,9 @@ class MapScreen extends StatefulWidget {
     this.locationController,
     this.themeMode = ThemeMode.system,
     this.animationEnabled = true,
+    this.basemapMode = MapBasemapMode.auto,
+    this.emapReachable,
+    this.onBasemapModeChanged,
     this.active = true,
     this.routeClock,
     this.rescueService,
@@ -79,6 +83,10 @@ class MapScreen extends StatefulWidget {
   final LocationController? locationController;
   final ThemeMode themeMode;
   final bool animationEnabled;
+  final MapBasemapMode basemapMode;
+  /// Null until the first NLSC probe finishes.
+  final bool? emapReachable;
+  final ValueChanged<MapBasemapMode>? onBasemapModeChanged;
   final bool active;
 
   /// Deterministic expiry clock for widget tests.
@@ -142,6 +150,8 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     currentLocation: null,
     animationEnabled: true,
   );
+  MapBasemapMode _basemapMode = MapBasemapMode.auto;
+  StateSetter? _layerPanelSetState;
   MapSearchResult? _searchSelection;
   GeoPoint? _focusPoint;
   GeoBounds? _focusBounds;
@@ -199,9 +209,11 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
         _runtimeState = _runtimeState.copyWith(currentLocation: location);
       });
     });
+    _basemapMode = widget.basemapMode;
     _runtimeState = _runtimeState.copyWith(
       themeMode: widget.themeMode,
       animationEnabled: widget.animationEnabled,
+      emapVisible: _emapVisible,
     );
     _load();
   }
@@ -237,16 +249,44 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
         _rebuildSearchIndex();
       });
     }
+    final basemapChanged =
+        oldWidget.basemapMode != widget.basemapMode ||
+        oldWidget.emapReachable != widget.emapReachable;
+    if (basemapChanged) {
+      _basemapMode = widget.basemapMode;
+      // didUpdateWidget runs inside the parent's build; the open layer sheet
+      // may only be marked dirty after this frame.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _layerPanelSetState?.call(() {});
+      });
+    }
     final preferencesChanged =
         oldWidget.themeMode != widget.themeMode ||
         oldWidget.animationEnabled != widget.animationEnabled;
-    if (!preferencesChanged) return;
+    if (!preferencesChanged && !basemapChanged) return;
     setState(() {
       _runtimeState = _runtimeState.copyWith(
         themeMode: preferencesChanged ? widget.themeMode : null,
         animationEnabled: preferencesChanged ? widget.animationEnabled : null,
+        emapVisible: _emapVisible,
       );
     });
+  }
+
+  bool get _emapVisible => MapBasemap.emapVisible(
+    mode: _basemapMode,
+    emapReachable: widget.emapReachable,
+  );
+
+  void _setBasemapMode(MapBasemapMode mode) {
+    final onChanged = widget.onBasemapModeChanged;
+    if (onChanged == null || mode == _basemapMode) return;
+    setState(() {
+      _basemapMode = mode;
+      _runtimeState = _runtimeState.copyWith(emapVisible: _emapVisible);
+    });
+    _layerPanelSetState?.call(() {});
+    onChanged(mode);
   }
 
   @override
@@ -1202,7 +1242,14 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
           (context) => StatefulBuilder(
             builder: (context, modalSetState) {
               updateModal = modalSetState;
+              _layerPanelSetState = modalSetState;
               return LayerFilterPanel(
+                basemapMode: _basemapMode,
+                emapVisible: _emapVisible,
+                onBasemapModeChanged:
+                    widget.onBasemapModeChanged == null
+                        ? null
+                        : _setBasemapMode,
                 showShelters: _showShelters,
                 showMedical: _showMedical,
                 showEvents: _showEvents,
@@ -1255,6 +1302,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
           ),
     );
     panelOpen = false;
+    _layerPanelSetState = null;
   }
 
   Future<void> _openSyncStatus() async {

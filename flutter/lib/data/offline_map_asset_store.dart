@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
+import 'map_basemap.dart';
+import 'maplibre_map_config.dart';
 import 'offline_map_file_system.dart';
 import 'offline_map_manifest.dart';
 
@@ -128,7 +130,10 @@ class OfflineMapAssetStore {
   }) async {
     final styleJson = await _bundle.loadString(styleAsset);
     final labelsJson = await _bundle.loadString(referenceLabelsAsset);
-    final hydratedStyle = injectReferenceLabels(styleJson, labelsJson);
+    final hydratedStyle = MapBasemap.injectEmapLayer(
+      injectReferenceLabels(styleJson, labelsJson),
+      dark: styleAsset == MapLibreMapConfig.darkStyleAsset,
+    );
     if (kIsWeb) return rewriteWebStyleAssetUris(hydratedStyle);
     if (!installNativeAssets) return hydratedStyle;
 

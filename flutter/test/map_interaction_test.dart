@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:resilientgeo_flutter/data/location_controller.dart';
+import 'package:resilientgeo_flutter/data/map_basemap.dart';
 import 'package:resilientgeo_flutter/data/map_models.dart';
 import 'package:resilientgeo_flutter/screens/map_screen.dart';
 import 'package:resilientgeo_flutter/widgets/feature_details_sheet.dart';
@@ -334,6 +335,39 @@ void main() {
     expect(find.bySemanticsLabel('事件：內湖模擬淹水，已過期'), findsNothing);
   });
 
+  testWidgets('base map changes from the parent refresh the open layer panel', (
+    tester,
+  ) async {
+    final host = GlobalKey<_BasemapHostState>();
+    await tester.pumpWidget(MaterialApp(home: _BasemapHost(key: host)));
+    await _finishMapLoad(tester);
+
+    await tester.tap(find.bySemanticsLabel('圖層設定'));
+    await tester.pumpAndSettle();
+    expect(find.text('目前：離線 OSM'), findsOneWidget);
+
+    // A probe result arriving while the sheet is open rebuilds MapScreen.
+    host.currentState!.setReachable(true);
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(find.textContaining('目前：國土測繪圖資'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey<String>('basemap-selector')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.textContaining('離線 OSM｜').last);
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(host.currentState!.mode, MapBasemapMode.osm);
+    expect(find.text('目前：離線 OSM'), findsOneWidget);
+    expect(
+      tester
+          .widget<MapCanvas>(find.byType(MapCanvas))
+          .runtimeState
+          .emapVisible,
+      isFalse,
+    );
+  });
+
   testWidgets('county warning area switch keeps its own state', (tester) async {
     await tester.pumpWidget(_testApp(features: const <StaticFeature>[]));
     await _finishMapLoad(tester);
@@ -525,6 +559,39 @@ Widget _testApp({
     notificationFocusRequestId: notificationFocusRequestId,
   ),
 );
+
+/// Mirrors MapAppController: the parent owns the mode and reachability and
+/// rebuilds MapScreen when either changes.
+class _BasemapHost extends StatefulWidget {
+  const _BasemapHost({super.key});
+
+  @override
+  State<_BasemapHost> createState() => _BasemapHostState();
+}
+
+class _BasemapHostState extends State<_BasemapHost> {
+  MapBasemapMode mode = MapBasemapMode.auto;
+  bool reachable = false;
+
+  void setReachable(bool value) => setState(() => reachable = value);
+
+  @override
+  Widget build(BuildContext context) => MapScreen(
+    staticFeatures: const StaticFeatureCollection(
+      schemaVersion: 'test',
+      datasetId: 'test',
+      snapshotAt: '2026-09-05T00:00:00Z',
+      features: <StaticFeature>[],
+    ),
+    initialState: const MapInitialState(
+      events: <MeshEvent>[],
+      emergencyModeEnabled: false,
+    ),
+    basemapMode: mode,
+    emapReachable: reachable,
+    onBasemapModeChanged: (value) => setState(() => mode = value),
+  );
+}
 
 class _FakeLocationController extends LocationController {
   _FakeLocationController(this.result);

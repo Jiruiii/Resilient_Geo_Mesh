@@ -7,6 +7,7 @@ ResilientGeo 的 Flutter add-to-app 地圖模組；Android host 位於 `../andro
 ## 目前狀態
 
 - OSM 向量底圖、樣式、glyph、sprite 和 PMTiles 隨 Flutter／Android App 提供；地圖 zoom、相機中心及經緯度限制記錄在 [Map_description.md](../Map_description.md)。
+- 2026-10-24：新增選用的線上底圖「國土測繪圖資（NLSC EMAP WMTS）」。它是疊在內建 OSM 之上的 raster 圖層，只切換可見度，不重新載入樣式；底圖模式有「自動」（預設）、「國土測繪圖資」、「離線 OSM」三種，可在「個人設定」或地圖的「圖層設定」切換。兩種 EMAP 模式都會在每 60 秒、回到前景與地圖停止移動時探測 NLSC，連不上就改顯示 OSM；差別是第一次探測完成前，「自動」先顯示 OSM、「國土測繪圖資」先顯示 EMAP。「離線 OSM」完全不連網。細節見 [Map_description.md](../Map_description.md#線上國土測繪圖資nlsc-emap)。
 - 政府事件 feed、簽章避難所／醫療圖層與簽章縣市門牌包維持獨立資料流程。它們仍透過 Web／Android 的驗簽 client 與 Server/API 串接；底圖不走該下載服務。資料來源與目前驗證狀態見 [資料說明](../data_description.md)、[點位涵蓋報告](../docs/data-coverage-2026-10-04.md) 與 [Central Server runbook](../docs/central-server-runbook.md)。
 - 道路名稱搜尋使用隨 App 提供的 OSM 搜尋索引；門牌搜尋依使用者已取得的縣市包；步行路線另用雙北路網，不從底圖推算道路幾何。道路索引與路網產生方式見 [地圖工具說明](../tools/maps/README.md) 和[雙北路線文件](../docs/taipei-offline-routing.md)。
 - 搜尋在背景 isolate 執行，marker projection 與行政區聚合使用快取；跨機型效能和完整實機離線流程仍須依裝置驗收。

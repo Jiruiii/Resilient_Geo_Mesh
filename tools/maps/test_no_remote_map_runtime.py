@@ -4,6 +4,11 @@
 This is intentionally narrower than a repository-wide URL audit. Documentation,
 build output, package caches, and the vendored MapLibre distribution are not
 application runtime wiring and are therefore outside this check.
+
+The single sanctioned online tile host is the NLSC EMAP raster
+(wmts.nlsc.gov.tw), injected at runtime by flutter/lib/data/map_basemap.dart
+above the offline OSM PMTiles. It is optional: the offline layers always render
+underneath, so the map never depends on it. Any other tile host is rejected.
 """
 
 from __future__ import annotations
@@ -35,6 +40,11 @@ FORBIDDEN_PATTERNS = (
     re.compile(
         r"https?://[^\s\"']*(?:tile|tiles)[^\s\"']*"
         r"(?:openstreetmap|osm\.org)",
+        re.IGNORECASE,
+    ),
+    # Any WMTS/tile endpoint other than the optional NLSC EMAP base map.
+    re.compile(
+        r"https?://(?!wmts\.nlsc\.gov\.tw/)[^\s\"']*(?:/wmts/|\{z\})",
         re.IGNORECASE,
     ),
 )

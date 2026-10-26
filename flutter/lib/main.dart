@@ -177,9 +177,15 @@ class _MapAppHomeState extends State<_MapAppHome> {
                   eventUpdates: controller.eventUpdates,
                   themeMode: controller.themeMode,
                   animationEnabled: controller.animationEnabled,
+                  basemapMode: controller.basemapMode,
+                  emapReachable: controller.emapReachable,
+                  onBasemapModeChanged: controller.setBasemapMode,
                   active: _selectedIndex == 0,
                   rescueService: controller.rescueService,
-                  onViewportSettled: controller.setRescueViewport,
+                  onViewportSettled: (center) {
+                    controller.setRescueViewport(center);
+                    controller.refreshEmapReachability();
+                  },
                   sirenPanelBuilder:
                       (context, _) => SirenPanel(controller: widget.siren),
                   notificationFocusEvent: _notificationFocusEvent,
@@ -210,6 +216,9 @@ class _MapAppHomeState extends State<_MapAppHome> {
                   animationEnabled: controller.animationEnabled,
                   onThemeModeChanged: controller.setThemeMode,
                   onAnimationChanged: controller.setAnimationEnabled,
+                  basemapMode: controller.basemapMode,
+                  emapVisible: controller.emapVisible,
+                  onBasemapModeChanged: controller.setBasemapMode,
                 ),
               ],
             ),
