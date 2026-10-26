@@ -18,8 +18,26 @@ abstract interface class LocationGateway {
   Stream<GeoPoint> get locationUpdates;
 }
 
+/// Reads one position; injectable so the Android fallback can be tested.
+typedef PositionReader = Future<Position> Function(LocationSettings settings);
+
 class GeolocatorLocationGateway implements LocationGateway {
-  const GeolocatorLocationGateway();
+  GeolocatorLocationGateway({PositionReader? readPosition, bool? android})
+    : _readPosition = readPosition ?? _readGeolocatorPosition,
+      _android =
+          android ??
+          (!kIsWeb && defaultTargetPlatform == TargetPlatform.android);
+
+  final PositionReader _readPosition;
+  final bool _android;
+
+  /// Set once Google's fused provider has failed. Declining the Location
+  /// Accuracy prompt makes every fused request fail even though GPS works,
+  /// while Android's own LocationManager needs no such consent.
+  bool _useLocationManager = false;
+
+  static Future<Position> _readGeolocatorPosition(LocationSettings settings) =>
+      Geolocator.getCurrentPosition(locationSettings: settings);
 
   @override
   Future<LocationPermission> checkPermission() => Geolocator.checkPermission();
@@ -39,14 +57,32 @@ class GeolocatorLocationGateway implements LocationGateway {
         /* A missing cached fix does not prevent requesting GPS. */
       }
     }
-    final position = await Geolocator.getCurrentPosition(
-      locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.high,
-        timeLimit: Duration(seconds: 10),
-      ),
-    );
-    return _toGeoPoint(position);
+    try {
+      return _toGeoPoint(await _readPosition(_settings()));
+    } on PermissionDeniedException {
+      rethrow;
+    } on Object {
+      if (!_android || _useLocationManager) rethrow;
+      _useLocationManager = true;
+      return _toGeoPoint(await _readPosition(_settings()));
+    }
   }
+
+  LocationSettings _settings({int? distanceFilter}) =>
+      _useLocationManager
+          ? AndroidSettings(
+            accuracy: LocationAccuracy.high,
+            distanceFilter: distanceFilter ?? 0,
+            timeLimit:
+                distanceFilter == null ? const Duration(seconds: 10) : null,
+            forceLocationManager: true,
+          )
+          : LocationSettings(
+            accuracy: LocationAccuracy.high,
+            distanceFilter: distanceFilter ?? 0,
+            timeLimit:
+                distanceFilter == null ? const Duration(seconds: 10) : null,
+          );
 
   static bool canUseCachedPosition(Position position, {required DateTime now}) {
     final age = now.difference(position.timestamp);
@@ -63,10 +99,7 @@ class GeolocatorLocationGateway implements LocationGateway {
 
   @override
   Stream<GeoPoint> get locationUpdates => Geolocator.getPositionStream(
-    locationSettings: const LocationSettings(
-      accuracy: LocationAccuracy.high,
-      distanceFilter: 5,
-    ),
+    locationSettings: _settings(distanceFilter: 5),
   ).map(_toGeoPoint);
 
   @override
@@ -77,7 +110,7 @@ class GeolocatorLocationGateway implements LocationGateway {
 /// Requests device location only in response to an explicit user action.
 class LocationController {
   LocationController({LocationGateway? gateway, bool? webPlatform})
-    : _gateway = gateway ?? const GeolocatorLocationGateway(),
+    : _gateway = gateway ?? GeolocatorLocationGateway(),
       _webPlatform = webPlatform ?? kIsWeb;
 
   final LocationGateway _gateway;

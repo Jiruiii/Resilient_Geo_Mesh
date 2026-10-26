@@ -17,6 +17,7 @@ class FeatureDetailsSheet extends StatelessWidget {
     required this.snapshotAt,
     required this.onClose,
     this.onPlanEvacuationRoute,
+    this.onPlanWalkingRoute,
     this.areaDirectory,
   }) : _feature = feature,
        _event = null,
@@ -29,6 +30,7 @@ class FeatureDetailsSheet extends StatelessWidget {
     required this.onClose,
     this.corroboration,
     this.confirmedEarlierVersion = false,
+    this.onPlanWalkingRoute,
     this.areaDirectory,
   }) : _event = event,
        _feature = null,
@@ -40,6 +42,9 @@ class FeatureDetailsSheet extends StatelessWidget {
   final String? snapshotAt;
   final VoidCallback onClose;
   final VoidCallback? onPlanEvacuationRoute;
+
+  /// Walking directions to a medical facility or supply point; null hides it.
+  final VoidCallback? onPlanWalkingRoute;
   final TaiwanAdministrativeAreaDirectory? areaDirectory;
 
   /// 「N 人回報」 for a crowd report several devices agree on; never a verdict.
@@ -152,8 +157,8 @@ class FeatureDetailsSheet extends StatelessWidget {
         _DetailLine('地址', _text(details['address'])),
         _DetailLine('來源', _text(details['source'])),
         _DetailLine('更新時間', formatUpdateTime(snapshotAt)),
-        if (feature.geometry is PointGeometry)
-          const _WalkingRouteUnavailableButton(),
+        if (onPlanWalkingRoute != null)
+          _WalkingRouteButton(onPressed: onPlanWalkingRoute!),
       ];
     }
     if (kind == 'medical-directory') {
@@ -197,8 +202,8 @@ class FeatureDetailsSheet extends StatelessWidget {
         _DetailLine('地址', SupplyStatus(event).address),
         _DetailLine('發布單位', SupplyStatus(event).issuer),
         const Text('供應資訊可能已變更；未知數量不代表沒有物資。'),
-        if (event.geometry is PointGeometry)
-          const _WalkingRouteUnavailableButton(),
+        if (onPlanWalkingRoute != null)
+          _WalkingRouteButton(onPressed: onPlanWalkingRoute!),
       ],
       if (isCrowdEvent(event)) ...<Widget>[
         _VerificationNotice(event.verification ?? CrowdVerification.unverified),
@@ -214,8 +219,8 @@ class FeatureDetailsSheet extends StatelessWidget {
         _DetailLine('影響範圍', _governmentAnnouncementArea(event)),
         if (event.attributes?['content'] is String)
           _DetailLine('公告內容', _text(event.attributes?['content'])),
-        if (isSupplyStationEvent(event) && event.geometry is PointGeometry)
-          const _WalkingRouteUnavailableButton(),
+        if (isSupplyStationEvent(event) && onPlanWalkingRoute != null)
+          _WalkingRouteButton(onPressed: onPlanWalkingRoute!),
       ],
       _DetailLine('事件類型', _text(event.eventType)),
       if (!isSupplyStationEvent(event))
@@ -313,8 +318,10 @@ class FeatureDetailsSheet extends StatelessWidget {
   ];
 }
 
-class _WalkingRouteUnavailableButton extends StatelessWidget {
-  const _WalkingRouteUnavailableButton();
+class _WalkingRouteButton extends StatelessWidget {
+  const _WalkingRouteButton({required this.onPressed});
+
+  final VoidCallback onPressed;
 
   @override
   Widget build(BuildContext context) => Padding(
@@ -324,21 +331,7 @@ class _WalkingRouteUnavailableButton extends StatelessWidget {
       height: 36,
       child: OutlinedButton.icon(
         key: const ValueKey<String>('plan-walking-route'),
-        onPressed:
-            () => showDialog<void>(
-              context: context,
-              builder:
-                  (dialogContext) => AlertDialog(
-                    title: const Text('路線規劃尚未開放'),
-                    content: const Text('此地點的步行路線規劃尚未開放'),
-                    actions: <Widget>[
-                      TextButton(
-                        onPressed: () => Navigator.of(dialogContext).pop(),
-                        child: const Text('知道了'),
-                      ),
-                    ],
-                  ),
-            ),
+        onPressed: onPressed,
         style: OutlinedButton.styleFrom(
           minimumSize: Size.zero,
           padding: const EdgeInsets.symmetric(horizontal: 12),

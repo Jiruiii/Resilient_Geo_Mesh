@@ -63,6 +63,9 @@ class _RouteValidationAppState extends State<_RouteValidationApp> {
                       'open': '開放測試',
                       'expiry': '到期測試',
                       'burst': '連續更新測試',
+                      'supply-move': '物資站移動',
+                      'supply-retract': '物資站撤回',
+                      'supply-reset': '物資站重設',
                     }.entries)
                   TextButton(
                     onPressed: () => _change(entry.key),
@@ -106,6 +109,15 @@ class _RouteValidationAppState extends State<_RouteValidationApp> {
                         GeoPoint(longitude: 121.5920, latitude: 25.0600),
                       ),
                       fields: {'name': '測試避難所 B'},
+                      properties: null,
+                    ),
+                    StaticFeature(
+                      id: 'validation:medical',
+                      kind: 'medical',
+                      geometry: PointGeometry(
+                        GeoPoint(longitude: 121.5945, latitude: 25.0625),
+                      ),
+                      fields: {'name': '測試醫療點', 'facility_type': '診所'},
                       properties: null,
                     ),
                   ],

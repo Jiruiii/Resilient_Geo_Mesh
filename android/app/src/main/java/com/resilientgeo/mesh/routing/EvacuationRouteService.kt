@@ -7,12 +7,25 @@ import kotlinx.coroutines.sync.withLock
 import java.time.Instant
 import java.time.temporal.ChronoUnit
 
+/** What the walker is heading to; only shelters carry opening status and disaster eligibility. */
+enum class RouteDestinationKind(val wire: String) {
+    SHELTER("shelter"),
+    MEDICAL("medical"),
+    SUPPLY("supply"),
+    ;
+
+    companion object {
+        fun fromWire(value: String): RouteDestinationKind? = entries.firstOrNull { it.wire == value }
+    }
+}
+
 data class RouteRequest(
     val origin: LonLat,
     val destinationId: String,
     val destination: LonLat,
     val mode: String,
     val disasterType: String? = null,
+    val destinationKind: RouteDestinationKind = RouteDestinationKind.SHELTER,
 )
 
 /**
@@ -46,7 +59,8 @@ class EvacuationRouteService(
         ) {
             return@withLock RouteResult.failure(RouteStatus.INVALID_INPUT, snapshotAt)
         }
-        val eligibilityWarning = request.disasterType?.let { type ->
+        val toShelter = request.destinationKind == RouteDestinationKind.SHELTER
+        val eligibilityWarning = request.disasterType?.takeIf { toShelter }?.let { type ->
             val catalog = shelterCatalog ?: shelterCatalogProvider().also { shelterCatalog = it }
             catalog.warning(request.destinationId, request.destination, type)
         }
@@ -75,9 +89,10 @@ class EvacuationRouteService(
             overlay = overlay,
             origin = request.origin,
             destination = request.destination,
-            shelter = ShelterState.resolve(request.destination, events),
+            shelter = if (toShelter) ShelterState.resolve(request.destination, events) else null,
             snapshotAt = snapshotAt,
             workspace = workspace ?: EvacuationRouter.SearchWorkspace(loaded.nodeCount).also { workspace = it },
+            destinationKind = request.destinationKind,
         )
         if (eligibilityWarning == null) route else route.copy(warnings = route.warnings + eligibilityWarning)
     }

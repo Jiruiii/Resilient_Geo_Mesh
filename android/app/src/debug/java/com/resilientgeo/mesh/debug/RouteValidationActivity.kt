@@ -20,13 +20,15 @@ class RouteValidationActivity : FlutterFragmentActivity() {
     private var eventSink: EventChannel.EventSink? = null
     private var event: Map<String, Any?>? = null
     private var version = 0
+    private var supply: Map<String, Any?>? = supplyStation(version = 1, lon = 121.5880, lat = 25.0595)
+    private var supplyVersion = 1
     private var calls = 0
     private var assetBridge: OfflineMapAssetBridge? = null
     private var routeService: EvacuationRouteService? = null
     private fun service(): EvacuationRouteService = routeService ?: run {
         EvacuationRouteService(EvacuationRouteService.assetGraphLoader(applicationContext), {
             // Copy on the main dispatcher: fixture updates and snapshots cannot race.
-            withContext(Dispatchers.Main.immediate) { event?.let { listOf(JSONObject(it).toString()) } ?: emptyList() }
+            withContext(Dispatchers.Main.immediate) { fixtureEvents().map { JSONObject(it).toString() } }
         }).also { routeService = it }
     }
 
@@ -77,7 +79,16 @@ class RouteValidationActivity : FlutterFragmentActivity() {
                     result.notImplemented()
                 } else {
                     val phase = call.arguments as? String
-                    if (phase !in setOf("full", "open", "expiry", "burst")) {
+                    if (phase in setOf("supply-reset", "supply-move", "supply-retract")) {
+                        supplyVersion++
+                        supply = when (phase) {
+                            "supply-move" -> supplyStation(supplyVersion, lon = 121.5865, lat = 25.0620)
+                            "supply-retract" -> supplyStation(supplyVersion, lon = 121.5880, lat = 25.0595, retracted = true)
+                            else -> supplyStation(supplyVersion, lon = 121.5880, lat = 25.0595)
+                        }
+                        publish()
+                        result.success(null)
+                    } else if (phase !in setOf("full", "open", "expiry", "burst")) {
                         result.error("invalid_input", "Unknown fixture phase", null)
                     } else {
                         repeat(if (phase == "burst") 3 else 1) {
@@ -100,7 +111,34 @@ class RouteValidationActivity : FlutterFragmentActivity() {
             }
     }
 
-    private fun publish() { eventSink?.success(event?.let(::listOf) ?: emptyList<Any>()) }
+    private fun fixtureEvents(): List<Map<String, Any?>> = listOfNotNull(event, supply)
+
+    private fun publish() { eventSink?.success(fixtureEvents()) }
+
+    /**
+     * A supply station announcement shaped like the central publisher's. A
+     * retraction is republished with an immediate expiry, as the publisher does.
+     */
+    private fun supplyStation(version: Int, lon: Double, lat: Double, retracted: Boolean = false): Map<String, Any?> {
+        val now = Instant.now()
+        return mapOf(
+            "namespace" to "official.announcement", "event_id" to "validation:supply-station",
+            "event_version" to version, "event_type" to "GOVERNMENT_ANNOUNCEMENT",
+            "severity" to "LOW", "source" to "GOVERNMENT",
+            "issued_at" to now.minusSeconds(60).toString(),
+            "expires_at" to (if (retracted) now else now.plusSeconds(3600)).toString(),
+            "apply_state" to if (retracted) "EXPIRED" else "CURRENT",
+            "payload_hash" to "sha256:validation-supply-$version",
+            "geometry" to mapOf("type" to "Point", "coordinates" to listOf(lon, lat)),
+            "attributes" to buildMap<String, Any?> {
+                put("category", "SUPPLY_STATION")
+                put("has_map_location", true)
+                put("title", "測試物資站")
+                put("content", "路線實機測試用物資站公告")
+                if (retracted) put("publication_retracted", true)
+            },
+        )
+    }
 
     override fun onDestroy() {
         scope.cancel()

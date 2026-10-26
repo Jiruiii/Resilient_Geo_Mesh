@@ -14,6 +14,7 @@ class EvacuationRouteSheet extends StatelessWidget {
     this.loadingMessage,
     this.updateNotice,
     this.destinationName,
+    this.destinationKind = RouteDestinationKind.shelter,
     required this.onRecalculate,
     required this.onClose,
   });
@@ -25,8 +26,12 @@ class EvacuationRouteSheet extends StatelessWidget {
   final String? loadingMessage;
   final String? updateNotice;
   final String? destinationName;
+  final RouteDestinationKind destinationKind;
   final VoidCallback? onRecalculate;
   final VoidCallback? onClose;
+
+  bool get _evacuation => destinationKind == RouteDestinationKind.shelter;
+  String get _title => _evacuation ? '逃生路線' : '步行路線';
 
   @override
   Widget build(BuildContext context) => Material(
@@ -44,6 +49,13 @@ class EvacuationRouteSheet extends StatelessWidget {
             const SizedBox(height: 10),
             if (destinationName != null) ...[
               Text('目的地：$destinationName'),
+              const SizedBox(height: 8),
+            ],
+            if (!_evacuation) ...[
+              const Text(
+                '此路線僅供步行參考，不是官方疏散指示',
+                key: ValueKey<String>('walking-route-disclaimer'),
+              ),
               const SizedBox(height: 8),
             ],
             if (updateNotice != null) ...[
@@ -67,7 +79,7 @@ class EvacuationRouteSheet extends StatelessWidget {
   Widget _header(BuildContext context) => Row(
     children: <Widget>[
       Expanded(
-        child: Text('逃生路線', style: Theme.of(context).textTheme.titleLarge),
+        child: Text(_title, style: Theme.of(context).textTheme.titleLarge),
       ),
       if (onClose != null)
         IconButton(
@@ -80,7 +92,7 @@ class EvacuationRouteSheet extends StatelessWidget {
 
   Widget _loadingBody() => Semantics(
     liveRegion: true,
-    label: '正在計算逃生路線',
+    label: '正在計算$_title',
     child: Row(
       children: <Widget>[
         const SizedBox(
@@ -89,7 +101,7 @@ class EvacuationRouteSheet extends StatelessWidget {
           child: CircularProgressIndicator(strokeWidth: 2),
         ),
         const SizedBox(width: 10),
-        Expanded(child: Text(loadingMessage ?? '正在計算逃生路線…')),
+        Expanded(child: Text(loadingMessage ?? '正在計算$_title…')),
       ],
     ),
   );
@@ -164,7 +176,8 @@ class EvacuationRouteSheet extends StatelessWidget {
     EvacuationRouteStatus.ok => null,
     EvacuationRouteStatus.noRoute => '找不到可達路線',
     EvacuationRouteStatus.graphUnavailable => '離線路網尚未載入',
-    EvacuationRouteStatus.invalidInput => '起點或避難所資料不完整',
+    EvacuationRouteStatus.invalidInput =>
+      _evacuation ? '起點或避難所資料不完整' : '起點或目的地資料不完整',
   };
 
   String _distanceText(double? distanceM) {

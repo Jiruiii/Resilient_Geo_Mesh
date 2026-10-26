@@ -753,6 +753,197 @@ void main() {
       expect(find.text('距離：1.2 公里'), findsOneWidget);
     },
   );
+  testWidgets('routes to a medical facility as a plain walking route', (
+    tester,
+  ) async {
+    final bridge = _RouteBridge(result: _okRoute());
+    await tester.pumpWidget(
+      _app(bridge: bridge, features: const <StaticFeature>[_shelter, _medical]),
+    );
+    await _finishLoad(tester);
+
+    await _openWalkingDetails(tester, '慈安診所');
+    await tester.tap(find.text('規劃步行路線'));
+    await tester.pump();
+
+    expect(bridge.routeCalls, 1);
+    expect(bridge.lastDestination?.id, 'medical:test');
+    expect(bridge.lastDestination?.kind, RouteDestinationKind.medical);
+    expect(bridge.lastDisasterType, isNull);
+    expect(find.text('步行路線'), findsOneWidget);
+    expect(find.text('目的地：慈安診所'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey<String>('walking-route-disclaimer')),
+      findsOneWidget,
+    );
+    expect(find.text('距離：1.2 公里'), findsOneWidget);
+  });
+
+  testWidgets('a requested route moves the camera onto it', (tester) async {
+    final updates = StreamController<List<MeshEvent>>.broadcast();
+    addTearDown(updates.close);
+    final bridge = _RouteBridge(result: _okRoute());
+    await tester.pumpWidget(_app(bridge: bridge, eventUpdates: updates.stream));
+    await _finishLoad(tester);
+    final before = tester.widget<MapCanvas>(find.byType(MapCanvas));
+    await _openShelterDetails(tester, '測試避難所');
+    await tester.tap(find.text('規劃逃生路線'));
+    await tester.pump();
+
+    final canvas = tester.widget<MapCanvas>(find.byType(MapCanvas));
+    expect(canvas.focusRequestId, greaterThan(before.focusRequestId));
+    expect(canvas.focusBounds?.southwest.longitude, closeTo(121.5, 1e-9));
+    expect(canvas.focusBounds?.northeast.latitude, closeTo(25.083506, 1e-9));
+
+    // An automatic refresh keeps the camera where the user has moved it.
+    final focused = canvas.focusRequestId;
+    updates.add(<MeshEvent>[_event('road:one', 1)]);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 601));
+    expect(bridge.routeCalls, 2);
+    expect(
+      tester.widget<MapCanvas>(find.byType(MapCanvas)).focusRequestId,
+      focused,
+    );
+  });
+
+  testWidgets('Chrome explains that walking routes need the Android App', (
+    tester,
+  ) async {
+    final bridge = _RouteBridge(
+      failure: const BridgeFailure(
+        code: BridgeFailureCode.unavailable,
+        message: 'missing plugin',
+      ),
+    );
+    await tester.pumpWidget(
+      _app(bridge: bridge, features: const <StaticFeature>[_medical]),
+    );
+    await _finishLoad(tester);
+    await _openWalkingDetails(tester, '慈安診所');
+    await tester.tap(find.text('規劃步行路線'));
+    await tester.pump();
+
+    expect(find.text('此功能需要 Android App，Chrome 僅供地圖與資料預覽'), findsOneWidget);
+    expect(find.textContaining('距離：'), findsNothing);
+  });
+
+  testWidgets('routes to a supply station announcement', (tester) async {
+    final bridge = _RouteBridge(result: _okRoute());
+    await tester.pumpWidget(
+      _app(bridge: bridge, events: <MeshEvent>[_supply(1)]),
+    );
+    await _finishLoad(tester);
+    await _openWalkingDetails(tester, '事件：物資發放點');
+    await tester.tap(find.text('規劃步行路線'));
+    await tester.pump();
+
+    expect(bridge.routeCalls, 1);
+    expect(bridge.lastDestination?.kind, RouteDestinationKind.supply);
+    expect(
+      bridge.lastDestination?.location,
+      const GeoPoint(longitude: 121.56, latitude: 25.06),
+    );
+    expect(bridge.lastDisasterType, isNull);
+    expect(find.text('步行路線'), findsOneWidget);
+    expect(find.text('目的地：物資發放點'), findsOneWidget);
+    expect(find.text('距離：1.2 公里'), findsOneWidget);
+  });
+
+  testWidgets('a supply status update automatically refreshes the route', (
+    tester,
+  ) async {
+    final updates = StreamController<List<MeshEvent>>.broadcast();
+    addTearDown(updates.close);
+    final bridge = _RouteBridge(result: _okRoute());
+    await tester.pumpWidget(
+      _app(
+        bridge: bridge,
+        events: <MeshEvent>[_supply(1)],
+        eventUpdates: updates.stream,
+      ),
+    );
+    await _finishLoad(tester);
+    await _openWalkingDetails(tester, '事件：物資發放點');
+    await tester.tap(find.text('規劃步行路線'));
+    await tester.pump();
+
+    updates.add(<MeshEvent>[_supply(2, longitude: 121.565)]);
+    await tester.pump();
+    expect(find.text('物資狀態更新，正在自動重新規劃'), findsOneWidget);
+    expect(find.text('正在更新步行路線…'), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 601));
+
+    expect(bridge.routeCalls, 2);
+    expect(find.text('物資狀態更新，已自動重新規劃'), findsOneWidget);
+    // The moved station is routed to at its new point, not the tapped one.
+    expect(
+      bridge.lastDestination?.location,
+      const GeoPoint(longitude: 121.565, latitude: 25.06),
+    );
+  });
+
+  testWidgets('other supply points do not refresh a supply route', (
+    tester,
+  ) async {
+    final updates = StreamController<List<MeshEvent>>.broadcast();
+    addTearDown(updates.close);
+    final bridge = _RouteBridge(result: _okRoute());
+    await tester.pumpWidget(
+      _app(
+        bridge: bridge,
+        events: <MeshEvent>[_supply(1)],
+        eventUpdates: updates.stream,
+      ),
+    );
+    await _finishLoad(tester);
+    await _openWalkingDetails(tester, '事件：物資發放點');
+    await tester.tap(find.text('規劃步行路線'));
+    await tester.pump();
+
+    updates.add(<MeshEvent>[_supply(1), _supply(1, id: 'supply:other')]);
+    await tester.pump(const Duration(seconds: 2));
+    expect(bridge.routeCalls, 1);
+  });
+
+  testWidgets('a withdrawn supply point stops routing with a reason', (
+    tester,
+  ) async {
+    final updates = StreamController<List<MeshEvent>>.broadcast();
+    addTearDown(updates.close);
+    final bridge = _RouteBridge(result: _okRoute());
+    await tester.pumpWidget(
+      _app(
+        bridge: bridge,
+        events: <MeshEvent>[_supply(1)],
+        eventUpdates: updates.stream,
+      ),
+    );
+    await _finishLoad(tester);
+    await _openWalkingDetails(tester, '事件：物資發放點');
+    await tester.tap(find.text('規劃步行路線'));
+    await tester.pump();
+
+    updates.add(<MeshEvent>[_supply(2, retracted: true)]);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 601));
+
+    expect(bridge.routeCalls, 1);
+    expect(find.text('此物資點已撤回或不再提供'), findsOneWidget);
+    expect(find.text('事件到期，已停止規劃'), findsOneWidget);
+    expect(find.textContaining('請重試'), findsNothing);
+    expect(
+      find.byKey(const ValueKey('recalculate-evacuation-route')),
+      findsNothing,
+    );
+    expect(tester.widget<MapCanvas>(find.byType(MapCanvas)).route, isNull);
+  });
+}
+
+Future<void> _openWalkingDetails(WidgetTester tester, String label) async {
+  await tester.tap(find.bySemanticsLabel(label));
+  await tester.pump();
+  expect(find.text('規劃步行路線'), findsOneWidget);
 }
 
 Future<void> _openShelterDetails(WidgetTester tester, String name) async {
@@ -966,4 +1157,41 @@ const _shelterC = StaticFeature(
   geometry: PointGeometry(GeoPoint(longitude: 121.53, latitude: 25.03)),
   fields: <String, dynamic>{'name': '候選 C'},
   properties: null,
+);
+
+const _medical = StaticFeature(
+  id: 'medical:test',
+  kind: 'medical',
+  geometry: PointGeometry(GeoPoint(longitude: 121.57, latitude: 25.07)),
+  fields: <String, dynamic>{'name': '慈安診所'},
+  properties: null,
+);
+
+MeshEvent _supply(
+  int version, {
+  String id = 'supply:test',
+  double longitude = 121.56,
+  bool retracted = false,
+}) => MeshEvent(
+  namespace: 'official.announcement',
+  eventId: id,
+  eventVersion: version,
+  eventType: 'GOVERNMENT_ANNOUNCEMENT',
+  severity: 'LOW',
+  source: 'GOVERNMENT',
+  issuedAt: '2026-10-20T00:00:00Z',
+  expiresAt: retracted ? '2026-10-21T00:00:00Z' : '2099-01-01T00:00:00Z',
+  applyState: retracted ? 'EXPIRED' : 'CURRENT',
+  geometry: PointGeometry(
+    id == 'supply:test'
+        ? GeoPoint(longitude: longitude, latitude: 25.06)
+        : const GeoPoint(longitude: 121.58, latitude: 25.05),
+  ),
+  attributes: <String, dynamic>{
+    'category': 'SUPPLY_STATION',
+    'has_map_location': true,
+    'title': id == 'supply:test' ? '物資發放點' : '另一物資點',
+    if (retracted) 'publication_retracted': true,
+  },
+  payloadHash: 'sha256:$id:$version:$longitude',
 );

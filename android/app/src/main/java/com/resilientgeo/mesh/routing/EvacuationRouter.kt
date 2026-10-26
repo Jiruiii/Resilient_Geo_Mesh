@@ -65,7 +65,8 @@ data class ShelterState(val availability: Availability, val event: RouteEvent?) 
 }
 
 /**
- * Walking route from an origin to one shelter over [RoadGraph] + [HazardOverlay].
+ * Walking route from an origin to one shelter, medical facility or supply
+ * point over [RoadGraph] + [HazardOverlay].
  *
  * Edge cost is length x penalty; blocked edges are skipped; reported distance
  * is the real length. Ties are resolved by node id through the priority
@@ -103,30 +104,36 @@ object EvacuationRouter {
         overlay: HazardOverlay,
         origin: LonLat,
         destination: LonLat,
-        shelter: ShelterState,
+        shelter: ShelterState?,
         snapshotAt: String,
         workspace: SearchWorkspace? = null,
+        destinationKind: RouteDestinationKind = RouteDestinationKind.SHELTER,
     ): RouteResult {
         val version = graph.graphVersion
+        val toShelter = destinationKind == RouteDestinationKind.SHELTER
+        val place = if (toShelter) "避難所" else "目的地"
         fun noRoute(vararg warnings: RouteWarning, blocked: List<String> = emptyList()) =
             RouteResult.failure(RouteStatus.NO_ROUTE, snapshotAt, version, warnings.toList() + overlay.warnings, blocked)
 
-        when (shelter.availability) {
+        when (shelter?.availability) {
             ShelterState.Availability.CLOSED -> return noRoute(
-                RouteWarning("SHELTER_CLOSED", shelter.event?.eventId, "官方狀態顯示此避難所目前未開設"),
+                RouteWarning("SHELTER_CLOSED", shelter?.event?.eventId, "官方狀態顯示此避難所目前未開設"),
             )
             ShelterState.Availability.FULL -> return noRoute(
-                RouteWarning("SHELTER_FULL", shelter.event?.eventId, "官方狀態顯示此避難所已額滿"),
+                RouteWarning("SHELTER_FULL", shelter?.event?.eventId, "官方狀態顯示此避難所已額滿"),
             )
             else -> Unit
         }
         overlay.blockingAreaContaining(destination)?.let { hazard ->
-            return noRoute(RouteWarning("SHELTER_IN_HAZARD", hazard.eventId, "此避難所位於危險區域內，已排除"))
+            return noRoute(
+                if (toShelter) RouteWarning("SHELTER_IN_HAZARD", hazard.eventId, "此避難所位於危險區域內，已排除")
+                else RouteWarning("DESTINATION_IN_HAZARD", hazard.eventId, "此地點位於危險區域內，已排除"),
+            )
         }
         val originNode = graph.nearestNode(origin)
             ?: return noRoute(RouteWarning("ORIGIN_OFF_GRAPH", null, "起點距離離線步行路網超過 300 公尺（涵蓋${graph.coverageName}），無法規劃路線"))
         val targetNode = graph.nearestNode(destination, DESTINATION_SNAP_LIMIT_METERS)
-            ?: return noRoute(RouteWarning("DESTINATION_OFF_GRAPH", null, "避難所距離離線步行路網超過 100 公尺（涵蓋${graph.coverageName}），無法規劃路線"))
+            ?: return noRoute(RouteWarning("DESTINATION_OFF_GRAPH", null, "${place}距離離線步行路網超過 100 公尺（涵蓋${graph.coverageName}），無法規劃路線"))
 
         val warnings = mutableListOf<RouteWarning>()
         var effective = overlay
@@ -136,7 +143,7 @@ object EvacuationRouter {
             effective = overlay.releasing(originHazards.map { it.first.identity }.toSet(), EXIT_HAZARD_PENALTY)
             warnings += RouteWarning("ORIGIN_IN_HAZARD", originHazards.first().first.eventId, "你位於危險區域內，請盡快離開")
         }
-        if (shelter.availability == ShelterState.Availability.UNKNOWN) {
+        if (toShelter && shelter?.availability != ShelterState.Availability.OPEN) {
             warnings += RouteWarning("SHELTER_STATUS_UNKNOWN", null, "沒有此避難所的官方開設狀態，請現場確認")
         }
 
@@ -163,7 +170,7 @@ object EvacuationRouter {
         }
         if (polyline.size == 1) {
             polyline += graph.node(originNode)
-            warnings += RouteWarning("DESTINATION_NEARBY", null, "避難所就在附近")
+            warnings += RouteWarning("DESTINATION_NEARBY", null, "${place}就在附近")
         }
         warnings += routeWarnings(path, effective)
         val distance = path.sumOf { graph.edgeLengthMeters(it) }

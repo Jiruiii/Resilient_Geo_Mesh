@@ -142,6 +142,89 @@ void main() {
     );
     expect(recalculations, 1);
   });
+
+  testWidgets('walking routes are titled and caveated as non-evacuation', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _app(
+        EvacuationRouteSheet(
+          route: _route(),
+          loading: false,
+          errorMessage: null,
+          stale: false,
+          destinationName: '慈安診所',
+          destinationKind: RouteDestinationKind.medical,
+          onRecalculate: null,
+          onClose: null,
+        ),
+      ),
+    );
+
+    expect(find.text('步行路線'), findsOneWidget);
+    expect(find.text('逃生路線'), findsNothing);
+    expect(find.text('目的地：慈安診所'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey<String>('walking-route-disclaimer')),
+      findsOneWidget,
+    );
+    expect(find.text('距離：1.2 公里'), findsOneWidget);
+  });
+
+  testWidgets('walking route loading and invalid input name the destination', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _app(
+        const EvacuationRouteSheet(
+          route: null,
+          loading: true,
+          errorMessage: null,
+          stale: false,
+          destinationKind: RouteDestinationKind.supply,
+          onRecalculate: null,
+          onClose: null,
+        ),
+      ),
+    );
+    expect(find.text('正在計算步行路線…'), findsOneWidget);
+
+    await tester.pumpWidget(
+      _app(
+        EvacuationRouteSheet(
+          route: _route(status: EvacuationRouteStatus.invalidInput),
+          loading: false,
+          errorMessage: null,
+          stale: false,
+          destinationKind: RouteDestinationKind.supply,
+          onRecalculate: null,
+          onClose: null,
+        ),
+      ),
+    );
+    expect(find.text('起點或目的地資料不完整'), findsOneWidget);
+  });
+
+  testWidgets('shelter routes keep the evacuation wording', (tester) async {
+    await tester.pumpWidget(
+      _app(
+        EvacuationRouteSheet(
+          route: _route(),
+          loading: false,
+          errorMessage: null,
+          stale: false,
+          onRecalculate: null,
+          onClose: null,
+        ),
+      ),
+    );
+
+    expect(find.text('逃生路線'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey<String>('walking-route-disclaimer')),
+      findsNothing,
+    );
+  });
 }
 
 Widget _app(Widget child) => MaterialApp(home: Scaffold(body: child));

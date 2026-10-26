@@ -5,6 +5,7 @@ import com.resilientgeo.mesh.data.VerifiedStaticFeatureSnapshot
 import com.resilientgeo.mesh.ingest.ApplyState
 import com.resilientgeo.mesh.ingest.IngestResult
 import com.resilientgeo.mesh.routing.LonLat
+import com.resilientgeo.mesh.routing.RouteDestinationKind
 import com.resilientgeo.mesh.routing.RouteResult
 import com.resilientgeo.mesh.routing.RouteStatus
 import com.resilientgeo.mesh.routing.RouteWarning
@@ -182,6 +183,25 @@ class MapBridgeProtocolTest {
         assertEquals("flood", MapBridgeProtocol.routeRequest(selected)!!.disasterType)
         assertNull(MapBridgeProtocol.routeRequest(selected + ("disaster_type" to 123)))
         assertNull(MapBridgeProtocol.routeRequest(mapOf("origin" to mapOf("lon" to 1.0))))
+    }
+
+    @Test
+    fun `route request destination kind defaults to shelter and rejects unknown kinds`() {
+        fun withKind(kind: Any?) = mapOf(
+            "origin" to mapOf("lon" to 121.5, "lat" to 25.0),
+            "destination" to buildMap<String, Any> {
+                put("id", "medical:test")
+                put("lon", 121.5)
+                put("lat", 25.0)
+                if (kind != null) put("kind", kind)
+            },
+        )
+        assertEquals(RouteDestinationKind.SHELTER, MapBridgeProtocol.routeRequest(withKind(null))!!.destinationKind)
+        assertEquals(RouteDestinationKind.SHELTER, MapBridgeProtocol.routeRequest(withKind("shelter"))!!.destinationKind)
+        assertEquals(RouteDestinationKind.MEDICAL, MapBridgeProtocol.routeRequest(withKind("medical"))!!.destinationKind)
+        assertEquals(RouteDestinationKind.SUPPLY, MapBridgeProtocol.routeRequest(withKind("supply"))!!.destinationKind)
+        assertNull(MapBridgeProtocol.routeRequest(withKind("hospital")))
+        assertNull(MapBridgeProtocol.routeRequest(withKind(1)))
     }
 
     @Test
