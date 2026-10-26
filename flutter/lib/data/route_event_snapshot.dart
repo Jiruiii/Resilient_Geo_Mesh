@@ -1,14 +1,24 @@
 import 'dart:convert';
 
+import 'evacuation_models.dart';
 import 'map_models.dart';
 
-/// Only events consumed by the native hazard overlay or shelter status resolver.
+/// Only events consumed by the native hazard overlay or shelter status resolver,
+/// plus the supply point being walked to when [destinationSupplyKey] is set.
 /// Capturing the state at a fixed time detects expiry even without a new snapshot.
 class RouteEventSnapshot {
-  RouteEventSnapshot(Iterable<MeshEvent> events, DateTime now) {
+  RouteEventSnapshot(
+    Iterable<MeshEvent> events,
+    DateTime now, {
+    String? destinationSupplyKey,
+  }) {
     for (final event in events) {
       if (event.isRetiredShelterStatus) continue;
-      final kind = _kind(event);
+      final destination =
+          destinationSupplyKey != null &&
+          isRoutableSupplyEvent(event) &&
+          supplyEventKey(event) == destinationSupplyKey;
+      final kind = destination ? '物資狀態' : _kind(event);
       if (kind == null) continue;
       final expires = DateTime.tryParse(event.expiresAt ?? '');
       final state =
@@ -16,11 +26,20 @@ class RouteEventSnapshot {
                   (expires != null && !expires.isAfter(now))
               ? 'EXPIRED'
               : event.applyState;
-      _entries[meshEventIdentity(event)] = (kind, state, event.payloadHash);
+      // A new supply version replaces the old one under the same key, so the
+      // change reads as an update rather than a removal plus an addition.
+      final key = destination ? destinationSupplyKey : meshEventIdentity(event);
+      final previous = _entries[key];
+      if (destination &&
+          previous != null &&
+          previous.$4 > (event.eventVersion ?? 0)) {
+        continue;
+      }
+      _entries[key] = (kind, state, event.payloadHash, event.eventVersion ?? 0);
     }
   }
 
-  final _entries = <String, (String, String?, String?)>{};
+  final _entries = <String, (String, String?, String?, int)>{};
 
   String get fingerprint {
     final keys = _entries.keys.toList()..sort();
@@ -57,10 +76,21 @@ class RouteEventSnapshot {
     };
   }
 
-  static DateTime? nextExpiry(Iterable<MeshEvent> events, DateTime now) {
+  static DateTime? nextExpiry(
+    Iterable<MeshEvent> events,
+    DateTime now, {
+    String? destinationSupplyKey,
+  }) {
     DateTime? earliest;
     for (final event in events) {
-      if (_kind(event) == null || event.applyState == 'EXPIRED') continue;
+      final destination =
+          destinationSupplyKey != null &&
+          isRoutableSupplyEvent(event) &&
+          supplyEventKey(event) == destinationSupplyKey;
+      if ((!destination && _kind(event) == null) ||
+          event.applyState == 'EXPIRED') {
+        continue;
+      }
       final expires = DateTime.tryParse(event.expiresAt ?? '');
       if (expires == null || !expires.isAfter(now)) continue;
       if (earliest == null || expires.isBefore(earliest)) earliest = expires;

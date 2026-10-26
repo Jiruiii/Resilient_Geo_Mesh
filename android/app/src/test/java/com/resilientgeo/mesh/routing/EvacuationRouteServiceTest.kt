@@ -43,6 +43,22 @@ class EvacuationRouteServiceTest {
     }
 
     @Test
+    fun `walking destinations skip the shelter disaster catalog`() = runTest {
+        val point = RoutingTestSupport.p(2, 0)
+        val catalog = ShelterDisasterCatalog(mapOf("shelter:test" to ShelterDisasterCatalog.Entry(point, setOf("震災"))))
+        var catalogLoads = 0
+        val service = EvacuationRouteService(RoutingTestSupport::grid, { emptyList() }, { now }, { catalogLoads++; catalog })
+        for (kind in listOf(RouteDestinationKind.MEDICAL, RouteDestinationKind.SUPPLY)) {
+            val result = service.calculate(
+                request(RoutingTestSupport.p(0, 0)).copy(destinationKind = kind, disasterType = "flood"),
+            )
+            assertEquals(RouteStatus.OK, result.status)
+            assertTrue(result.warnings.none { it.code.startsWith("SHELTER_") })
+        }
+        assertEquals(0, catalogLoads)
+    }
+
+    @Test
     fun `invalid input is a status, not an exception`() = runTest {
         assertEquals(RouteStatus.INVALID_INPUT, service().calculate(request(LonLat(Double.NaN, 25.0))).status)
         assertEquals(RouteStatus.INVALID_INPUT, service().calculate(request(RoutingTestSupport.p(0, 0), mode = "drive")).status)

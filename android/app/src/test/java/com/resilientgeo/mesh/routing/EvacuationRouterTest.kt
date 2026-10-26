@@ -21,13 +21,15 @@ class EvacuationRouterTest {
         vararg events: RouteEvent,
         origin: LonLat = p(0, 0),
         destination: LonLat = p(2, 0),
+        kind: RouteDestinationKind = RouteDestinationKind.SHELTER,
     ): RouteResult = EvacuationRouter.plan(
         graph = graph,
         overlay = HazardOverlay.fromEvents(events.toList(), graph),
         origin = origin,
         destination = destination,
-        shelter = ShelterState.resolve(destination, events.toList()),
+        shelter = if (kind == RouteDestinationKind.SHELTER) ShelterState.resolve(destination, events.toList()) else null,
         snapshotAt = "2026-09-24T00:00:00Z",
+        destinationKind = kind,
     )
 
     @Test
@@ -149,6 +151,42 @@ class EvacuationRouterTest {
         assertEquals(RouteStatus.OK, route.status)
         assertEquals(2, route.polyline.size)
         assertEquals(0.0, route.distanceM!!, 0.0)
+    }
+
+    @Test
+    fun `medical and supply destinations ignore shelter status and say so plainly`() {
+        val fullShelterNearby = event(
+            "shelter:s1",
+            "SHELTER_STATUS",
+            square(p(2, 0), 0.0002),
+            namespace = "official.fire",
+            attributes = JSONObject().put("status", "FULL"),
+        )
+        for (kind in listOf(RouteDestinationKind.MEDICAL, RouteDestinationKind.SUPPLY)) {
+            val route = plan(fullShelterNearby, kind = kind)
+            assertEquals(RouteStatus.OK, route.status)
+            assertEquals(listOf(p(0, 0), p(1, 0), p(2, 0)), route.polyline)
+            assertTrue(route.warnings.none { it.code.startsWith("SHELTER_") })
+        }
+    }
+
+    @Test
+    fun `a flooded walking destination is excluded without calling it a shelter`() {
+        val flood = event("flood:s", "FLOOD_WARNING", square(p(2, 0), 0.0002), namespace = "official.cwa", severity = "CRITICAL")
+        val route = plan(flood, kind = RouteDestinationKind.MEDICAL)
+        assertEquals(RouteStatus.NO_ROUTE, route.status)
+        assertEquals("DESTINATION_IN_HAZARD", route.warnings.first().code)
+        assertEquals("此地點位於危險區域內，已排除", route.warnings.first().message)
+    }
+
+    @Test
+    fun `walking destination messages name the destination, not a shelter`() {
+        val offGraph = plan(destination = LonLat(121.52, 25.0), kind = RouteDestinationKind.SUPPLY)
+        assertEquals("DESTINATION_OFF_GRAPH", offGraph.warnings.first().code)
+        assertTrue(offGraph.warnings.first().message.startsWith("目的地距離離線步行路網超過 100 公尺"))
+        val nearby = plan(destination = LonLat(121.50001, 25.00001), kind = RouteDestinationKind.MEDICAL)
+        assertEquals("目的地就在附近", nearby.warnings.single { it.code == "DESTINATION_NEARBY" }.message)
+        assertTrue(plan(destination = LonLat(121.52, 25.0)).warnings.first().message.startsWith("避難所距離"))
     }
 
     @Test

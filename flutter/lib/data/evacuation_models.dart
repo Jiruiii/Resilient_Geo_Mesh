@@ -1,6 +1,8 @@
+import 'dart:convert';
 import 'dart:math' as math;
 
 import 'map_models.dart';
+import 'supply_status.dart';
 
 enum DisasterType {
   flood('flood', '水災'),
@@ -53,17 +55,161 @@ extension EvacuationRouteStatusWire on EvacuationRouteStatus {
   };
 }
 
+/// Only shelters carry opening status and disaster eligibility; medical and
+/// supply routes are plain walking directions, not evacuation guidance.
+enum RouteDestinationKind {
+  shelter('shelter'),
+  medical('medical'),
+  supply('supply');
+
+  const RouteDestinationKind(this.wireValue);
+  final String wireValue;
+}
+
 final class ShelterRouteCandidate {
-  const ShelterRouteCandidate({required this.id, required this.location});
+  const ShelterRouteCandidate({
+    required this.id,
+    required this.location,
+    this.kind = RouteDestinationKind.shelter,
+  });
 
   final String id;
   final GeoPoint location;
+  final RouteDestinationKind kind;
 
   Map<String, Object?> toChannelArguments() => <String, Object?>{
     'id': id,
     'lon': location.longitude,
     'lat': location.latitude,
+    'kind': kind.wireValue,
   };
+}
+
+/// A place the user asked to walk to. Supply points are events that can be
+/// updated, expire or be withdrawn, so [supplyKey] finds their latest version
+/// again before every request.
+final class RouteDestination {
+  const RouteDestination._({
+    required this.kind,
+    required this.name,
+    required this.candidate,
+    this.supplyKey,
+  });
+
+  final RouteDestinationKind kind;
+  final String name;
+  final ShelterRouteCandidate candidate;
+  final String? supplyKey;
+
+  bool get isShelter => kind == RouteDestinationKind.shelter;
+
+  static RouteDestination? fromFeature(
+    StaticFeature feature, {
+    required String name,
+  }) {
+    final kind = switch (feature.kind) {
+      'shelter' => RouteDestinationKind.shelter,
+      'medical' => RouteDestinationKind.medical,
+      _ => null,
+    };
+    final id = feature.id;
+    final geometry = feature.geometry;
+    if (kind == null ||
+        id == null ||
+        id.isEmpty ||
+        geometry is! PointGeometry ||
+        !_validPoint(geometry.point)) {
+      return null;
+    }
+    return RouteDestination._(
+      kind: kind,
+      name: name,
+      candidate: ShelterRouteCandidate(
+        id: id,
+        location: geometry.point,
+        kind: kind,
+      ),
+    );
+  }
+
+  static RouteDestination? fromSupplyEvent(
+    MeshEvent event, {
+    required String name,
+  }) {
+    if (!isRoutableSupplyEvent(event)) return null;
+    return RouteDestination._(
+      kind: RouteDestinationKind.supply,
+      name: name,
+      candidate: ShelterRouteCandidate(
+        id: meshEventIdentity(event),
+        location: (event.geometry! as PointGeometry).point,
+        kind: RouteDestinationKind.supply,
+      ),
+      supplyKey: supplyEventKey(event),
+    );
+  }
+}
+
+/// Supply distribution points and supply station announcements with an
+/// exact map point; area-only announcements have nowhere to walk to.
+bool isRoutableSupplyEvent(MeshEvent event) {
+  if (!isSupplyEvent(event) && !isSupplyStationEvent(event)) return false;
+  if (isSupplyStationEvent(event) &&
+      event.attributes?['has_map_location'] != true) {
+    return false;
+  }
+  final eventId = event.eventId;
+  final geometry = event.geometry;
+  return eventId != null &&
+      eventId.isNotEmpty &&
+      geometry is PointGeometry &&
+      _validPoint(geometry.point);
+}
+
+/// Identity of a supply point across versions, unlike [meshEventIdentity].
+String supplyEventKey(MeshEvent event) =>
+    jsonEncode(<Object?>[event.namespace, event.eventId]);
+
+/// Latest stored version of the supply point, or null once it is withdrawn:
+/// removed from storage or republished as a retraction.
+MeshEvent? latestSupplyEvent(Iterable<MeshEvent> events, String key) {
+  MeshEvent? latest;
+  for (final event in events) {
+    if (!isRoutableSupplyEvent(event) || supplyEventKey(event) != key) continue;
+    if (latest == null ||
+        (event.eventVersion ?? 0) > (latest.eventVersion ?? 0)) {
+      latest = event;
+    }
+  }
+  if (latest?.attributes?['publication_retracted'] == true) return null;
+  return latest;
+}
+
+/// A poor supply status is a warning, never a reason to hide the route:
+/// unknown or exhausted stock may still be worth checking in person.
+List<RouteWarning> supplyRouteWarnings(MeshEvent event, [DateTime? now]) {
+  final eventId = event.eventId;
+  if (!event.isCurrentAt(now)) {
+    return <RouteWarning>[
+      RouteWarning(
+        code: 'SUPPLY_STATUS_EXPIRED',
+        eventId: eventId,
+        message: '物資資訊已過期或未查證，請現場確認',
+      ),
+    ];
+  }
+  if (!isSupplyEvent(event)) return const <RouteWarning>[];
+  final (code, message) = switch (SupplyStatus(event).data['status']) {
+    'AVAILABLE' => (null, null),
+    'PAUSED' => ('SUPPLY_PAUSED', '官方狀態顯示此物資點暫停發放'),
+    'EXHAUSTED' => ('SUPPLY_EXHAUSTED', '官方狀態顯示此物資點已發完'),
+    'CLOSED' => ('SUPPLY_CLOSED', '官方狀態顯示此物資點已結束發放'),
+    _ => ('SUPPLY_STATUS_UNKNOWN', '沒有此物資點的供應狀態，請現場確認'),
+  };
+  if (code == null || message == null) return const <RouteWarning>[];
+  return <RouteWarning>[
+    RouteWarning(code: code, eventId: eventId, message: message),
+  ];
 }
 
 List<ShelterRouteCandidate> shortlistShelterCandidates(
@@ -245,6 +391,39 @@ final class EvacuationRouteResult {
       blockedEventIds: blockedEventIds,
     );
   }
+}
+
+/// Camera bounds that show a whole drawable route. Very short routes are
+/// widened so the camera does not jump to maximum zoom on a few metres.
+GeoBounds? routeFocusBounds(
+  EvacuationRouteResult route, {
+  double minSpanDegrees = 0.002,
+}) {
+  if (route.status != EvacuationRouteStatus.ok || route.polyline.length < 2) {
+    return null;
+  }
+  var west = route.polyline.first.longitude;
+  var east = west;
+  var south = route.polyline.first.latitude;
+  var north = south;
+  for (final point in route.polyline.skip(1)) {
+    west = math.min(west, point.longitude);
+    east = math.max(east, point.longitude);
+    south = math.min(south, point.latitude);
+    north = math.max(north, point.latitude);
+  }
+  final widenLongitude = math.max(0, minSpanDegrees - (east - west)) / 2;
+  final widenLatitude = math.max(0, minSpanDegrees - (north - south)) / 2;
+  return GeoBounds(
+    southwest: GeoPoint(
+      longitude: west - widenLongitude,
+      latitude: south - widenLatitude,
+    ),
+    northeast: GeoPoint(
+      longitude: east + widenLongitude,
+      latitude: north + widenLatitude,
+    ),
+  );
 }
 
 List<RouteWarning> _warnings(Object? value) {

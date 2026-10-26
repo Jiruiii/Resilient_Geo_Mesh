@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:resilientgeo_flutter/data/evacuation_models.dart';
 import 'package:resilientgeo_flutter/data/map_models.dart';
 import 'package:resilientgeo_flutter/data/route_event_snapshot.dart';
 
@@ -45,7 +46,101 @@ void main() {
     final crowd = event('report', 'OTHER', namespace: 'crowd.test');
     expect(original.changeReason(RouteEventSnapshot([crowd], now)), '民眾警示更新');
   });
+
+  group('supply destination', () {
+    final key = supplyEventKey(supply(1));
+
+    test('ignores supply points unless one is the destination', () {
+      final plain = RouteEventSnapshot([], now);
+      expect(plain.changeReason(RouteEventSnapshot([supply(1)], now)), isNull);
+      expect(
+        RouteEventSnapshot(
+          [supply(1)],
+          now,
+          destinationSupplyKey: key,
+        ).changeReason(
+          RouteEventSnapshot(
+            [supply(1), supply(1, id: 'supply:other', status: 'EXHAUSTED')],
+            now,
+            destinationSupplyKey: key,
+          ),
+        ),
+        isNull,
+      );
+    });
+
+    test('a new version or a withdrawal of the destination is a change', () {
+      final original = RouteEventSnapshot(
+        [supply(1)],
+        now,
+        destinationSupplyKey: key,
+      );
+      expect(
+        original.changeReason(
+          RouteEventSnapshot(
+            [supply(2, status: 'EXHAUSTED')],
+            now,
+            destinationSupplyKey: key,
+          ),
+        ),
+        '物資狀態更新',
+      );
+      expect(
+        original.changeReason(
+          RouteEventSnapshot([], now, destinationSupplyKey: key),
+        ),
+        '物資狀態更新',
+      );
+    });
+
+    test('the destination expiry is watched and detected', () {
+      final expiring = supply(1, expires: now.add(const Duration(seconds: 5)));
+      expect(RouteEventSnapshot.nextExpiry([expiring], now), isNull);
+      expect(
+        RouteEventSnapshot.nextExpiry(
+          [expiring],
+          now,
+          destinationSupplyKey: key,
+        ),
+        now.add(const Duration(seconds: 5)),
+      );
+      expect(
+        RouteEventSnapshot(
+          [expiring],
+          now,
+          destinationSupplyKey: key,
+        ).changeReason(
+          RouteEventSnapshot(
+            [expiring],
+            now.add(const Duration(seconds: 5)),
+            destinationSupplyKey: key,
+          ),
+        ),
+        '事件到期',
+      );
+    });
+  });
 }
+
+MeshEvent supply(
+  int version, {
+  String id = 'supply:test',
+  String status = 'AVAILABLE',
+  DateTime? expires,
+}) => MeshEvent(
+  namespace: 'official.supply',
+  eventId: id,
+  eventVersion: version,
+  eventType: 'SUPPLY_STATUS',
+  severity: 'LOW',
+  source: 'GOVERNMENT',
+  issuedAt: null,
+  expiresAt: (expires ?? DateTime.utc(2099)).toIso8601String(),
+  applyState: 'CURRENT',
+  geometry: const PointGeometry(GeoPoint(longitude: 121.59, latitude: 25.08)),
+  attributes: <String, dynamic>{'status': status},
+  payloadHash: 'sha256:$id:$version',
+);
 
 MeshEvent event(
   String id,

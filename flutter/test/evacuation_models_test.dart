@@ -147,6 +147,225 @@ void main() {
       'id': 'shelter:test',
       'lon': 121.5908,
       'lat': 25.0609,
+      'kind': 'shelter',
+    });
+  });
+
+  group('route focus bounds', () {
+    EvacuationRouteResult route(List<GeoPoint> polyline) =>
+        EvacuationRouteResult(
+          status: EvacuationRouteStatus.ok,
+          polyline: polyline,
+          distanceM: 10,
+          durationS: 10,
+          graphVersion: 'g',
+          eventSnapshotAt: 't',
+          warnings: const <RouteWarning>[],
+          blockedEventIds: const <String>[],
+        );
+
+    test('cover every route point', () {
+      final bounds =
+          routeFocusBounds(
+            route(const <GeoPoint>[
+              GeoPoint(longitude: 121.50, latitude: 25.00),
+              GeoPoint(longitude: 121.56, latitude: 25.08),
+              GeoPoint(longitude: 121.53, latitude: 24.98),
+            ]),
+          )!;
+      expect(bounds.southwest.longitude, 121.50);
+      expect(bounds.southwest.latitude, 24.98);
+      expect(bounds.northeast.longitude, 121.56);
+      expect(bounds.northeast.latitude, 25.08);
+    });
+
+    test('widen a very short route around its centre', () {
+      final bounds =
+          routeFocusBounds(
+            route(const <GeoPoint>[
+              GeoPoint(longitude: 121.5, latitude: 25.0),
+              GeoPoint(longitude: 121.5, latitude: 25.0),
+            ]),
+          )!;
+      expect(
+        bounds.northeast.longitude - bounds.southwest.longitude,
+        closeTo(0.002, 1e-12),
+      );
+      expect(
+        bounds.northeast.latitude - bounds.southwest.latitude,
+        closeTo(0.002, 1e-12),
+      );
+    });
+
+    test('ignore failed routes', () {
+      expect(
+        routeFocusBounds(
+          const EvacuationRouteResult(
+            status: EvacuationRouteStatus.noRoute,
+            polyline: <GeoPoint>[],
+            distanceM: null,
+            durationS: null,
+            graphVersion: null,
+            eventSnapshotAt: null,
+            warnings: <RouteWarning>[],
+            blockedEventIds: <String>[],
+          ),
+        ),
+        isNull,
+      );
+    });
+  });
+
+  group('walking route destinations', () {
+    const point = PointGeometry(GeoPoint(longitude: 121.59, latitude: 25.08));
+
+    StaticFeature feature(String kind, {String? id = 'f:1', MapGeometry? at}) =>
+        StaticFeature(
+          id: id,
+          kind: kind,
+          geometry: at,
+          fields: const <String, dynamic>{'name': '設施'},
+          properties: null,
+        );
+
+    test('located medical facilities route as medical destinations', () {
+      final destination =
+          RouteDestination.fromFeature(
+            feature('medical', at: point),
+            name: '慈安診所',
+          )!;
+
+      expect(destination.kind, RouteDestinationKind.medical);
+      expect(destination.isShelter, isFalse);
+      expect(destination.name, '慈安診所');
+      expect(destination.supplyKey, isNull);
+      expect(destination.candidate.toChannelArguments(), <String, Object?>{
+        'id': 'f:1',
+        'lon': 121.59,
+        'lat': 25.08,
+        'kind': 'medical',
+      });
+    });
+
+    test('features without an id, point or routable kind are rejected', () {
+      expect(
+        RouteDestination.fromFeature(feature('medical'), name: 'x'),
+        isNull,
+      );
+      expect(
+        RouteDestination.fromFeature(
+          feature('medical', id: null, at: point),
+          name: 'x',
+        ),
+        isNull,
+      );
+      expect(
+        RouteDestination.fromFeature(
+          feature('medical-directory', at: point),
+          name: 'x',
+        ),
+        isNull,
+      );
+      expect(
+        RouteDestination.fromFeature(
+          feature('shelter', at: point),
+          name: 'x',
+        )?.kind,
+        RouteDestinationKind.shelter,
+      );
+    });
+
+    test('supply points and supply station announcements are routable', () {
+      final supply = _supply();
+      final station = _supply(
+        namespace: 'official.announcement',
+        eventType: 'GOVERNMENT_ANNOUNCEMENT',
+        attributes: const <String, dynamic>{
+          'category': 'SUPPLY_STATION',
+          'has_map_location': true,
+        },
+      );
+      final destination = RouteDestination.fromSupplyEvent(supply, name: '站')!;
+
+      expect(destination.kind, RouteDestinationKind.supply);
+      expect(destination.supplyKey, supplyEventKey(supply));
+      expect(destination.candidate.toChannelArguments()['kind'], 'supply');
+      expect(isRoutableSupplyEvent(station), isTrue);
+    });
+
+    test('area-only supply data and other announcements are not routable', () {
+      expect(isRoutableSupplyEvent(_supply(geometry: null)), isFalse);
+      expect(
+        isRoutableSupplyEvent(
+          _supply(
+            namespace: 'official.announcement',
+            eventType: 'GOVERNMENT_ANNOUNCEMENT',
+            attributes: const <String, dynamic>{'category': 'EVACUATION'},
+          ),
+        ),
+        isFalse,
+      );
+      expect(isRoutableSupplyEvent(_supply(eventType: 'ROAD_STATUS')), isFalse);
+      expect(
+        isRoutableSupplyEvent(
+          _supply(
+            namespace: 'official.announcement',
+            eventType: 'GOVERNMENT_ANNOUNCEMENT',
+            attributes: const <String, dynamic>{
+              'category': 'SUPPLY_STATION',
+              'has_map_location': false,
+            },
+          ),
+        ),
+        isFalse,
+      );
+    });
+
+    test('the latest version of a supply point is found across versions', () {
+      final first = _supply(version: 1);
+      final second = _supply(version: 2);
+      final key = supplyEventKey(first);
+
+      expect(supplyEventKey(second), key);
+      expect(latestSupplyEvent(<MeshEvent>[second, first], key), same(second));
+      expect(latestSupplyEvent(<MeshEvent>[_supply(id: 'other')], key), isNull);
+      final retracted = _supply(
+        version: 3,
+        attributes: const <String, dynamic>{'publication_retracted': true},
+      );
+      expect(latestSupplyEvent(<MeshEvent>[second, retracted], key), isNull);
+    });
+
+    test('supply status becomes a warning instead of removing the route', () {
+      final now = DateTime.utc(2030);
+      List<String> codes(MeshEvent event) =>
+          supplyRouteWarnings(
+            event,
+            now,
+          ).map((warning) => warning.code).toList();
+
+      expect(codes(_supply(status: 'AVAILABLE')), isEmpty);
+      expect(codes(_supply(status: 'PAUSED')), <String>['SUPPLY_PAUSED']);
+      expect(codes(_supply(status: 'EXHAUSTED')), <String>['SUPPLY_EXHAUSTED']);
+      expect(codes(_supply(status: 'CLOSED')), <String>['SUPPLY_CLOSED']);
+      expect(codes(_supply(status: null)), <String>['SUPPLY_STATUS_UNKNOWN']);
+      expect(
+        codes(_supply(status: 'AVAILABLE', expiresAt: '2029-12-31T00:00:00Z')),
+        <String>['SUPPLY_STATUS_EXPIRED'],
+      );
+      expect(
+        codes(
+          _supply(
+            namespace: 'official.announcement',
+            eventType: 'GOVERNMENT_ANNOUNCEMENT',
+            attributes: const <String, dynamic>{
+              'category': 'SUPPLY_STATION',
+              'has_map_location': true,
+            },
+          ),
+        ),
+        isEmpty,
+      );
     });
   });
 
@@ -244,3 +463,30 @@ StaticFeature _shelter(String id, double longitude, double latitude) =>
       fields: const <String, dynamic>{'name': '測試避難所'},
       properties: null,
     );
+
+MeshEvent _supply({
+  String id = 'supply:1',
+  int version = 1,
+  String namespace = 'official.supply',
+  String eventType = 'SUPPLY_STATUS',
+  MapGeometry? geometry = const PointGeometry(
+    GeoPoint(longitude: 121.59, latitude: 25.08),
+  ),
+  String? status = 'AVAILABLE',
+  String expiresAt = '2099-01-01T00:00:00Z',
+  Map<String, dynamic>? attributes,
+}) => MeshEvent(
+  namespace: namespace,
+  eventId: id,
+  eventVersion: version,
+  eventType: eventType,
+  severity: 'LOW',
+  source: 'GOVERNMENT',
+  issuedAt: '2026-10-20T00:00:00Z',
+  expiresAt: expiresAt,
+  applyState: 'CURRENT',
+  geometry: geometry,
+  attributes:
+      attributes ??
+      <String, dynamic>{'name': '物資發放點', if (status != null) 'status': status},
+);

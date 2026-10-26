@@ -8,42 +8,70 @@ void main() {
     GeoPoint(longitude: 121.590304, latitude: 25.083506),
   );
 
-  testWidgets(
-    'medical details offer walking route button with honest feedback',
-    (tester) async {
-      const medical = StaticFeature(
-        id: 'medical:test',
-        kind: 'medical',
-        geometry: point,
-        fields: <String, dynamic>{'name': '慈安診所'},
-        properties: null,
-      );
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: FeatureDetailsSheet.feature(
-              feature: medical,
-              snapshotAt: null,
-              onClose: () {},
-            ),
+  testWidgets('medical details offer a working walking route button', (
+    tester,
+  ) async {
+    const medical = StaticFeature(
+      id: 'medical:test',
+      kind: 'medical',
+      geometry: point,
+      fields: <String, dynamic>{'name': '慈安診所'},
+      properties: null,
+    );
+    var requests = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: FeatureDetailsSheet.feature(
+            feature: medical,
+            snapshotAt: null,
+            onClose: () {},
+            onPlanWalkingRoute: () => requests += 1,
           ),
         ),
-      );
+      ),
+    );
 
-      final button = find.byKey(const ValueKey<String>('plan-walking-route'));
-      expect(button, findsOneWidget);
-      expect(find.text('規劃步行路線'), findsOneWidget);
-      await tester.tap(button);
-      await tester.pumpAndSettle();
-      expect(find.text('此地點的步行路線規劃尚未開放'), findsOneWidget);
-    },
-  );
+    final button = find.byKey(const ValueKey<String>('plan-walking-route'));
+    expect(button, findsOneWidget);
+    expect(find.text('規劃步行路線'), findsOneWidget);
+    expect(find.text('規劃逃生路線'), findsNothing);
+    await tester.tap(button);
+    await tester.pump();
+    expect(requests, 1);
+    expect(find.text('此地點的步行路線規劃尚未開放'), findsNothing);
+  });
+
+  testWidgets('medical details without a route action show no button', (
+    tester,
+  ) async {
+    const medical = StaticFeature(
+      id: 'medical:test',
+      kind: 'medical',
+      geometry: point,
+      fields: <String, dynamic>{'name': '慈安診所'},
+      properties: null,
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: FeatureDetailsSheet.feature(
+            feature: medical,
+            snapshotAt: null,
+            onClose: () {},
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('規劃步行路線'), findsNothing);
+  });
 
   for (final eventType in <String>[
     'SUPPLY_STATUS',
     'GOVERNMENT_ANNOUNCEMENT',
   ]) {
-    testWidgets('$eventType supply point offers walking route button', (
+    testWidgets('$eventType supply point offers a working route button', (
       tester,
     ) async {
       final event = MeshEvent(
@@ -61,16 +89,23 @@ void main() {
         applyState: 'CURRENT',
         geometry: point,
         attributes: <String, dynamic>{
-          if (eventType == 'GOVERNMENT_ANNOUNCEMENT')
+          if (eventType == 'GOVERNMENT_ANNOUNCEMENT') ...<String, dynamic>{
             'category': 'SUPPLY_STATION',
+            'has_map_location': true,
+          },
           'name': '物資發放點',
           'status': 'AVAILABLE',
         },
       );
+      var requests = 0;
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
-            body: FeatureDetailsSheet.event(event: event, onClose: () {}),
+            body: FeatureDetailsSheet.event(
+              event: event,
+              onClose: () {},
+              onPlanWalkingRoute: () => requests += 1,
+            ),
           ),
         ),
       );
@@ -80,8 +115,8 @@ void main() {
       expect(find.text('規劃步行路線'), findsOneWidget);
       await tester.ensureVisible(button);
       await tester.tap(button);
-      await tester.pumpAndSettle();
-      expect(find.text('此地點的步行路線規劃尚未開放'), findsOneWidget);
+      await tester.pump();
+      expect(requests, 1);
     });
   }
 
@@ -102,6 +137,7 @@ void main() {
             feature: medical,
             snapshotAt: null,
             onClose: () {},
+            onPlanWalkingRoute: () {},
           ),
         ),
       ),

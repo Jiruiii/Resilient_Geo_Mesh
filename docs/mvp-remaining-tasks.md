@@ -212,6 +212,8 @@
 - [x] **G6. UI**：已由 UI 計畫完成；目前 App 只有 MapLibre 離線底圖一種 renderer。Pixel 8a 上已驗證實際定位推薦、街道拖動及停止後標記保留；飛航模式路線專項驗收仍待補測。
 - [x] **G7. Demo 情境**：`pipeline/tools/generate-evacuation-scenario.mjs` → `data/fixtures/neihu/evacuation-scenario.json` 與兩個簽章 chunk；`EvacuationScenarioTest` 重播三個步驟。實機演練尚未做。
 - [x] **G8. 文件與限制說明。**
+- [x] **G10. 醫療院所與物資點步行路線（2026-10-23）**：契約新增 `destination.kind`（`shelter`／`medical`／`supply`），非避難所不套用開設狀態與災害情境，物資狀態只警示不排除，撤回後停止規劃；Flutter 與 Android 單元／widget 測試已補。Web 依平台限制只顯示「需要 Android App」。2026-10-26 在 API 36 模擬器以 debug 路線驗收畫面（記憶體 fixture、內建雙北路網）完成操作驗收，見 [雙北路網文件](taipei-offline-routing.md#模擬器驗收2026-10-26)。**實機、正式 Server 圖層與政府工作台發布的物資站公告仍未驗收。**
+- [x] **G11. 路線可見度與定位備援（2026-10-26）**：使用者要求的路線算出後，地圖自動移到路線範圍（自動重算不移動鏡頭）；Android 拒絕 Google「定位精確度」後改用系統 LocationManager 重試一次；物資點撤回時顯示「已停止規劃」且不提供重試。模擬器驗收見同一節。
 - [x] **G9. Pixel 8a 路線效能驗證**：六組短程與兩組較長跨市路線均回傳 `ok`；首次 App 路線請求約 1.8 秒，含較長路線的暖機 p95 約 68.6 ms。已覆蓋安裝 profile APK，保留手機資料；可重跑命令及量測條件見 [實測紀錄](taipei-offline-routing.md)。
 
 ### 待討論

@@ -8,6 +8,7 @@ import com.resilientgeo.mesh.report.GovernmentWarningInput
 import com.resilientgeo.mesh.report.CrowdReportInput
 import com.resilientgeo.mesh.report.RescueAction
 import com.resilientgeo.mesh.routing.LonLat
+import com.resilientgeo.mesh.routing.RouteDestinationKind
 import com.resilientgeo.mesh.routing.RouteRequest
 import com.resilientgeo.mesh.routing.RouteResult
 import com.resilientgeo.mesh.trust.CrowdLocationHint
@@ -210,6 +211,12 @@ object MapBridgeProtocol {
             is String -> value
             else -> return null
         }
+        // Older Flutter builds only route to shelters and send no kind.
+        val destinationKind = when (val value = destination["kind"]) {
+            null -> RouteDestinationKind.SHELTER
+            is String -> RouteDestinationKind.fromWire(value) ?: return null
+            else -> return null
+        }
         return RouteRequest(
             origin = LonLat(
                 (origin["lon"] as? Number)?.toDouble() ?: return null,
@@ -222,6 +229,7 @@ object MapBridgeProtocol {
             ),
             mode = map["mode"] as? String ?: "walk",
             disasterType = disasterType,
+            destinationKind = destinationKind,
         )
     }
 

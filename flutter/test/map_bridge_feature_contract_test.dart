@@ -102,6 +102,7 @@ void main() {
         'id': 'shelter:test',
         'lon': 121.5908,
         'lat': 25.0609,
+        'kind': 'shelter',
       },
       'mode': 'walk',
     });

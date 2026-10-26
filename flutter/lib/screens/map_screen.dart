@@ -37,7 +37,7 @@ import '../widgets/crowd_report_sheet.dart';
 import '../widgets/evacuation_route_sheet.dart';
 import '../widgets/layer_filter_panel.dart';
 import '../widgets/map_canvas.dart';
-import '../widgets/map_layers.dart' show MapIconCatalog, featureName;
+import '../widgets/map_layers.dart' show MapIconCatalog, eventName, featureName;
 import '../widgets/rescue_request_sheet.dart';
 import '../widgets/rescue_status_card.dart';
 import 'sync_status_screen.dart';
@@ -84,6 +84,7 @@ class MapScreen extends StatefulWidget {
   final ThemeMode themeMode;
   final bool animationEnabled;
   final MapBasemapMode basemapMode;
+
   /// Null until the first NLSC probe finishes.
   final bool? emapReachable;
   final ValueChanged<MapBasemapMode>? onBasemapModeChanged;
@@ -163,16 +164,19 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   bool _reportPicking = false;
   bool _reportSubmitting = false;
   String? _reportDeliveryEventId;
-  StaticFeature? _routeDestination;
+  RouteDestination? _routeDestination;
   EvacuationRouteResult? _routeResult;
   String? _routeErrorMessage;
   bool _routeSheetVisible = false;
   bool _routeLoading = false;
   bool _routeStale = false;
+
+  /// The supply point being walked to was withdrawn; retrying cannot help.
+  bool _routeDestinationWithdrawn = false;
   String? _routeLoadingMessage;
   int _routeRequestToken = 0;
   DisasterType? _disasterType;
-  StaticFeature? _requestedRouteDestination;
+  RouteDestination? _requestedRouteDestination;
   bool _routeRecommendation = false;
   bool _routeWorkRunning = false;
   bool _routeRefreshReady = false;
@@ -186,7 +190,23 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   DateTime get _routeNow =>
       (widget.routeClock?.call() ?? DateTime.now()).toUtc();
   String _eventFingerprint(Iterable<MeshEvent> events) =>
-      RouteEventSnapshot(events, _routeNow).fingerprint;
+      _routeSnapshot(events).fingerprint;
+
+  /// A manual route to a supply point also watches that point's own updates.
+  String? get _routeSupplyKey =>
+      _routeRecommendation ? null : _requestedRouteDestination?.supplyKey;
+
+  RouteEventSnapshot _routeSnapshot(Iterable<MeshEvent> events) =>
+      RouteEventSnapshot(
+        events,
+        _routeNow,
+        destinationSupplyKey: _routeSupplyKey,
+      );
+
+  RouteDestinationKind get _routeKind =>
+      _routeRecommendation
+          ? RouteDestinationKind.shelter
+          : _requestedRouteDestination?.kind ?? RouteDestinationKind.shelter;
 
   @override
   void initState() {
@@ -717,7 +737,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
 
   void _checkRouteEvents() {
     if (!_routeSheetVisible) return;
-    final snapshot = RouteEventSnapshot(_persistedEvents, _routeNow);
+    final snapshot = _routeSnapshot(_persistedEvents);
     final reason = _observedRouteEvents?.changeReason(snapshot);
     _observedRouteEvents = snapshot;
     if (reason != null) _invalidateRoute(reason);
@@ -727,7 +747,11 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   void _armRouteExpiry() {
     _routeExpiryTimer?.cancel();
     if (!_routeSheetVisible || !_foreground || !widget.active) return;
-    final expires = RouteEventSnapshot.nextExpiry(_persistedEvents, _routeNow);
+    final expires = RouteEventSnapshot.nextExpiry(
+      _persistedEvents,
+      _routeNow,
+      destinationSupplyKey: _routeSupplyKey,
+    );
     if (expires == null) return;
     _routeExpiryTimer = Timer(expires.difference(_routeNow), _checkRouteEvents);
   }
@@ -743,7 +767,10 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
       _routeErrorMessage = null;
       _routeStale = true;
       _routeLoading = true;
-      _routeLoadingMessage = '正在更新逃生路線…';
+      _routeLoadingMessage =
+          _routeKind == RouteDestinationKind.shelter
+              ? '正在更新逃生路線…'
+              : '正在更新步行路線…';
       _routeUpdateNotice = '$reason，正在自動重新規劃';
     });
     _routeRefreshReady = false;
@@ -766,11 +793,34 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     unawaited(_runRouteRequest());
   }
 
-  Future<void> _calculateRouteTo(StaticFeature shelter) async {
+  Future<void> _calculateRouteTo(RouteDestination? destination) async {
     if (_routeLoading) return;
-    _requestedRouteDestination = shelter;
+    if (destination == null) {
+      _showInvalidRouteDestination();
+      return;
+    }
+    _requestedRouteDestination = destination;
     _routeRecommendation = false;
     await _startRouteRequest();
+  }
+
+  /// A shelter without an id or point cannot be sent to Android at all.
+  void _showInvalidRouteDestination() {
+    _routeRequestToken += 1;
+    setState(() {
+      _requestedRouteDestination = null;
+      _routeRecommendation = false;
+      _routeDestination = null;
+      _routeDestinationWithdrawn = false;
+      _routeResult = _invalidRouteResult;
+      _routeErrorMessage = null;
+      _routeLoading = false;
+      _routeLoadingMessage = null;
+      _routeStale = false;
+      _routeSheetVisible = true;
+      _selectedFeature = null;
+      _selectedEvent = null;
+    });
   }
 
   Future<void> _recommendNearestShelter() async {
@@ -784,7 +834,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     _routeRefreshTimer?.cancel();
     _routeUpdateReason = null;
     _routeUpdateNotice = null;
-    _observedRouteEvents = RouteEventSnapshot(_persistedEvents, _routeNow);
+    _observedRouteEvents = _routeSnapshot(_persistedEvents);
     _routeSheetVisible = true;
     _routeRefreshReady = true;
     _armRouteExpiry();
@@ -823,7 +873,9 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
           reason != null) {
         setState(() {
           _routeUpdateNotice =
-              _routeErrorMessage != null
+              _routeDestinationWithdrawn
+                  ? '$reason，已停止規劃'
+                  : _routeErrorMessage != null
                   ? '$reason，重新規劃失敗，請重試'
                   : '$reason，已自動重新規劃';
         });
@@ -936,12 +988,27 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     _selectedEvent = null;
   });
 
-  Future<void> _performRouteTo(StaticFeature shelter) async {
+  Future<void> _performRouteTo(RouteDestination requested) async {
     if (_routeLoading) return;
     final requestToken = ++_routeRequestToken;
     final eventFingerprint = _eventFingerprint(_persistedEvents);
+    // Supply points move, change status or get withdrawn; always route to the
+    // latest stored version rather than the one the user originally tapped.
+    final supplyKey = requested.supplyKey;
+    final supplyEvent =
+        supplyKey == null
+            ? null
+            : latestSupplyEvent(_persistedEvents, supplyKey);
+    final destination =
+        supplyEvent == null
+            ? requested
+            : RouteDestination.fromSupplyEvent(
+              supplyEvent,
+              name: eventName(supplyEvent),
+            )!;
     setState(() {
-      _routeDestination = shelter;
+      _routeDestination = destination;
+      _routeDestinationWithdrawn = false;
       _routeResult = null;
       _routeErrorMessage = null;
       _routeLoading = true;
@@ -952,15 +1019,11 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
       _selectedEvent = null;
     });
 
-    final geometry = shelter.geometry;
-    final shelterId = shelter.id;
-    final shelterPoint = geometry is PointGeometry ? geometry.point : null;
-    if (shelterId == null || shelterId.isEmpty || shelterPoint == null) {
-      if (!mounted || requestToken != _routeRequestToken) return;
+    if (supplyKey != null && supplyEvent == null) {
       setState(() {
         _routeLoading = false;
-        _routeLoadingMessage = null;
-        _routeResult = _invalidRouteResult;
+        _routeDestinationWithdrawn = true;
+        _routeErrorMessage = '此物資點已撤回或不再提供';
       });
       return;
     }
@@ -983,13 +1046,10 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     }
 
     try {
-      final result = await _bridge.calculateEvacuationRoute(
+      var result = await _bridge.calculateEvacuationRoute(
         origin: origin,
-        disasterType: _disasterType,
-        destination: ShelterRouteCandidate(
-          id: shelterId,
-          location: shelterPoint,
-        ),
+        disasterType: destination.isShelter ? _disasterType : null,
+        destination: destination.candidate,
       );
       if (!mounted || requestToken != _routeRequestToken) return;
       final stale = _eventFingerprint(_persistedEvents) != eventFingerprint;
@@ -997,12 +1057,18 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
         _checkRouteEvents();
         return;
       }
+      if (supplyEvent != null) {
+        for (final warning in supplyRouteWarnings(supplyEvent, _routeNow)) {
+          result = result.withWarning(warning);
+        }
+      }
       setState(() {
         _routeLoading = false;
         _routeLoadingMessage = null;
         _routeErrorMessage = null;
         _routeResult = result;
         _routeStale = stale;
+        _focusNewRoute(result);
       });
     } on Object catch (error) {
       if (!mounted || requestToken != _routeRequestToken) return;
@@ -1021,6 +1087,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     final eventFingerprint = _eventFingerprint(_persistedEvents);
     setState(() {
       _routeDestination = null;
+      _routeDestinationWithdrawn = false;
       _routeResult = null;
       _routeErrorMessage = null;
       _routeLoading = true;
@@ -1172,9 +1239,30 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
       if (bestRoute == null && checked == 0) {
         _routeErrorMessage = '已檢查 $checked 處候選避難所（20 公里內，最多 50 處），未找到可達路線';
       }
-      _routeDestination = bestFeature;
+      _routeDestination =
+          bestFeature == null
+              ? null
+              : RouteDestination.fromFeature(
+                bestFeature,
+                name: featureName(bestFeature),
+              );
       if (bestRoute != null || checked > 0) _routeErrorMessage = null;
+      _focusNewRoute(_routeResult);
     });
+  }
+
+  /// Brings a route the user just asked for into view. Automatic refreshes
+  /// keep the camera wherever the user has since moved it.
+  void _focusNewRoute(EvacuationRouteResult? route) {
+    if (_routeUpdateReason != null || route == null) return;
+    final bounds = routeFocusBounds(route);
+    if (bounds == null) return;
+    _focusPoint = GeoPoint(
+      longitude: (bounds.southwest.longitude + bounds.northeast.longitude) / 2,
+      latitude: (bounds.southwest.latitude + bounds.northeast.latitude) / 2,
+    );
+    _focusBounds = bounds;
+    _focusRequestId += 1;
   }
 
   void _finishRecommendationWithError(int requestToken, String message) {
@@ -1188,6 +1276,9 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     });
   }
 
+  VoidCallback? _walkingRouteAction(RouteDestination? destination) =>
+      destination == null ? null : () => _calculateRouteTo(destination);
+
   void _closeRoute() {
     _routeRefreshTimer?.cancel();
     _routeExpiryTimer?.cancel();
@@ -1200,6 +1291,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     _routeRequestToken += 1;
     setState(() {
       _routeDestination = null;
+      _routeDestinationWithdrawn = false;
       _routeResult = null;
       _routeErrorMessage = null;
       _routeSheetVisible = false;
@@ -2040,8 +2132,21 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                 onClose: _closeDetails,
                 onPlanEvacuationRoute:
                     _selectedFeature!.kind == 'shelter'
-                        ? () => _calculateRouteTo(_selectedFeature!)
+                        ? () => _calculateRouteTo(
+                          RouteDestination.fromFeature(
+                            _selectedFeature!,
+                            name: featureName(_selectedFeature!),
+                          ),
+                        )
                         : null,
+                onPlanWalkingRoute: _walkingRouteAction(
+                  _selectedFeature!.kind == 'medical'
+                      ? RouteDestination.fromFeature(
+                        _selectedFeature!,
+                        name: featureName(_selectedFeature!),
+                      )
+                      : null,
+                ),
               ),
             ),
           if (_selectedEvent != null)
@@ -2052,6 +2157,12 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                 areaDirectory: widget.administrativeAreaDirectory,
                 corroboration: _corroborationOf(_selectedEvent!),
                 onClose: _closeDetails,
+                onPlanWalkingRoute: _walkingRouteAction(
+                  RouteDestination.fromSupplyEvent(
+                    _selectedEvent!,
+                    name: eventName(_selectedEvent!),
+                  ),
+                ),
                 confirmedEarlierVersion: AttestationIndex.fromEvents(
                   _persistedEvents,
                 ).confirmedOtherVersion(_selectedEvent!),
@@ -2145,11 +2256,9 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                 stale: _routeStale,
                 loadingMessage: _routeLoadingMessage,
                 updateNotice: _routeUpdateNotice,
-                destinationName:
-                    _routeDestination == null
-                        ? null
-                        : featureName(_routeDestination!),
-                onRecalculate: _retryRoute,
+                destinationName: _routeDestination?.name,
+                destinationKind: _routeKind,
+                onRecalculate: _routeDestinationWithdrawn ? null : _retryRoute,
                 onClose: _closeRoute,
               ),
             ),
