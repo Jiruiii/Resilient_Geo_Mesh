@@ -1,6 +1,7 @@
 package com.resilientgeo.mesh.data
 
 import android.content.Context
+import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.resilientgeo.mesh.report.CrowdChunkCodec
@@ -9,23 +10,27 @@ import com.resilientgeo.mesh.trust.RescueContract
 import com.resilientgeo.mesh.trust.RescueRequestInput
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.io.File
 
 /**
  * On-device check of the rescue path: Keystore-wrapped key, Room, chunk cache,
- * one-ACTIVE rule and lifecycle. Clears Room rows for crowd.rescue first so
+ * one-ACTIVE rule and lifecycle. Each test gets an isolated in-memory Room and
+ * temporary cache, so the installed app never shows or relays a test rescue and
  * repeated runs stay independent of the one-ACTIVE limit.
  */
 @RunWith(AndroidJUnit4::class)
 class RescueRequestRepositoryInstrumentedTest {
     private val context: Context = ApplicationProvider.getApplicationContext()
-    private val repository = MeshRepository(context)
-    private val db = AppDatabase.get(context)
+    private lateinit var db: AppDatabase
+    private lateinit var cache: File
+    private lateinit var repository: MeshRepository
 
     private fun input(description: String = "instrumented rescue") = RescueRequestInput(
         requestType = "TRAPPED_DEBRIS",
@@ -39,10 +44,19 @@ class RescueRequestRepositoryInstrumentedTest {
     )
 
     @Before
-    fun clearRescueRows() {
-        db.eventDao().forNamespaceSync(RescueContract.NAMESPACE).forEach {
-            db.eventDao().deleteSync(it.namespace, it.eventId)
+    fun setUp() {
+        db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).build()
+        cache = File.createTempFile("rescue-test-", "", context.cacheDir).apply {
+            delete()
+            mkdirs()
         }
+        repository = MeshRepository(context, db, cache)
+    }
+
+    @After
+    fun tearDown() {
+        db.close()
+        cache.deleteRecursively()
     }
 
     @Test
