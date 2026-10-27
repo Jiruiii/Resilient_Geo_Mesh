@@ -93,14 +93,15 @@ test('every chunk bbox covers all of its event geometry', () => {
   }
 });
 
-test('tampering a chunk area_id is caught as a hash mismatch', () => {
+test('tampering a chunk area_id is caught against the signed manifest', () => {
   const bundle = bundleOf(signedEvents([record({ id: 'a' }), record({ id: 'b' })]));
   const tampered = structuredClone(bundle.chunks[0]);
   tampered.area_id = 'neihu.donghu';
   const result = verifyChunk(tampered, bundle.manifest, publicKey, { trustedKeyIds: [KEY_ID], now: NOW });
+  // The manifest entry pins area_id, so the change is rejected before hashing.
   assert.equal(result.valid, false);
-  assert.equal(result.stage, 'integrity');
-  assert.deepEqual(result.errors, ['chunk_hash_mismatch']);
+  assert.equal(result.stage, 'manifest');
+  assert.deepEqual(result.errors, ['chunk_metadata_mismatch']);
 });
 
 test('tampering a chunk bbox is caught as a bbox mismatch', () => {

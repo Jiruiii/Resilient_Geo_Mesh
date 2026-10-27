@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -62,12 +64,20 @@ void main() {
   });
 
   test('bundles the all-Taiwan offline road search asset', () async {
-    final raw = await rootBundle.loadString(
-      'assets/map/search/taiwan-roads.json',
+    // Decoding the whole 42 MB index as a string times out on CI runners;
+    // the identity and attribution fields sit at the start of the file.
+    final bytes = await rootBundle.load('assets/map/search/taiwan-roads.json');
+    final header = utf8.decode(
+      bytes.buffer.asUint8List(
+        bytes.offsetInBytes,
+        bytes.lengthInBytes < 1024 ? bytes.lengthInBytes : 1024,
+      ),
+      allowMalformed: true,
     );
 
-    expect(raw, contains('"dataset_id":"taiwan-roads"'));
-    expect(raw, contains('"attribution":"© OpenStreetMap contributors"'));
+    expect(bytes.lengthInBytes, greaterThan(1024 * 1024));
+    expect(header, contains('"dataset_id":"taiwan-roads"'));
+    expect(header, contains('"attribution":"© OpenStreetMap contributors"'));
   });
 
   testWidgets(

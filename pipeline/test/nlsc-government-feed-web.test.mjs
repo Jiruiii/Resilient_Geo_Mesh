@@ -33,6 +33,8 @@ function buildRelease({ retracted = false, events = true, severity = 'HIGH' } = 
     attributes: {
       area_id: 'tw.63000100',
       theme: 'hazard',
+      // The browser only downloads NCDR categories the app shows.
+      ncdr_category_code: 'flood',
       publication_retracted: retracted,
     },
     provenance: {

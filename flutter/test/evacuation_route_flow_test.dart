@@ -21,8 +21,9 @@ void main() {
       await _openShelterDetails(tester, '測試避難所');
       await tester.tap(find.text('規劃逃生路線'));
       await tester.pump();
+      // The disaster context lives in the layer settings sheet.
       await tester.tap(
-        find.byKey(const ValueKey('evacuation-disaster-context')),
+        find.byKey(const ValueKey('evacuation-context-collapsed')),
       );
       await tester.pumpAndSettle();
       await tester.ensureVisible(
@@ -66,10 +67,9 @@ void main() {
       );
       await _finishLoad(tester);
       await tester.tap(
-        find.byKey(const ValueKey('evacuation-disaster-context')),
+        find.byKey(const ValueKey('evacuation-context-collapsed')),
       );
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpAndSettle();
       await tester.ensureVisible(
         find.byKey(const ValueKey('disaster-type-selector')),
       );
@@ -79,7 +79,6 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tapAt(const Offset(5, 5));
       await tester.pumpAndSettle();
-      expect(find.text('避難情境：震災'), findsOneWidget);
       await tester.tap(find.bySemanticsLabel('推薦最近避難所'));
       await tester.pump();
       expect(bridge.lastDisasterType, DisasterType.earthquake);

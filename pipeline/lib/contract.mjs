@@ -6,6 +6,7 @@ import {
   eventSignatureInput,
   manifestHashInput,
   manifestSignatureInput,
+  ncdrChunkCategoryCode,
   sha256Canonical,
   sha256Bytes,
 } from './canonical.mjs';
@@ -318,7 +319,7 @@ export function verifyChunk(chunk, manifest, publicKey, options = {}) {
   const invalidEvent = eventResults.find((result) => !result.valid);
   if (invalidEvent) return { valid: false, stage: 'event', errors: ['chunk_contains_invalid_event'], eventResults };
   if (expectedEntry.category_code !== undefined && chunk.events.some((event) =>
-    event.source?.toUpperCase() !== 'NCDR' || event.attributes?.ncdr_category_code !== expectedEntry.category_code)) {
+    ncdrChunkCategoryCode(event) !== expectedEntry.category_code)) {
     return { valid: false, stage: 'manifest', errors: ['chunk_category_mismatch'], eventResults };
   }
   if (chunk.events.length !== chunk.event_count) return { valid: false, stage: 'completeness', errors: ['event_count_mismatch'], eventResults };
