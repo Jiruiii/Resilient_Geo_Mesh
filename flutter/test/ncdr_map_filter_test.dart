@@ -208,7 +208,8 @@ MeshEvent _event(
 }) => MeshEvent.fromJson(<String, dynamic>{
   'namespace': 'official.ncdr',
   'event_id': id,
-  'event_type': 'SAFETY_ALERT',
+  // SAFETY_ALERT is reserved for fire-safety inspections, which are hidden.
+  'event_type': 'NCDR_ALERT',
   'source': 'NCDR',
   'issued_at': '2026-09-26T03:00:00Z',
   'expires_at': '2099-01-01T00:00:00Z',

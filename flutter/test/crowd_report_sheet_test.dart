@@ -109,6 +109,8 @@ void main() {
       ),
     );
 
+    // The longer report form pushes the candidates below the test viewport.
+    await tester.ensureVisible(find.text('成功路'));
     await tester.tap(find.text('成功路'));
 
     expect(selected, result);

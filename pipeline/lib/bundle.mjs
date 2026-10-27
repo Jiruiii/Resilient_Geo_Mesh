@@ -4,6 +4,7 @@ import {
   chunkSignatureInput,
   manifestHashInput,
   manifestSignatureInput,
+  ncdrChunkCategoryCode,
   sha256Canonical,
   sha256Bytes,
 } from './canonical.mjs';
@@ -22,9 +23,7 @@ function priorityFor(events) {
 function areaTheme(event) {
   const areaId = event?.attributes?.area_id;
   const theme = event?.attributes?.theme;
-  const categoryCode = event?.source?.toUpperCase() === 'NCDR'
-    ? event?.attributes?.ncdr_category_code ?? 'other'
-    : null;
+  const categoryCode = ncdrChunkCategoryCode(event);
   if (typeof areaId !== 'string' || areaId.length === 0 || typeof theme !== 'string' || theme.length === 0) {
     throw new TypeError(`event ${event?.event_id ?? '<unknown>'} is missing attributes.area_id / attributes.theme`);
   }

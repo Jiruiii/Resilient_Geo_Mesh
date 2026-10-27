@@ -263,6 +263,9 @@ void main() {
         ),
       ),
     );
+    // Notification categories start collapsed.
+    await tester.tap(find.text('一般通知'));
+    await tester.pump();
     expect(find.textContaining('狀態：已查證（官方確認）'), findsOneWidget);
     expect(find.textContaining('ATTESTATION'), findsNothing);
   });

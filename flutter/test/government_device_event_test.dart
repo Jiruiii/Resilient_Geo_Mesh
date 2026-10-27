@@ -77,6 +77,17 @@ void main() {
         ),
       );
 
+      // Notification categories and their details start collapsed.
+      await tester.tap(find.text('政府公告・未分類'));
+      await tester.tap(find.text('一般通知'));
+      await tester.pump();
+      for (var card = 0; card < 2; card += 1) {
+        final expand = find.byTooltip('展開通知詳情').first;
+        await tester.ensureVisible(expand);
+        await tester.tap(expand);
+        await tester.pump();
+      }
+
       expect(find.text('測試官方警告'), findsOneWidget);
       expect(find.textContaining('狀態：官方簽章已驗證'), findsOneWidget);
       expect(find.textContaining('範圍：全台灣'), findsOneWidget);

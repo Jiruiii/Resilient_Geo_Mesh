@@ -93,6 +93,16 @@ export function chunkContent(chunk) {
   };
 }
 
+/**
+ * The category an NCDR event is chunked under. Bundling and verification must
+ * agree, so an NCDR event without a code is grouped and checked as 'other';
+ * events from other sources have no category.
+ */
+export function ncdrChunkCategoryCode(event) {
+  if (event?.source?.toUpperCase() !== 'NCDR') return null;
+  return event?.attributes?.ncdr_category_code ?? 'other';
+}
+
 export function chunkPayloadBytes(chunk) {
   return Buffer.from(canonicalize(chunkContent(chunk)), 'utf8');
 }
