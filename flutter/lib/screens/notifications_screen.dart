@@ -483,7 +483,6 @@ class _EventCard extends StatelessWidget {
     final alertCategory = alertCategoryLabelFor(event);
     final affectedArea = _affectedAreaFor(event, areaDirectory);
     final stateLabel = _eventStateLabel(event);
-    final taiwanTime = announcement || event.hasCwaWarningValidTime;
     final details = <String>[
       if (alertCategory != null) '告警分類：$alertCategory',
       if (demo) '模擬事件，非即時官方災情',
@@ -523,8 +522,8 @@ class _EventCard extends StatelessWidget {
       if (announcement && event.attributes?['content'] is String)
         '內容：${event.attributes!['content']}',
       if (event.hasCwaWarningValidTime) '發布時間：來源未提供',
-      '${event.hasCwaWarningValidTime ? '影響時段開始' : '發布'}：${_formatNotificationTime(event.issuedAt, taiwanTime)}',
-      '${event.hasCwaWarningValidTime ? '影響時段結束' : '有效期限'}：${_formatNotificationTime(event.expiresAt, taiwanTime)}',
+      '${event.hasCwaWarningValidTime ? '影響時段開始' : '發布'}：${_formatNotificationTime(event.issuedAt)}',
+      '${event.hasCwaWarningValidTime ? '影響時段結束' : '有效期限'}：${_formatNotificationTime(event.expiresAt)}',
     ].join('\n');
 
     return Card(
@@ -617,10 +616,12 @@ class _EventCard extends StatelessWidget {
                                 ),
                                 const SizedBox(height: 6),
                                 if (!isExpanded) ...<Widget>[
+                                  if (rescue != null)
+                                    Text('求救狀態：${rescue.status.label}'),
                                   Text('影響範圍：$affectedArea'),
                                   Text('狀態：$stateLabel'),
                                   Text(
-                                    '有效期限：${_formatNotificationTime(event.expiresAt, taiwanTime)}',
+                                    '有效期限：${_formatNotificationTime(event.expiresAt)}',
                                   ),
                                 ] else ...<Widget>[Text(details)],
                               ],
@@ -740,13 +741,13 @@ String _eventStateLabel(MeshEvent event) {
   return _applyStateLabel(event.effectiveApplyState);
 }
 
-String _formatNotificationTime(String? value, bool taiwanTime) {
+/// Shows ISO instants in Taiwan time rather than as the raw UTC string; a
+/// value without a zone is kept as written.
+String _formatNotificationTime(String? value) {
   if (value == null) return '無資料';
   final parsed = DateTime.tryParse(value);
-  if (parsed == null) return value;
-  return taiwanTime
-      ? GovernmentAnnouncementTime.formatTaiwan(parsed.toUtc())
-      : value;
+  if (parsed == null || !parsed.isUtc) return value;
+  return GovernmentAnnouncementTime.formatTaiwan(parsed);
 }
 
 String _applyStateLabel(String? applyState) => switch (applyState) {

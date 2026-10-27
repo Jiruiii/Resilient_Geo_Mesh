@@ -122,26 +122,29 @@ void main() {
     ]);
   });
 
-  test('address search uses county doorplate entries only for address-like queries', () {
-    final address = TaiwanSearchEntry(
-      id: 'address:63000:abc',
-      name: '臺北市松山區三民里三民路９５巷１號',
-      aliases: const <String>['臺北市松山區三民路95巷1號'],
-      kind: 'address',
-      region: '臺北市松山區',
-      coordinate: const GeoPoint(longitude: 121.5638, latitude: 25.0594),
-    );
-    final index = MapSearchIndex(
-      const <StaticFeature>[],
-      addressEntries: <TaiwanSearchEntry>[address],
-    );
+  test(
+    'address search uses county doorplate entries only for address-like queries',
+    () {
+      final address = TaiwanSearchEntry(
+        id: 'address:63000:abc',
+        name: '臺北市松山區三民里三民路９５巷１號',
+        aliases: const <String>['臺北市松山區三民路95巷1號'],
+        kind: 'address',
+        region: '臺北市松山區',
+        coordinate: const GeoPoint(longitude: 121.5638, latitude: 25.0594),
+      );
+      final index = MapSearchIndex(
+        const <StaticFeature>[],
+        addressEntries: <TaiwanSearchEntry>[address],
+      );
 
-    final result = index.query('台北市 松山區 三民路 95巷1號').single;
-    expect(result.searchKind, 'address');
-    expect(result.address, '臺北市松山區三民里三民路９５巷１號');
-    expect(result.coordinate!.longitude, 121.5638);
-    expect(index.query('三民路'), isEmpty);
-  });
+      final result = index.query('台北市 松山區 三民路 95巷1號').single;
+      expect(result.searchKind, 'address');
+      expect(result.address, '臺北市松山區三民里三民路９５巷１號');
+      expect(result.coordinate!.longitude, 121.5638);
+      expect(index.query('三民路'), isEmpty);
+    },
+  );
 
   test('ignores whitespace-only queries and features without coordinates', () {
     final missingGeometry = StaticFeature.fromJson(<String, dynamic>{
@@ -290,6 +293,28 @@ void main() {
       containsAll(<String>['臺北市', '高雄市']),
     );
     expect(results.every((item) => item.feature == null), isTrue);
+  });
+
+  test('collapses same-name road segments in one region into one result', () {
+    final index = MapSearchIndex(
+      const [],
+      roadEntries: <TaiwanSearchEntry>[
+        for (var segment = 0; segment < 3; segment += 1)
+          TaiwanSearchEntry.fromJson(<String, dynamic>{
+            'id': 'way:neihu-1st-$segment',
+            'name': '內湖一路',
+            'aliases': <String>[],
+            'kind': 'road',
+            'region': '宜蘭縣冬山鄉',
+            'coordinate': <double>[121.79 + segment / 1000, 24.63],
+          }),
+      ],
+    );
+
+    final results = index.query('內湖一路');
+
+    expect(results, hasLength(1));
+    expect(results.single.displayTitle, '宜蘭縣冬山鄉・內湖一路');
   });
 
   test('searches administrative areas before map drag refinement', () {

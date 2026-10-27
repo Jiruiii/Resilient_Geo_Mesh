@@ -108,6 +108,8 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
   static const _countyWarningFillLayerId = 'app-cwa-county-warning-fill';
   static const _routeSourceId = 'app-evacuation-route';
   static const _routeLineLayerId = 'app-evacuation-route-line';
+  static const _searchSourceId = 'app-search-selection';
+  static const _searchPointLayerId = 'app-search-selection-point';
 
   final OfflineMapAssetStore _assetStore = OfflineMapAssetStore();
   late final Future<Map<String, Map<String, dynamic>>> _countyBoundaries =
@@ -139,6 +141,8 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
   Timer? _ncdrWarningExpiryTimer;
   bool _routeSourceReady = false;
   bool _routeLayerReady = false;
+  bool _searchSourceReady = false;
+  bool _searchLayerReady = false;
   bool _markerRefreshScheduled = false;
   bool _markerProjectionInFlight = false;
   Size? _mapViewportSize;
@@ -240,6 +244,10 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
     if (oldWidget.route != widget.route) {
       unawaited(_ensureRouteLayer());
     }
+    if (oldWidget.searchSelection != widget.searchSelection ||
+        oldWidget.showReportLocationPicker != widget.showReportLocationPicker) {
+      unawaited(_ensureSearchSelectionLayer());
+    }
     if (oldWidget.staticFeatures != widget.staticFeatures ||
         oldWidget.showShelters != widget.showShelters ||
         oldWidget.showMedical != widget.showMedical ||
@@ -328,6 +336,8 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
         _ncdrWarningExpiryTimer?.cancel();
         _routeSourceReady = false;
         _routeLayerReady = false;
+        _searchSourceReady = false;
+        _searchLayerReady = false;
       });
     } on Object catch (error) {
       if (!mounted || generation != _styleLoadGeneration) return;
@@ -1039,6 +1049,7 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
     await _ensureEventLayers();
     unawaited(_ensureCountyWarningLayer());
     await _ensureRouteLayer();
+    await _ensureSearchSelectionLayer();
     _queueMarkerRefresh();
     if (_pendingEventFocus != null) {
       await _focusPendingEvent();
@@ -1316,6 +1327,48 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
     } on Object {
       // A route layer is an enhancement. Native layer incompatibility must not
       // hide the map or the Flutter route summary.
+    }
+  }
+
+  /// Only results without a marker of their own get the pin, and never while
+  /// the centre pin is picking a report location.
+  GeoPoint? get _searchSelectionPoint {
+    final selection = widget.searchSelection;
+    if (selection == null ||
+        selection.feature != null ||
+        widget.showReportLocationPicker) {
+      return null;
+    }
+    return selection.coordinate;
+  }
+
+  Future<void> _ensureSearchSelectionLayer() async {
+    final controller = _mapController;
+    if (controller == null || !_styleLoaded) return;
+    final data = searchSelectionFeatureCollection(_searchSelectionPoint);
+    try {
+      if (!_searchSourceReady) {
+        await controller.addGeoJsonSource(_searchSourceId, data);
+        _searchSourceReady = true;
+      }
+      if (!_searchLayerReady) {
+        await controller.addCircleLayer(
+          _searchSourceId,
+          _searchPointLayerId,
+          const CircleLayerProperties(
+            circleColor: '#DC2626',
+            circleRadius: 9,
+            circleStrokeColor: '#FFFFFF',
+            circleStrokeWidth: 3,
+          ),
+          enableInteraction: false,
+        );
+        _searchLayerReady = true;
+      }
+      await controller.setGeoJsonSource(_searchSourceId, data);
+    } on Object {
+      // Like the route line, the pin is an enhancement; the camera still
+      // moves to the result if the native layer cannot be added.
     }
   }
 

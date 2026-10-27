@@ -986,6 +986,8 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   void _closeDetails() => setState(() {
     _selectedFeature = null;
     _selectedEvent = null;
+    // Tapping the map also dismisses the search result pin.
+    _searchSelection = null;
   });
 
   Future<void> _performRouteTo(RouteDestination requested) async {
@@ -1625,7 +1627,8 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
       _focusPoint = coordinate;
       _focusBounds = null;
       _focusRequestId += 1;
-      _searchSelection = result;
+      // _focusPoint moves the camera; a search pin would outlive the pick.
+      _searchSelection = null;
       _pickTarget = _PickTarget.rescue;
       _rescueSheetHidden = true;
       _reportPicking = true;
@@ -1701,7 +1704,8 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
       _focusPoint = coordinate;
       _focusBounds = null;
       _focusRequestId += 1;
-      _searchSelection = result;
+      // _focusPoint moves the camera; a search pin would outlive the pick.
+      _searchSelection = null;
       _reportSheetVisible = false;
       _reportPicking = true;
       _pickTarget = _PickTarget.report;
@@ -1802,6 +1806,8 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   void _selectSearchResult(MapSearchResult result) {
     _mapSearchGeneration++;
     _mapSearchDebounce?.cancel();
+    // The map is the next thing to look at; keep the keyboard from covering it.
+    FocusManager.instance.primaryFocus?.unfocus();
     setState(() {
       _searchSelection = result;
       _focusPoint = result.coordinate;
@@ -1987,59 +1993,67 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                     ),
                   ),
                   const SizedBox(height: 8),
-                  LayoutBuilder(
-                    builder: (context, constraints) {
-                      const actionColumnWidth = 48.0;
-                      const actionGap = 8.0;
-                      final statusWidth =
-                          (constraints.maxWidth - actionColumnWidth - actionGap)
-                              .clamp(0.0, 520.0)
-                              .toDouble();
+                  // Open search results push this row down while the keyboard
+                  // lifts the zoom panel; hide it so the two never overlap.
+                  if (searchResults.isEmpty)
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        const actionColumnWidth = 48.0;
+                        const actionGap = 8.0;
+                        final statusWidth =
+                            (constraints.maxWidth -
+                                    actionColumnWidth -
+                                    actionGap)
+                                .clamp(0.0, 520.0)
+                                .toDouble();
 
-                      return Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: <Widget>[
-                          ConstrainedBox(
-                            constraints: BoxConstraints(maxWidth: statusWidth),
-                            child: _StatusOverlay(
-                              snapshotAt: staticFeatures.snapshotAt,
-                              visibleEventCount: visibleEventCount,
-                              hasCurrentLocation:
-                                  _runtimeState.currentLocation != null,
-                              reportDeliveryEventId: _reportDeliveryEventId,
-                              staticFeaturesPending:
-                                  widget.staticFeaturesPending,
-                              staticFeaturesFailed: widget.staticFeaturesFailed,
+                        return Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: <Widget>[
+                            ConstrainedBox(
+                              constraints: BoxConstraints(
+                                maxWidth: statusWidth,
+                              ),
+                              child: _StatusOverlay(
+                                snapshotAt: staticFeatures.snapshotAt,
+                                visibleEventCount: visibleEventCount,
+                                hasCurrentLocation:
+                                    _runtimeState.currentLocation != null,
+                                reportDeliveryEventId: _reportDeliveryEventId,
+                                staticFeaturesPending:
+                                    widget.staticFeaturesPending,
+                                staticFeaturesFailed:
+                                    widget.staticFeaturesFailed,
+                              ),
                             ),
-                          ),
-                          const Spacer(),
-                          _MapQuickActions(
-                            onRescue:
-                                _reportSheetVisible ||
-                                        _reportPicking ||
-                                        _routeSheetVisible ||
-                                        _rescue.step != null
-                                    ? null
-                                    : _openRescueRequest,
-                            onReport:
-                                _reportSheetVisible ||
-                                        _reportPicking ||
-                                        _routeSheetVisible ||
-                                        _rescue.step != null
-                                    ? null
-                                    : _openCrowdReport,
-                            onRecommend:
-                                _reportSheetVisible ||
-                                        _reportPicking ||
-                                        _routeSheetVisible ||
-                                        _rescue.step != null
-                                    ? null
-                                    : _recommendNearestShelter,
-                          ),
-                        ],
-                      );
-                    },
-                  ),
+                            const Spacer(),
+                            _MapQuickActions(
+                              onRescue:
+                                  _reportSheetVisible ||
+                                          _reportPicking ||
+                                          _routeSheetVisible ||
+                                          _rescue.step != null
+                                      ? null
+                                      : _openRescueRequest,
+                              onReport:
+                                  _reportSheetVisible ||
+                                          _reportPicking ||
+                                          _routeSheetVisible ||
+                                          _rescue.step != null
+                                      ? null
+                                      : _openCrowdReport,
+                              onRecommend:
+                                  _reportSheetVisible ||
+                                          _reportPicking ||
+                                          _routeSheetVisible ||
+                                          _rescue.step != null
+                                      ? null
+                                      : _recommendNearestShelter,
+                            ),
+                          ],
+                        );
+                      },
+                    ),
                   const SizedBox(height: 8),
                   if (_reportPicking)
                     const Padding(
@@ -2054,25 +2068,33 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                   if (_rescue.activeSession != null &&
                       _rescue.step == null &&
                       !_reportPicking)
-                    PointerInterceptor(
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 520),
-                        child: RescueStatusCard(
-                          session: _rescue.activeSession!,
-                          now: _rescue.now,
-                          reminderDue: _rescue.expiryReminderDue,
-                          busy: _rescue.busy,
-                          sirenPanel:
-                              _rescue.showsSirenShortcut
-                                  ? widget.sirenPanelBuilder?.call(
-                                    context,
-                                    _rescue,
-                                  )
-                                  : null,
-                          onUpdate: _rescue.startUpdate,
-                          onExtend: _rescue.extend,
-                          onResolve: _rescue.resolve,
-                          onCancel: _rescue.cancelRequest,
+                    // Scroll instead of growing into the bottom controls
+                    // (layer button, zoom panel), which would cover the
+                    // card's resolve/cancel actions.
+                    Flexible(
+                      child: PointerInterceptor(
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 520),
+                          child: SingleChildScrollView(
+                            key: const ValueKey<String>('rescue-status-scroll'),
+                            child: RescueStatusCard(
+                              session: _rescue.activeSession!,
+                              now: _rescue.now,
+                              reminderDue: _rescue.expiryReminderDue,
+                              busy: _rescue.busy,
+                              sirenPanel:
+                                  _rescue.showsSirenShortcut
+                                      ? widget.sirenPanelBuilder?.call(
+                                        context,
+                                        _rescue,
+                                      )
+                                      : null,
+                              onUpdate: _rescue.startUpdate,
+                              onExtend: _rescue.extend,
+                              onResolve: _rescue.resolve,
+                              onCancel: _rescue.cancelRequest,
+                            ),
+                          ),
                         ),
                       ),
                     )
@@ -2097,7 +2119,9 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                         ),
                       ),
                     ),
-                  const Spacer(),
+                  // The column already starts at the top; only the bottom
+                  // controls' band is kept clear.
+                  const SizedBox(height: _bottomControlsReserve),
                 ],
               ),
             ),
@@ -2317,7 +2341,7 @@ class _StatusOverlay extends StatelessWidget {
               ),
             if (reportDeliveryEventId != null) ...<Widget>[
               const Text('民眾警示：未驗證／待同步'),
-              Text('警示編號：$reportDeliveryEventId'),
+              Text('警示編號：${_shortReportId(reportDeliveryEventId!)}'),
             ],
           ],
         ),
@@ -2325,6 +2349,15 @@ class _StatusOverlay extends StatelessWidget {
     ),
   );
 }
+
+/// Height kept clear above the map's bottom edge for the layer button and the
+/// zoom panel, so cards in the top overlay column never slide under them.
+const double _bottomControlsReserve = 160;
+
+/// A full report id (device key + UUID) is too long for the status panel; its
+/// tail is enough to match the report in the notifications list.
+String _shortReportId(String id) =>
+    id.length <= 12 ? id : '…${id.substring(id.length - 8)}';
 
 class _EvacuationLayerSettingsButton extends StatelessWidget {
   const _EvacuationLayerSettingsButton({required this.onOpen});

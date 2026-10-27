@@ -2,8 +2,18 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:resilientgeo_flutter/data/display_time.dart';
 
 void main() {
-  test('formats an ISO update time without leading zeros in date parts', () {
-    expect(formatUpdateTime('2026-09-25T18:20:00Z'), '2026-9-25 18:20:00');
+  test('formats a UTC or offset instant in Taiwan time', () {
+    // 18:20 UTC is 02:20 the next day in Taiwan; showing the UTC wall clock
+    // made rescue expiries look eight hours early.
+    expect(formatUpdateTime('2026-09-25T18:20:00Z'), '2026/09/26 02:20:00');
+    expect(
+      formatUpdateTime('2026-09-26T04:20:00+02:00'),
+      '2026/09/26 10:20:00',
+    );
+  });
+
+  test('keeps a zone-less wall-clock time as written', () {
+    expect(formatUpdateTime('2026-09-25T18:20:00'), '2026-9-25 18:20:00');
   });
 
   test('shows no data for a missing update time', () {

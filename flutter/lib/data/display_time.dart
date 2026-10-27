@@ -1,10 +1,18 @@
+import 'government_announcement_time.dart';
+
+/// Formats an event or snapshot time for display.
+///
+/// Instants carrying `Z` or an offset are shown in Taiwan time, matching the
+/// other user-facing times. A value without a zone is already a wall-clock
+/// time and is shown as written.
 String formatUpdateTime(String? value) {
   if (value == null || value.trim().isEmpty) return '無資料';
 
   final parsed = DateTime.tryParse(value);
   if (parsed == null) return value;
+  if (parsed.isUtc) return GovernmentAnnouncementTime.formatTaiwan(parsed);
 
-  final display = parsed.isUtc ? parsed.toUtc() : parsed;
+  final display = parsed;
   final hour = display.hour.toString().padLeft(2, '0');
   final minute = display.minute.toString().padLeft(2, '0');
   final second = display.second.toString().padLeft(2, '0');
