@@ -30,7 +30,10 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <application android:networkSecurityConfig="@xml/debug_network_security_config">
+        <!-- Drill data (in-memory Room, exercise node id, radio session) lives
+             in the activity; a rotation must resize Flutter, not recreate it. -->
         <activity android:name=".debug.MeshDrillActivity" android:exported="true"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:theme="@style/Theme.ResilientGeoMesh.OfflineGis" />
         <activity
             android:name=".debug.RouteValidationActivity"

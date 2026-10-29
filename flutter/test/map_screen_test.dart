@@ -199,6 +199,30 @@ void main() {
     expect(find.bySemanticsLabel('搜尋地點'), findsOneWidget);
     expect(find.bySemanticsLabel('圖層設定'), findsOneWidget);
     expect(tester.takeException(), isNull);
+
+    final rescue = tester.getRect(_byKey('open-rescue-request'));
+    final recommend = tester.getRect(_byKey('recommend-nearest-shelter'));
+    expect(recommend.top, greaterThan(rescue.bottom));
+    expect(recommend.left, rescue.left);
+  });
+
+  testWidgets('quick actions line up above the zoom panel in landscape', (
+    tester,
+  ) async {
+    // Pixel 8a landscape map area below the status bar and bottom navigation.
+    await tester.binding.setSurfaceSize(const Size(915, 300));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(_testApp());
+    await tester.pump();
+
+    expect(tester.takeException(), isNull);
+    final rescue = tester.getRect(_byKey('open-rescue-request'));
+    final recommend = tester.getRect(_byKey('recommend-nearest-shelter'));
+    final zoomControls = tester.getRect(find.byType(MapZoomControls));
+    expect(recommend.top, rescue.top);
+    expect(recommend.left, greaterThan(rescue.right));
+    expect(recommend.bottom, lessThan(zoomControls.top));
   });
 
   testWidgets('shows shelter verification progress and accepts late layers', (
@@ -276,3 +300,5 @@ Widget _testApp({
     initialState: MapInitialState(events: events, emergencyModeEnabled: false),
   ),
 );
+
+Finder _byKey(String key) => find.byKey(ValueKey<String>(key));
