@@ -216,6 +216,20 @@ listener；未造成測試失敗。兩側最後均恢復行動數據與原螢幕
 尚未驗收：反向群組擁有者、其他機型、多人同群組、全台規模資料、反覆離線連線
 成功率、長時間 Doze／鎖屏及耗電。上述交換不作為純 Wi-Fi 吞吐量或覆蓋距離量測。
 
+### 2026-10-27 Pixel 8a／Samsung SM-A5360 重測
+
+`RealPeerSyncInstrumentedTest` 第一次執行時，Pixel 通過而 Samsung 逾時：Pixel
+收完自己的分片並送出 TRANSFER 後約 0.06 秒就由測試拆除傳輸，Samsung 端
+`Software caused connection abort`，要到下一次相遇才補齊。正式
+`WifiDirectTransport.close()` 不關閉 socket，因此這是測試拆除時機造成的單向結果，
+不是正式服務的傳輸缺陷。測試改為本機完成後保持傳輸 5 秒再拆除（短於 10 秒同步冷卻，
+避免引擎在拆除瞬間又發起新連線）。
+
+修正後連續 6 輪：第一次交換 6／6 雙向成功；整體 5／6 通過。失敗的一輪是第二次相遇時
+Samsung 136 秒才發現 Pixel 的服務、Pixel 端連線逾時，超過測試的 150 秒上限，屬於
+既有的搜尋延遲問題（見上節）。其餘輪次的第二次相遇偶有 `Wi-Fi Direct action failed: 0`，
+自動重試後成功。
+
 ## 參考
 
 - [Android Wi-Fi Direct](https://developer.android.com/develop/connectivity/wifi/wifi-direct)

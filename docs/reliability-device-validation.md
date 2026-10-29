@@ -53,6 +53,8 @@ adb -s <Sharp serial> shell am instrument -w -e class com.resilientgeo.mesh.data
 
 `RealPeerSyncInstrumentedTest` 預設跳過，只有帶 `peer_seed` 才執行；它要求第一輪互補缺片、重建 transport 後第二輪沒有新 TRANSFER。這項測試使用真正 BLE 和同步引擎，但不等同正式前景服務的鎖屏／Doze 驗收，也不取代三機中繼及災情改道演練。
 
+加 `-e peer_transport wifi_direct` 或 `-e peer_transport nearby` 可改測其他傳輸（權限見 [Wi-Fi Direct](wifi-direct.md)、[Nearby](nearby-auto-transport.md)）。自 2026-10-27 起，每台在本機完成一輪後會再保持傳輸 5 秒才拆除，避免切斷對方仍在讀取的最後一份 TRANSFER；所有 instrumented 測試都使用記憶體 Room 與暫存快取，重跑前不需清除 App 資料。
+
 ## 下一批
 
 災害類型篩選、同步狀態頁、跨接觸續傳、路線自動重算、離線資料管理、預建搜尋索引、正式查證上行、精簡摘要及穩定分片仍屬後續功能。本輪先完成上述可靠性修正及擴大避難所搜尋，不把整份功能規劃視為已完成。
@@ -205,3 +207,44 @@ APK 簽章、ZIP 完整性與五份地圖資產雜湊均通過核對。
 
 本次證明上述兩台的發現、互補資料交換、再次相遇及藍牙重啟恢復；
 不代表已驗收所有機型、長時間 Doze、三機中繼或大型資料集的所有接觸情境。
+
+## 2026-10-27～28：Pixel 8a／Samsung 全功能實機檢查與修正
+
+裝置為 Pixel 8a（Android 17）與 Samsung SM-A5360（Android 16），以 USB adb 操作。
+兩台原有 App 為其他工作站簽章，經使用者同意解除安裝後重裝（清除該 App 本機資料），之後以 `adb install -r` 保留資料更新。
+
+### 找到的問題與處理
+
+| 問題 | 原因 | 處理 |
+| --- | --- | --- |
+| 剛裝好的 App 出現一筆進行中的「受困於瓦礫」求救與數筆淹水回報 | `RescueRequestRepositoryInstrumentedTest`、`CrowdReportRepositoryInstrumentedTest`、`AutoSyncRepositoryInstrumentedTest` 直接使用正式 `AppDatabase` 與 `chunk-cache`，測試資料會經 mesh 轉傳 | 三者改用記憶體 Room 與暫存快取；遺留求救以 App 的「取消誤報」清除 |
+| 8 項 instrumented 測試在兩台都失敗 | Migration 測試只註冊 1→2、2→3（資料庫已是 v8）；6 項使用舊 `official.*` 示範分片，被目前的來源白名單拒絕 | 新增 `AppDatabase.ALL_MIGRATIONS` 供正式程式與測試共用；改用當場簽章的民眾回報分片 |
+| Wi-Fi Direct 雙機測試偶爾只有一方收到 | 測試在本機完成後立即拆除傳輸，切斷對方仍在讀取的 TRANSFER；正式 `WifiDirectTransport.close()` 不關閉 socket，不受影響 | 測試完成後保持傳輸 5 秒（短於 10 秒同步冷卻）再拆除 |
+| 求救到期、事件到期與通知有效期限少 8 小時，通知頁顯示 ISO 原始字串 | `formatUpdateTime` 保留 UTC 牆上時間且未標時區 | 帶時區的時間一律以台灣時間顯示 |
+| 求救卡片被左下圖層按鈕蓋住；搜尋時右側按鈕疊到縮放面板 | 卡片不限高度；鍵盤抬高縮放面板時，搜尋結果把狀態列往下推 | 卡片在底部控制區上方捲動；搜尋結果展開時隱藏狀態列與快捷按鈕 |
+| 搜尋同名道路片段重複、「內湖 里」不知縣市、選取後鍵盤不收、地圖沒有標記 | 索引每個路段一筆；村里缺上層名稱；選取後未取消焦點；道路／行政區結果沒有自己的 marker | 相同名稱、類型、地區只列一筆；以座標推斷縣市；選取後收鍵盤；新增 MapLibre 搜尋結果圓點（點地圖清除） |
+| 已取消（誤報）的求救仍在通知與未讀數中 | 通知清單未依求救狀態過濾 | 已取消者不列入；已獲救者保留並顯示求救狀態 |
+
+圖示按鈕原先以 uiautomator 輸出判定缺少無障礙標籤，複查後確認都有 `tooltip`（TalkBack 可讀），不需修改。
+
+### 驗證結果
+
+| 項目 | Pixel 8a | Samsung SM-A5360 |
+| --- | --- | --- |
+| 全部 instrumented（修正前） | 38／46 | 38／46 |
+| 全部 instrumented（修正後） | 46／46 | 46／46 |
+| 演練合約（`drill_contract=true`，需 `npm run drill:serve` 與 `adb reverse tcp:8788 tcp:8788`） | 通過（10-28 重跑通過） | 通過 |
+| Nearby 啟動與自動備援 smoke | 通過（10-28 重跑通過；藍牙關閉時兩項會以「需開啟藍牙」失敗） | 通過 |
+| 兩機離線演練（Samsung 為 A、Pixel 為 B，10-28 重跑） | B：基準 218 公尺 → FULL 改推薦 A 950 公尺 → 同版不重傳 → OPEN 恢復 218 公尺 | A：發布端，兩輪各送出 2 片 |
+| 兩機 BLE（互補＋再次相遇不重傳） | 通過 | 通過 |
+| 兩機 Nearby | 通過 | 通過 |
+| 兩機 Wi-Fi Direct（修正前 2 輪） | 1／2；失敗輪為第一次交換只單向成功 | 同左 |
+| 兩機 Wi-Fi Direct（修正後 6 輪） | 第一次交換 6／6 雙向成功；整體 5／6，失敗輪為第二次相遇時 Samsung 136 秒才發現 Pixel，超過 150 秒上限 | 同左 |
+
+修正後跑完整 instrumented 測試，兩台 App 的事件數與通知數都沒有增加。Pixel 畫面複查：時間顯示台灣時間、求救卡片的「我已安全／取消誤報」完整可見、搜尋無重複且有圖釘、取消的求救不再計入通知。Web 以 `flutter build web --release --no-web-resources-cdn` 建置，在本機瀏覽器確認搜尋去重、村里縣市、搜尋圖釘與清除，與 Android 一致。
+
+Samsung 測試期間電量曾降至 5% 並自動開啟省電模式，USB 幾乎無法充電，期間曾自動鎖屏與斷線；充電後才完成上述 Samsung 結果。
+
+兩機離線演練的細節與新觀察（Samsung 邀請視窗、橫向溢位、旋轉清除演練狀態、事件快照時間；後三項已修正）見 [委員追蹤](committee-followup.md) 的「雙機離線驗收（2026-10-28 重跑）」。
+
+本次未驗收：一般 App 中醫療點／物資站步行路線的實機畫面、圖層與底圖切換畫面、三機中繼、鎖屏與 Doze。

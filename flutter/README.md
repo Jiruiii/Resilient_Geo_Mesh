@@ -11,6 +11,8 @@ ResilientGeo 的 Flutter add-to-app 地圖模組；Android host 位於 `../andro
 - 政府事件 feed、簽章避難所／醫療圖層與簽章縣市門牌包維持獨立資料流程。它們仍透過 Web／Android 的驗簽 client 與 Server/API 串接；底圖不走該下載服務。資料來源與目前驗證狀態見 [資料說明](../data_description.md)、[點位涵蓋報告](../docs/data-coverage-2026-10-04.md) 與 [Central Server runbook](../docs/central-server-runbook.md)。
 - 道路名稱搜尋使用隨 App 提供的 OSM 搜尋索引；門牌搜尋依使用者已取得的縣市包；步行路線另用雙北路網，不從底圖推算道路幾何。道路索引與路網產生方式見 [地圖工具說明](../tools/maps/README.md) 和[雙北路線文件](../docs/taipei-offline-routing.md)。
 - 搜尋在背景 isolate 執行，marker projection 與行政區聚合使用快取；跨機型效能和完整實機離線流程仍須依裝置驗收。
+- 2026-10-27：同名、同類型、同地區的道路片段只列一筆；村里結果以座標補上縣市；選取結果後收起鍵盤，道路／行政區／門牌結果以紅色圓點標記（點地圖清除）。事件、求救與通知中帶時區的時間一律以台灣時間顯示；已取消（誤報）的求救不列入通知與未讀數。Web 與 Android 共用這份程式碼。
+- 2026-10-28：地圖區塊低於 400dp（手機橫向、矮視窗）時，右上快捷按鈕改橫排，不再疊到縮放面板或造成底部溢位；路線卡片的「事件快照」以台灣時間顯示。
 
 ## 驗證指令
 

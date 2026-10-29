@@ -38,6 +38,7 @@
 
 - [ ] **Emergency Mode 自動同步實機驗證**（2026-09-24 新增）
   PR #18 的 `AutoPeerSyncEngine` 讓前景服務發現 peer 後自動跑 HELLO→DIFF→REQUEST→TRANSFER，並由 `chunk-cache` 供應中繼分片，但目前只有 JVM 與 instrumented 測試。要補的實機驗證有三項：(1) 兩機都開 Emergency Mode、不做任何操作，確認會自動完成交換，第二次相遇時 `missing=[]`；(2) 三機 A→B→C，確認 B 從 `chunk-cache` 轉傳給 C，不依賴 `assets/`；(3) 鎖屏狀態下是否仍會同步，這一項和第 3 項一起做。驗證完要更新 README 的限制段落。已知限制：真的斷線時不會跨接觸續傳，會從 byte 0 重傳。
+  進度（2026-10-28）：(1) 已於 2026-10-02 在 Samsung／Pixel 以正式緊急模式完成自動交換與再次相遇不重傳；2026-10-27 另以 `RealPeerSyncInstrumentedTest` 驗證 BLE、Nearby、Wi-Fi Direct 三種傳輸。(2)(3) 仍待完成，詳見 `docs/reliability-device-validation.md`。
 
 - [x] **（額外修復，不在原始清單內）BleGattTransport 訊息序號 race bug**（2026-09-05 完成）
   team-assignments.md 記錄的「跨接觸續傳疊加 critical-first 時收到雜訊 payload、後續 chunk ack 逾時」的深層限制已修好：每個 GATT write 加 1-byte 訊息序號，接收端用 `(peer address, seq)` 取代單一 peer 一個 slot。修復過程中在真機上又抓到一個新 bug（sender 端記錄中斷 seq 的表被無關的後續訊息成功清掉）並修正。兩輪 Pixel 7 ↔ Pixel 8a 實機驗證，logcat 佐證 `interrupted → 其他 3 個 chunk 正常送達 → resume 成功組出完整訊息`，無雜訊、無逾時。細節見 `team-assignments.md` 該條目與 commit `cabf6ca`。
@@ -149,7 +150,7 @@
 - [x] Bridge：`submitCrowdReport`，`MapBridgeProtocol` 測試；錯誤碼 `invalid_input`／`signing_unavailable`／`storage_unavailable`。
 - [x] Flutter UI：已由 UI 計畫完成（浮動按鈕＋目前位置或地圖選點＋本機地址搜尋，送出前確認）。本次補上：`UNVERIFIED` 回報會顯示在地圖上（紫色），詳情頁固定顯示「未經查證，僅供參考」。
 - [x] TTL：6 小時。每台裝置同時最多 20 筆有效回報。
-- [ ] 實機手動驗證：關網路回報 → 強制結束 → 重開仍在（`CrowdReportRepositoryInstrumentedTest` 已寫好，尚未在裝置上跑）。
+- [ ] 實機手動驗證：關網路回報 → 強制結束 → 重開仍在（`CrowdReportRepositoryInstrumentedTest` 已於 2026-10-27 在 Pixel 8a／Samsung 通過，並改用獨立資料庫；這裡要求的關網路後強制結束、重開仍在的手動流程尚未在裝置上做）。
 
 **F2. crowd 回報經 mesh 轉傳**
 - [x] 一筆回報一個 chunk（`crowd-reports`／`crowd.reports`，`manifest_id = crowd:none`），由原回報者裝置金鑰簽章、中繼不重簽；格式見 `docs/peer-sync-v0.md`「群眾回報分片」。
