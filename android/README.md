@@ -157,6 +157,11 @@ The following three verification layers were run against the native-only
 baseline on a real device. They are historical evidence and do not replace
 the current Flutter-host build check described above:
 
+> Historical phase-1 record. Current counts (2026-10-28): 261 JVM unit
+> tests and 46 instrumented tests, all passing on Pixel 8a and Samsung
+> SM-A5360. Instrumented tests use an in-memory Room and a temporary
+> cache, so they never write reports or rescues into the installed app.
+
 All three verification layers have actually been run against this
 branch, on a real device (Pixel 8a, API 36, connected over USB) — not
 just assumed from reading the build files:
@@ -426,8 +431,11 @@ acceptance checks.
   `ChunkVerifier` → `EventIngestor`, so peer data follows the same apply
   rules as the bundled fixture. `EmergencyModeService` runs
   `AutoPeerSyncEngine`, which syncs automatically with every discovered
-  peer and relays chunks from the local `chunk-cache`. That path has
-  JVM and instrumented tests but **has not yet been verified on real
-  devices** (see `docs/mvp-remaining-tasks.md` section A). A transfer
+  peer and relays chunks from the local `chunk-cache`. Two-device
+  exchange and re-encounter have since been verified on real phones over
+  BLE, Wi-Fi Direct and Nearby (latest: Pixel 8a + Samsung SM-A5360,
+  2026-10-27); three-node relay on the foreground service, long Doze and
+  success-rate statistics are still open (see
+  `docs/reliability-device-validation.md`). A transfer
   interrupted by a real disconnect restarts from byte 0 at the next
   contact; byte-level resume only works within one open connection.

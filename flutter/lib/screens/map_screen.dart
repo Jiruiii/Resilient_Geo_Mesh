@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
@@ -986,6 +987,8 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   void _closeDetails() => setState(() {
     _selectedFeature = null;
     _selectedEvent = null;
+    // Tapping the map also dismisses the search result pin.
+    _searchSelection = null;
   });
 
   Future<void> _performRouteTo(RouteDestination requested) async {
@@ -1625,7 +1628,8 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
       _focusPoint = coordinate;
       _focusBounds = null;
       _focusRequestId += 1;
-      _searchSelection = result;
+      // _focusPoint moves the camera; a search pin would outlive the pick.
+      _searchSelection = null;
       _pickTarget = _PickTarget.rescue;
       _rescueSheetHidden = true;
       _reportPicking = true;
@@ -1701,7 +1705,8 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
       _focusPoint = coordinate;
       _focusBounds = null;
       _focusRequestId += 1;
-      _searchSelection = result;
+      // _focusPoint moves the camera; a search pin would outlive the pick.
+      _searchSelection = null;
       _reportSheetVisible = false;
       _reportPicking = true;
       _pickTarget = _PickTarget.report;
@@ -1802,6 +1807,8 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   void _selectSearchResult(MapSearchResult result) {
     _mapSearchGeneration++;
     _mapSearchDebounce?.cancel();
+    // The map is the next thing to look at; keep the keyboard from covering it.
+    FocusManager.instance.primaryFocus?.unfocus();
     setState(() {
       _searchSelection = result;
       _focusPoint = result.coordinate;
@@ -1971,135 +1978,184 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
             focusRequestId: _focusRequestId,
           ),
           SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  PointerInterceptor(
-                    child: _SearchOverlay(
-                      text: _searchText,
-                      controller: _searchController,
-                      results: searchResults,
-                      onChanged: _onMapSearchChanged,
-                      onSelected: _selectSearchResult,
-                      onAddressPacksPressed: _openAddressPackDialog,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  LayoutBuilder(
-                    builder: (context, constraints) {
-                      const actionColumnWidth = 48.0;
-                      const actionGap = 8.0;
-                      final statusWidth =
-                          (constraints.maxWidth - actionColumnWidth - actionGap)
-                              .clamp(0.0, 520.0)
-                              .toDouble();
+            child: LayoutBuilder(
+              builder: (context, overlayConstraints) {
+                // A short map area (landscape phone, drill screen) cannot fit
+                // the stacked quick actions above the zoom panel.
+                final compactActions =
+                    overlayConstraints.maxHeight <
+                    _verticalQuickActionsMinHeight;
+                return Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      PointerInterceptor(
+                        child: _SearchOverlay(
+                          text: _searchText,
+                          controller: _searchController,
+                          results: searchResults,
+                          onChanged: _onMapSearchChanged,
+                          onSelected: _selectSearchResult,
+                          onAddressPacksPressed: _openAddressPackDialog,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      // Open search results push this row down while the keyboard
+                      // lifts the zoom panel; hide it so the two never overlap.
+                      if (searchResults.isEmpty)
+                        LayoutBuilder(
+                          builder: (context, constraints) {
+                            final actionColumnWidth =
+                                compactActions
+                                    ? _MapQuickActions.rowWidth
+                                    : _MapQuickActions.buttonSize;
+                            const actionGap = 8.0;
+                            final statusWidth =
+                                (constraints.maxWidth -
+                                        actionColumnWidth -
+                                        actionGap)
+                                    .clamp(0.0, 520.0)
+                                    .toDouble();
 
-                      return Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: <Widget>[
-                          ConstrainedBox(
-                            constraints: BoxConstraints(maxWidth: statusWidth),
-                            child: _StatusOverlay(
-                              snapshotAt: staticFeatures.snapshotAt,
-                              visibleEventCount: visibleEventCount,
-                              hasCurrentLocation:
-                                  _runtimeState.currentLocation != null,
-                              reportDeliveryEventId: _reportDeliveryEventId,
-                              staticFeaturesPending:
-                                  widget.staticFeaturesPending,
-                              staticFeaturesFailed: widget.staticFeaturesFailed,
+                            return Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: <Widget>[
+                                ConstrainedBox(
+                                  constraints: BoxConstraints(
+                                    maxWidth: statusWidth,
+                                  ),
+                                  child: _StatusOverlay(
+                                    snapshotAt: staticFeatures.snapshotAt,
+                                    visibleEventCount: visibleEventCount,
+                                    hasCurrentLocation:
+                                        _runtimeState.currentLocation != null,
+                                    reportDeliveryEventId:
+                                        _reportDeliveryEventId,
+                                    staticFeaturesPending:
+                                        widget.staticFeaturesPending,
+                                    staticFeaturesFailed:
+                                        widget.staticFeaturesFailed,
+                                  ),
+                                ),
+                                const Spacer(),
+                                _MapQuickActions(
+                                  horizontal: compactActions,
+                                  onRescue:
+                                      _reportSheetVisible ||
+                                              _reportPicking ||
+                                              _routeSheetVisible ||
+                                              _rescue.step != null
+                                          ? null
+                                          : _openRescueRequest,
+                                  onReport:
+                                      _reportSheetVisible ||
+                                              _reportPicking ||
+                                              _routeSheetVisible ||
+                                              _rescue.step != null
+                                          ? null
+                                          : _openCrowdReport,
+                                  onRecommend:
+                                      _reportSheetVisible ||
+                                              _reportPicking ||
+                                              _routeSheetVisible ||
+                                              _rescue.step != null
+                                          ? null
+                                          : _recommendNearestShelter,
+                                ),
+                              ],
+                            );
+                          },
+                        ),
+                      const SizedBox(height: 8),
+                      if (_reportPicking)
+                        const Padding(
+                          padding: EdgeInsets.only(top: 8),
+                          child: Card(
+                            child: Padding(
+                              padding: EdgeInsets.all(10),
+                              child: Text('請拖動地圖，讓中心圖釘對準警示位置'),
                             ),
                           ),
-                          const Spacer(),
-                          _MapQuickActions(
-                            onRescue:
-                                _reportSheetVisible ||
-                                        _reportPicking ||
-                                        _routeSheetVisible ||
-                                        _rescue.step != null
-                                    ? null
-                                    : _openRescueRequest,
-                            onReport:
-                                _reportSheetVisible ||
-                                        _reportPicking ||
-                                        _routeSheetVisible ||
-                                        _rescue.step != null
-                                    ? null
-                                    : _openCrowdReport,
-                            onRecommend:
-                                _reportSheetVisible ||
-                                        _reportPicking ||
-                                        _routeSheetVisible ||
-                                        _rescue.step != null
-                                    ? null
-                                    : _recommendNearestShelter,
+                        ),
+                      if (_rescue.activeSession != null &&
+                          _rescue.step == null &&
+                          !_reportPicking)
+                        // Scroll instead of growing into the bottom controls
+                        // (layer button, zoom panel), which would cover the
+                        // card's resolve/cancel actions. A short screen keeps a
+                        // usable card rather than an empty band.
+                        Flexible(
+                          child: LayoutBuilder(
+                            builder:
+                                (context, constraints) => PointerInterceptor(
+                                  child: ConstrainedBox(
+                                    constraints: BoxConstraints(
+                                      maxWidth: 520,
+                                      maxHeight: math.max(
+                                        constraints.maxHeight -
+                                            _bottomControlsReserve,
+                                        math.min(
+                                          constraints.maxHeight,
+                                          _bottomControlsReserve,
+                                        ),
+                                      ),
+                                    ),
+                                    child: SingleChildScrollView(
+                                      key: const ValueKey<String>(
+                                        'rescue-status-scroll',
+                                      ),
+                                      child: RescueStatusCard(
+                                        session: _rescue.activeSession!,
+                                        now: _rescue.now,
+                                        reminderDue: _rescue.expiryReminderDue,
+                                        busy: _rescue.busy,
+                                        sirenPanel:
+                                            _rescue.showsSirenShortcut
+                                                ? widget.sirenPanelBuilder
+                                                    ?.call(context, _rescue)
+                                                : null,
+                                        onUpdate: _rescue.startUpdate,
+                                        onExtend: _rescue.extend,
+                                        onResolve: _rescue.resolve,
+                                        onCancel: _rescue.cancelRequest,
+                                      ),
+                                    ),
+                                  ),
+                                ),
                           ),
-                        ],
-                      );
-                    },
-                  ),
-                  const SizedBox(height: 8),
-                  if (_reportPicking)
-                    const Padding(
-                      padding: EdgeInsets.only(top: 8),
-                      child: Card(
-                        child: Padding(
-                          padding: EdgeInsets.all(10),
-                          child: Text('請拖動地圖，讓中心圖釘對準警示位置'),
-                        ),
-                      ),
-                    ),
-                  if (_rescue.activeSession != null &&
-                      _rescue.step == null &&
-                      !_reportPicking)
-                    PointerInterceptor(
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 520),
-                        child: RescueStatusCard(
-                          session: _rescue.activeSession!,
-                          now: _rescue.now,
-                          reminderDue: _rescue.expiryReminderDue,
-                          busy: _rescue.busy,
-                          sirenPanel:
-                              _rescue.showsSirenShortcut
-                                  ? widget.sirenPanelBuilder?.call(
-                                    context,
-                                    _rescue,
-                                  )
-                                  : null,
-                          onUpdate: _rescue.startUpdate,
-                          onExtend: _rescue.extend,
-                          onResolve: _rescue.resolve,
-                          onCancel: _rescue.cancelRequest,
-                        ),
-                      ),
-                    )
-                  else if (_rescue.expiredSession != null &&
-                      _rescue.step == null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 8),
-                      child: Card(
-                        key: const ValueKey<String>('rescue-expired-banner'),
-                        child: Padding(
-                          padding: const EdgeInsets.all(10),
-                          child: Row(
-                            children: <Widget>[
-                              const Expanded(child: Text('你的求救已到期，已不再顯示給其他人')),
-                              TextButton(
-                                key: const ValueKey<String>('rescue-recreate'),
-                                onPressed: _rescue.startRecreate,
-                                child: const Text('以原內容重新建立'),
+                        )
+                      else if (_rescue.expiredSession != null &&
+                          _rescue.step == null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 8),
+                          child: Card(
+                            key: const ValueKey<String>(
+                              'rescue-expired-banner',
+                            ),
+                            child: Padding(
+                              padding: const EdgeInsets.all(10),
+                              child: Row(
+                                children: <Widget>[
+                                  const Expanded(
+                                    child: Text('你的求救已到期，已不再顯示給其他人'),
+                                  ),
+                                  TextButton(
+                                    key: const ValueKey<String>(
+                                      'rescue-recreate',
+                                    ),
+                                    onPressed: _rescue.startRecreate,
+                                    child: const Text('以原內容重新建立'),
+                                  ),
+                                ],
                               ),
-                            ],
+                            ),
                           ),
                         ),
-                      ),
-                    ),
-                  const Spacer(),
-                ],
-              ),
+                    ],
+                  ),
+                );
+              },
             ),
           ),
           if (!_reportPicking && !_reportSheetVisible)
@@ -2317,7 +2373,7 @@ class _StatusOverlay extends StatelessWidget {
               ),
             if (reportDeliveryEventId != null) ...<Widget>[
               const Text('民眾警示：未驗證／待同步'),
-              Text('警示編號：$reportDeliveryEventId'),
+              Text('警示編號：${_shortReportId(reportDeliveryEventId!)}'),
             ],
           ],
         ),
@@ -2325,6 +2381,19 @@ class _StatusOverlay extends StatelessWidget {
     ),
   );
 }
+
+/// Height kept clear above the map's bottom edge for the layer button and the
+/// zoom panel, so cards in the top overlay column never slide under them.
+const double _bottomControlsReserve = 160;
+
+/// Below this map height the stacked quick actions (bottom edge ~228dp) would
+/// reach the zoom panel (bottom-right, ~152dp tall), so they line up in a row.
+const double _verticalQuickActionsMinHeight = 400;
+
+/// A full report id (device key + UUID) is too long for the status panel; its
+/// tail is enough to match the report in the notifications list.
+String _shortReportId(String id) =>
+    id.length <= 12 ? id : '…${id.substring(id.length - 8)}';
 
 class _EvacuationLayerSettingsButton extends StatelessWidget {
   const _EvacuationLayerSettingsButton({required this.onOpen});
@@ -2349,16 +2418,28 @@ class _EvacuationLayerSettingsButton extends StatelessWidget {
 }
 
 class _MapQuickActions extends StatelessWidget {
-  const _MapQuickActions({this.onRescue, this.onReport, this.onRecommend});
+  const _MapQuickActions({
+    this.horizontal = false,
+    this.onRescue,
+    this.onReport,
+    this.onRecommend,
+  });
 
+  static const double buttonSize = 48;
+  static const double _gap = 8;
+  static const double rowWidth = buttonSize * 3 + _gap * 2;
+
+  final bool horizontal;
   final VoidCallback? onRescue;
   final VoidCallback? onReport;
   final VoidCallback? onRecommend;
 
   @override
-  Widget build(BuildContext context) => Column(
+  Widget build(BuildContext context) => Flex(
+    direction: horizontal ? Axis.horizontal : Axis.vertical,
     mainAxisSize: MainAxisSize.min,
     crossAxisAlignment: CrossAxisAlignment.end,
+    spacing: _gap,
     children: <Widget>[
       _QuickActionButton(
         key: const ValueKey<String>('open-rescue-request-action'),
@@ -2367,7 +2448,6 @@ class _MapQuickActions extends StatelessWidget {
         onPressed: onRescue,
         buttonKey: const ValueKey<String>('open-rescue-request'),
       ),
-      const SizedBox(height: 8),
       _QuickActionButton(
         key: const ValueKey<String>('open-crowd-report-action'),
         label: '回報警示',
@@ -2375,7 +2455,6 @@ class _MapQuickActions extends StatelessWidget {
         onPressed: onReport,
         buttonKey: const ValueKey<String>('open-crowd-report'),
       ),
-      const SizedBox(height: 8),
       _QuickActionButton(
         key: const ValueKey<String>('recommend-nearest-shelter-action'),
         label: '推薦最近避難所',

@@ -155,14 +155,17 @@ class MapSearchIndex {
     final contextAffectsRanking = _contextLabels.any(
       (label) => label.length >= 2 && normalized.contains(label),
     );
+    // Keep spare candidates: several road segments can share one name and
+    // collapse into a single row once duplicates are removed below.
+    const capacity = maxResults * 2;
     void collect(_RankedResult match) {
-      if (matches.length == maxResults &&
+      if (matches.length == capacity &&
           _compareRankedResults(match, matches.last) >= 0) {
         return;
       }
       matches.add(match);
       matches.sort(_compareRankedResults);
-      if (matches.length > maxResults) matches.removeLast();
+      if (matches.length > capacity) matches.removeLast();
     }
 
     for (var index = 0; index < _features.length; index += 1) {
@@ -218,7 +221,7 @@ class MapSearchIndex {
           requestedArea != null && nameMatches
               ? _distanceSquared(entry.coordinate, requestedArea.point)
               : null;
-      if (matches.length == maxResults) {
+      if (matches.length == capacity) {
         final last = matches.last;
         var order = score.compareTo(last.score);
         if (order == 0 && proximity != null && last.proximity != null) {
@@ -281,6 +284,8 @@ class MapSearchIndex {
         _RankedResult(
           score: score,
           sourceIndex: _features.length + _roadEntries.length + index,
+          // A village name alone (e.g. 內湖里) is ambiguous across Taiwan.
+          inferRegion: area.parent == null || area.parent!.trim().isEmpty,
           result: MapSearchResult(
             feature: null,
             title: area.displayName,
@@ -294,10 +299,10 @@ class MapSearchIndex {
       );
     }
 
+    final shown = <String>{};
     return MapSearchQuery(
       input: input,
       results: matches
-          .take(maxResults)
           .map((match) {
             final result = match.result;
             if (!match.inferRegion) return result;
@@ -315,6 +320,16 @@ class MapSearchIndex {
               searchKind: result.searchKind,
             );
           })
+          // Identical index rows (same name, type and place) are one answer to
+          // the user, even when they come from separate road segments. Map
+          // features keep their own identity.
+          .where(
+            (result) => shown.add(
+              result.feature?.id ??
+                  '${result.displayTitle}|${result.typeLabel}|${result.region ?? ''}',
+            ),
+          )
+          .take(maxResults)
           .toList(growable: false),
     );
   }

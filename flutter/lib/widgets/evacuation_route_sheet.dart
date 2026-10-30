@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../data/display_time.dart';
 import '../data/evacuation_models.dart';
 
 class EvacuationRouteSheet extends StatelessWidget {
@@ -144,7 +145,7 @@ class EvacuationRouteSheet extends StatelessWidget {
         Text('預估步行時間：${_durationText(result.durationS)}'),
         const SizedBox(height: 10),
         Text('路網版本：${result.graphVersion ?? '無資料'}'),
-        Text('事件快照：${result.eventSnapshotAt ?? '無資料'}'),
+        Text('事件快照：${formatUpdateTime(result.eventSnapshotAt)}'),
         if (result.warnings.isNotEmpty) ...<Widget>[
           const SizedBox(height: 12),
           const Text('路線警示'),

@@ -108,6 +108,10 @@ class RealPeerSyncInstrumentedTest {
             assertTrue(engine.stats().chunksApplied > 0)
             assertEquals("Unrelated devices must not count as Mesh peers", 1, engine.visiblePeerCount(30_000))
             Log.i("RealPeerSyncTest", "[$seed] FIRST_EXCHANGE_OK ${engine.stats()}")
+            // Local completion is not a remote ACK: the peer may still be reading
+            // our last TRANSFER. Keep the transport up briefly so tearing it down
+            // here cannot cut the other phone's first exchange short.
+            delay(PEER_LINGER_MILLIS)
             engine.stop()
             scope!!.cancel()
             teardown()
@@ -125,6 +129,7 @@ class RealPeerSyncInstrumentedTest {
             assertEquals(0, engine.stats().chunksApplied)
             assertTrue(logs.any { it.contains("already in sync") })
             Log.i("RealPeerSyncTest", "[$seed] SECOND_ENCOUNTER_OK ${engine.stats()}")
+            delay(PEER_LINGER_MILLIS)
             engine.stop()
         } finally {
             try {
@@ -134,5 +139,14 @@ class RealPeerSyncInstrumentedTest {
                 cache.deleteRecursively()
             } finally { offline?.close() }
         }
+    }
+
+    private companion object {
+        /**
+         * Long enough for the slower phone to read a final TRANSFER over any
+         * transport, but shorter than the engine's 10 s sync cooldown so the
+         * engine does not start a fresh session just as the transport is torn down.
+         */
+        const val PEER_LINGER_MILLIS = 5_000L
     }
 }

@@ -78,116 +78,127 @@ class _MeshDrillScreenState extends State<MeshDrillScreen> {
   @override
   Widget build(BuildContext context) {
     final running = _status['running'] == true;
+    final controls = <Widget>[
+      Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(10),
+        color: const Color(0xFFFFE3A3),
+        child: const Text('離線雙機演練 · 非真實災情／政府公告\n固定演練位置；資料只留在本畫面，離開即清除。'),
+      ),
+      Wrap(
+        spacing: 6,
+        children: [
+          TextButton(
+            onPressed:
+                _busy || running
+                    ? null
+                    : () => _act('prepare', {'role': 'sender'}),
+            child: const Text('A：載入發布資料'),
+          ),
+          TextButton(
+            onPressed:
+                _busy || running
+                    ? null
+                    : () => _act('prepare', {'role': 'receiver'}),
+            child: const Text('B：只準備接收'),
+          ),
+          FilledButton(
+            onPressed:
+                _busy || (!running && _status['prepared'] != true)
+                    ? null
+                    : () => _act(running ? 'stop' : 'start'),
+            child: Text(running ? '停止演練同步' : '開始演練同步'),
+          ),
+          TextButton(
+            onPressed: _busy ? null : () => _act('reset'),
+            child: const Text('重設演練'),
+          ),
+          TextButton(
+            onPressed:
+                () => showModalBottomSheet<void>(
+                  context: context,
+                  builder:
+                      (_) => SafeArea(
+                        child: ListView(
+                          padding: const EdgeInsets.all(16),
+                          children: [
+                            const Text('本機演練時間紀錄（相對同步啟動）'),
+                            ...((_status['timeline'] as List?) ?? []).map(
+                              (line) => SelectableText(line.toString()),
+                            ),
+                          ],
+                        ),
+                      ),
+                ),
+            child: const Text('查看時間紀錄'),
+          ),
+        ],
+      ),
+      if (drillRunningHint(running: running) case final hint?)
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          child: Text(hint, style: const TextStyle(color: Color(0xFF8A5A00))),
+        ),
+      Text(
+        '本機事件 ${_status['events'] ?? 0} 筆 · 本輪接收 ${_status['received'] ?? 0} 片',
+      ),
+      if (_error != null)
+        Padding(
+          padding: const EdgeInsets.all(8),
+          child: Text(_error!, style: const TextStyle(color: Colors.red)),
+        ),
+      if (_busy) const LinearProgressIndicator(),
+    ];
+    final map = MapScreen(
+      key: ValueKey(_generation),
+      bridge: _bridge,
+      eventUpdates: _events,
+      locationController: _location,
+      initialState: const MapInitialState(
+        events: [],
+        emergencyModeEnabled: false,
+      ),
+      staticFeatures: const StaticFeatureCollection(
+        schemaVersion: 'exercise',
+        datasetId: 'exercise',
+        snapshotAt: null,
+        features: [
+          StaticFeature(
+            id: 'exercise:a',
+            kind: 'shelter',
+            geometry: PointGeometry(
+              GeoPoint(longitude: 121.5990, latitude: 25.0600),
+            ),
+            fields: {'name': '演練避難所 A'},
+            properties: null,
+          ),
+          StaticFeature(
+            id: 'exercise:b',
+            kind: 'shelter',
+            geometry: PointGeometry(
+              GeoPoint(longitude: 121.5920, latitude: 25.0600),
+            ),
+            fields: {'name': '演練避難所 B'},
+            properties: null,
+          ),
+        ],
+      ),
+    );
+    // Landscape leaves too little height for the controls above the map, so
+    // they move to a scrollable side panel. One Flex for both orientations
+    // keeps the map's state (open route sheet, camera) across a rotation.
+    final landscape =
+        MediaQuery.orientationOf(context) == Orientation.landscape;
     return Scaffold(
       body: SafeArea(
-        child: Column(
+        child: Flex(
+          direction: landscape ? Axis.horizontal : Axis.vertical,
           children: [
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(10),
-              color: const Color(0xFFFFE3A3),
-              child: const Text('離線雙機演練 · 非真實災情／政府公告\n固定演練位置；資料只留在本畫面，離開即清除。'),
+            SizedBox(
+              width: landscape ? 300 : null,
+              child: SingleChildScrollView(child: Column(children: controls)),
             ),
-            Wrap(
-              spacing: 6,
-              children: [
-                TextButton(
-                  onPressed:
-                      _busy || running
-                          ? null
-                          : () => _act('prepare', {'role': 'sender'}),
-                  child: const Text('A：載入發布資料'),
-                ),
-                TextButton(
-                  onPressed:
-                      _busy || running
-                          ? null
-                          : () => _act('prepare', {'role': 'receiver'}),
-                  child: const Text('B：只準備接收'),
-                ),
-                FilledButton(
-                  onPressed:
-                      _busy || (!running && _status['prepared'] != true)
-                          ? null
-                          : () => _act(running ? 'stop' : 'start'),
-                  child: Text(running ? '停止演練同步' : '開始演練同步'),
-                ),
-                TextButton(
-                  onPressed: _busy ? null : () => _act('reset'),
-                  child: const Text('重設演練'),
-                ),
-                TextButton(
-                  onPressed:
-                      () => showModalBottomSheet<void>(
-                        context: context,
-                        builder:
-                            (_) => SafeArea(
-                              child: ListView(
-                                padding: const EdgeInsets.all(16),
-                                children: [
-                                  const Text('本機演練時間紀錄（相對同步啟動）'),
-                                  ...((_status['timeline'] as List?) ?? []).map(
-                                    (line) => SelectableText(line.toString()),
-                                  ),
-                                ],
-                              ),
-                            ),
-                      ),
-                  child: const Text('查看時間紀錄'),
-                ),
-              ],
-            ),
-            if (drillRunningHint(running: running) case final hint?)
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                child: Text(hint, style: const TextStyle(color: Color(0xFF8A5A00))),
-              ),
-            Text(
-              '本機事件 ${_status['events'] ?? 0} 筆 · 本輪接收 ${_status['received'] ?? 0} 片',
-            ),
-            if (_error != null)
-              Padding(
-                padding: const EdgeInsets.all(8),
-                child: Text(_error!, style: const TextStyle(color: Colors.red)),
-              ),
-            if (_busy) const LinearProgressIndicator(),
-            Expanded(
-              child: MapScreen(
-                key: ValueKey(_generation),
-                bridge: _bridge,
-                eventUpdates: _events,
-                locationController: _location,
-                initialState: const MapInitialState(
-                  events: [],
-                  emergencyModeEnabled: false,
-                ),
-                staticFeatures: const StaticFeatureCollection(
-                  schemaVersion: 'exercise',
-                  datasetId: 'exercise',
-                  snapshotAt: null,
-                  features: [
-                    StaticFeature(
-                      id: 'exercise:a',
-                      kind: 'shelter',
-                      geometry: PointGeometry(
-                        GeoPoint(longitude: 121.5990, latitude: 25.0600),
-                      ),
-                      fields: {'name': '演練避難所 A'},
-                      properties: null,
-                    ),
-                    StaticFeature(
-                      id: 'exercise:b',
-                      kind: 'shelter',
-                      geometry: PointGeometry(
-                        GeoPoint(longitude: 121.5920, latitude: 25.0600),
-                      ),
-                      fields: {'name': '演練避難所 B'},
-                      properties: null,
-                    ),
-                  ],
-                ),
-              ),
-            ),
+            Expanded(child: map),
           ],
         ),
       ),

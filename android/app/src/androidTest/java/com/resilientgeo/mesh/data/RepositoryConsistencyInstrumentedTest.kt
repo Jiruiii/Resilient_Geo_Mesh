@@ -45,8 +45,20 @@ class RepositoryConsistencyInstrumentedTest {
         cache.deleteRecursively()
     }
 
-    private fun chunk() = JSONObject(context.assets.open("fixtures/peer-sync/chunk-136-dahu-shelter-000.json")
-        .bufferedReader().use { it.readText() })
+    // Historical official.* demo fixtures are rejected by today's source
+    // allowlist, so sign one fresh crowd chunk and reuse it within the test.
+    private val signedChunk: String by lazy {
+        val key = DeviceSigningKey.loadOrCreate(object : DeviceSigningKey.Storage {
+            override fun read(): ByteArray? = null
+            override fun write(seed: ByteArray) {}
+        })
+        val event = CrowdReportFactory.create(
+            CrowdReportInput("ROAD_BLOCKAGE", "isolated consistency test", 121.5761, 25.0795, "MAP_PICK"), key, Instant.now(),
+        )
+        CrowdChunkCodec.build(event, key).toString()
+    }
+
+    private fun chunk() = JSONObject(signedChunk)
 
     private fun held(): List<String> = runBlocking {
         val datasets = repository.allLocalPeerSummaries("consistency-test").getJSONArray("datasets")
@@ -73,8 +85,8 @@ class RepositoryConsistencyInstrumentedTest {
         val fixture = chunk()
         repository.ingestChunk(fixture)
         val id = fixture.getString("chunk_id")
-        assertNull(repository.cachedChunkJson("resilientgeo-demo", "official", id.replace(':', '_')))
-        assertNotNull(repository.cachedChunkJson("resilientgeo-demo", "official", id))
+        assertNull(repository.cachedChunkJson(CrowdChunkCodec.DATASET_ID, CrowdChunkCodec.NAMESPACE, id.replace(':', '_')))
+        assertNotNull(repository.cachedChunkJson(CrowdChunkCodec.DATASET_ID, CrowdChunkCodec.NAMESPACE, id))
         assertTrue(held().contains(id))
     }
 
@@ -85,7 +97,7 @@ class RepositoryConsistencyInstrumentedTest {
         val legacyName = listOf(fixture.getString("dataset_id"), fixture.getString("namespace"), fixture.getString("chunk_id"))
             .joinToString("__") { part -> part.map { if (it.isLetterOrDigit() || it == '-' || it == '.') it else '_' }.joinToString("") } + ".json"
         assertTrue(cache.listFiles()!!.single().renameTo(File(cache, legacyName)))
-        assertNotNull(repository.cachedChunkJson("resilientgeo-demo", "official", fixture.getString("chunk_id")))
+        assertNotNull(repository.cachedChunkJson(CrowdChunkCodec.DATASET_ID, CrowdChunkCodec.NAMESPACE, fixture.getString("chunk_id")))
         assertFalse(File(cache, legacyName).exists())
         assertTrue(held().contains(fixture.getString("chunk_id")))
     }

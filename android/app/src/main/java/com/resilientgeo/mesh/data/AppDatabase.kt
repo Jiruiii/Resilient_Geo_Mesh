@@ -126,6 +126,11 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** Every registered upgrade, shared by the app and the migration tests. */
+        val ALL_MIGRATIONS: Array<Migration> = arrayOf(
+            MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8,
+        )
+
         @Volatile
         private var instance: AppDatabase? = null
 
@@ -134,7 +139,7 @@ abstract class AppDatabase : RoomDatabase() {
                 context.applicationContext,
                 AppDatabase::class.java,
                 "resilientgeo-mesh.db",
-            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8).build().also { instance = it }
+            ).addMigrations(*ALL_MIGRATIONS).build().also { instance = it }
         }
     }
 }

@@ -40,7 +40,7 @@
 
 ## 核心功能
 
-- **離線災情地圖** — Web 與 Android 使用隨 App 提供的 OSM／Protomaps 五個 PMTiles 向量套件，不透過 Server 下載底圖。相機縮放為 z5–17，地理限制與來源細節見 [Map_description.md](Map_description.md)。道路搜尋索引和雙北路網是獨立的本機資料；避難所／醫療點位使用簽章靜態 layer，告警由簽章 feed 更新。Server 尚未部署時不代表新點位已下載；缺少已驗證點位資料時，不顯示舊的未核實醫療快照。
+- **離線災情地圖** — Web 與 Android 使用隨 App 提供的 OSM／Protomaps 五個 PMTiles 向量套件，不透過 Server 下載底圖。有網路時（預設「自動」模式）另以 NLSC 國土測繪圖資 EMAP 線上圖磚覆蓋顯示，連不上就退回下方的 OSM；也可切換為只用離線 OSM。相機縮放為 z5–17，地理限制與來源細節見 [Map_description.md](Map_description.md)。道路搜尋索引和雙北路網是獨立的本機資料；避難所／醫療點位使用簽章靜態 layer，告警由簽章 feed 更新。Server 尚未部署時不代表新點位已下載；缺少已驗證點位資料時，不顯示舊的未核實醫療快照。
 - **Peer-to-peer 分片交換** — 兩台手機經 BLE GATT 完成 `HELLO`（交換資料集摘要）→ `DIFF`（算出雙方缺哪些分片）→ `REQUEST`（依 critical／稀有度／大小／TTL 排序）→ `TRANSFER`（分段、位元組級可中斷續傳）→ `VERIFY/APPLY`（驗證後原子寫入），**只交換對方缺少的分片**。
 - **Store-Carry-Forward（DTN）** — A 傳給 B，B 移動後遇到 C 再傳給 C；A 與 C 從不需要同時連線。已用三台實機驗證：force-stop A 之後，C 仍經 B 收到並驗證全部事件。節點會把通過驗證的分片記進本機庫存，因此收到資料後能對下一個 peer 如實宣告「我有這些」，而不是回報空手。
 - **端到端可信度** — 伺服器端以 Ed25519 簽章，手機端在寫入前驗證 hash、簽章、版本與 TTL。版本倒退一律拒絕；官方資料與群眾回報分屬不同 namespace，永不互相覆蓋。私鑰從不進入 repo，也不隨 App 出貨。
@@ -70,7 +70,7 @@ flowchart LR
 
 Android host 直接載入原生已驗證的靜態地物與事件，不依賴 Flutter 預覽 JSON。Web 在缺少 native bridge 時，會從同源服務驗證並快取簽章 layer 與告警 feed。任一端沒有已驗證資料或驗證失敗時，保留底圖並顯示資料不可用，不回退到打包的舊展示快照。
 
-App 使用單一 `MapLibreMap` renderer。OSM／Protomaps 底圖、glyph、sprite、樣式、行政區／地標與道路搜尋索引隨 App 提供；政府簽章 feed、靜態圖層與門牌包另走 Server/API 資料流程並在用戶端驗證和快取。底圖與資料各自的範圍、來源及限制分別見 [Map_description.md](Map_description.md) 和[資料說明](data_description.md)。傳輸層目前有 Nearby Connections（需 Google Play services）、Wi-Fi Direct 與 BLE GATT 三種，自動模式依序嘗試（見[自動交換文件](docs/nearby-auto-transport.md)）；ADR-001 在 2026-09-05 否決的是當時的實測結果，之後已重新實作。因此 manifest 不再只有藍牙權限：mesh 交換需要藍牙、附近 Wi-Fi 裝置、定位（部分 Android 版本）與 Android 17 的區域網路權限；`INTERNET`／`ACCESS_NETWORK_STATE` 用於連線時同步 Server 簽章資料與政府工作台，mesh 交換本身不經網際網路。
+App 使用單一 `MapLibreMap` renderer。OSM／Protomaps 底圖、glyph、sprite、樣式、行政區／地標與道路搜尋索引隨 App 提供；NLSC EMAP 是可選的線上 raster 圖層，只切換顯示、不重新載入樣式；政府簽章 feed、靜態圖層與門牌包另走 Server/API 資料流程並在用戶端驗證和快取。底圖與資料各自的範圍、來源及限制分別見 [Map_description.md](Map_description.md) 和[資料說明](data_description.md)。傳輸層目前有 Nearby Connections（需 Google Play services）、Wi-Fi Direct 與 BLE GATT 三種，自動模式依序嘗試（見[自動交換文件](docs/nearby-auto-transport.md)）；ADR-001 在 2026-09-05 否決的是當時的實測結果，之後已重新實作。因此 manifest 不再只有藍牙權限：mesh 交換需要藍牙、附近 Wi-Fi 裝置、定位（部分 Android 版本）與 Android 17 的區域網路權限；`INTERNET`／`ACCESS_NETWORK_STATE` 用於連線時同步 Server 簽章資料與政府工作台，mesh 交換本身不經網際網路。
 
 ## 使用技術
 
@@ -78,7 +78,7 @@ App 使用單一 `MapLibreMap` renderer。OSM／Protomaps 底圖、glyph、sprit
 | ------------------ | ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | AI 模型            | 未使用                                                                                | 本專案為協定與傳輸層研究，不涉及模型推論；所有排程決策（critical-first、rarest-first、地理過濾）皆為決定性規則，以利可重現量測    |
 | 前端（行動端）     | Kotlin Android host（minSdk 26／targetSdk 37）+ Flutter module                        | Flutter launcher、Room／BLE bridge、Emergency Mode 權限與原生服務                                                                 |
-| 前端（地圖）       | Flutter `maplibre_gl` + OSM／Protomaps PMTiles                                      | 五個隨 App 提供的向量套件；道路搜尋索引與路網獨立；疊加行政區／離島／地標標籤、避難所、醫療 marker 與事件 GeoJSON 圖層。底圖縮放及地理範圍見 `Map_description.md` |
+| 前端（地圖）       | Flutter `maplibre_gl` + OSM／Protomaps PMTiles（另可疊 NLSC EMAP 線上圖磚）          | 五個隨 App 提供的向量套件；道路搜尋索引與路網獨立；疊加行政區／離島／地標標籤、避難所、醫療 marker 與事件 GeoJSON 圖層。底圖縮放及地理範圍見 `Map_description.md` |
 | 後端（資料管線）   | Node.js、`node:crypto` Ed25519、Fastify HTTP API                                          | Pipeline 收集與簽章；Fastify 提供唯讀 Server API                                                                                |
 | 後端（模擬與分析） | Node.js 決定性模擬器、`node:test`                                                     | DTN 擴散模擬、四指標報告、位元級可重現性檢查                                                                                      |
 | 資料庫             | Room 2.6.1 / SQLite（KSP 註解處理）                                                   | 手機本機事件、版本、到期時間儲存                                                                                                  |
@@ -143,8 +143,8 @@ cd ../android
 ./gradlew installDebug                     # 安裝到已連線的裝置
 
 # ---------- 6. Android／資料層測試 ----------
-./gradlew :app:testDebugUnitTest           # 目前 226 項 JVM 單元測試（2026-10-16）；不加 :app 會連第三方 plugin 的測試一起跑，geolocator_android 有 3 項失敗
-./gradlew connectedDebugAndroidTest        # API 36 模擬器目前 37 項 instrumented 測試
+./gradlew :app:testDebugUnitTest           # 目前 261 項 JVM 單元測試（2026-10-28）；不加 :app 會連第三方 plugin 的測試一起跑，geolocator_android 有 3 項失敗
+./gradlew connectedDebugAndroidTest        # 目前 46 項 instrumented 測試；2026-10-27 於 Pixel 8a 與 Samsung SM-A5360 實機全數通過，測試使用獨立資料庫，不寫入已安裝 App 的資料
 ```
 
 地圖搜尋是離線本機查詢：`flutter/assets/map/search/taiwan-roads.json` 由指定日期的
@@ -160,7 +160,7 @@ Chrome debug 使用本機 MapLibre GL JS、PMTiles、glyph、sprite、CanvasKit 
 真正的無網路檢查，使用上面的 release preview，在瀏覽器 Network 面板確認請求都
 留在 `localhost`。
 
-App 主畫面直接進入 Flutter 台灣離線地圖，底圖使用隨 App 提供的 OSM／Protomaps 向量 PMTiles，並疊加縣市到村里的分級地名、離島與著名地標、避難所／醫療院所／事件圖層。本機搜尋、百分比縮放、目前位置、圖層設定、點位詳情與重疊點位選擇仍由獨立資料提供；marker 在縮小時會聚合成圓點，點擊後再展開或進入下一層。下方另有首頁、通知、個人設定三個頁籤。「載入內建 fixture」與 Emergency Mode 仍由 Android bridge 執行。Peer Sync、BLE spike 與量測畫面是 debug-only 的原生測試 harness，不放在一般地圖主畫面。
+App 主畫面直接進入 Flutter 台灣離線地圖，底圖使用隨 App 提供的 OSM／Protomaps 向量 PMTiles（有網路時可顯示 NLSC EMAP），並疊加縣市到村里的分級地名、離島與著名地標、避難所／醫療院所／事件圖層。本機搜尋、百分比縮放、目前位置、圖層設定、點位詳情與重疊點位選擇仍由獨立資料提供；marker 在縮小時會聚合成圓點，點擊後再展開或進入下一層。下方另有首頁、通知、個人設定三個頁籤。「載入內建 fixture」與 Emergency Mode 仍由 Android bridge 執行。Peer Sync、BLE spike 與量測畫面是 debug-only 的原生測試 harness，不放在一般地圖主畫面。
 
 **兩機 peer sync 實測**需要兩台開啟藍牙的 Android 裝置，debug APK 可由 Android Studio 啟動對應的 `PeerSyncMilestoneActivity`，再分別指定 NODE_A（requester）／NODE_B（server）角色。逐步 demo 講稿見 [`experiments/demo.md`](experiments/demo.md)；Android 端建置細節與踩雷紀錄見 [`android/README.md`](android/README.md)。
 
@@ -199,11 +199,11 @@ App 主畫面直接進入 Flutter 台灣離線地圖，底圖使用隨 App 提�
 
 **已知限制**
 
-- **地圖與點位採離線版本。** OSM／Protomaps 底圖隨 App 提供；NLSC 試用底圖下載器已移除，地理範圍與 zoom 記錄在 `Map_description.md`。簽章靜態資料、告警 feed 與門牌搜尋串接仍在 Web／Android 保留；17 個縣市的門牌包已簽章產生。基隆市官方 CSV 已找到且完成實檔試跑，但簽章金鑰未設定，尚未併入 catalog；連江、宜蘭、南投與嘉義市仍未找到可用的完整門牌座標來源。新 Server 尚未部署，尚未證明兩端已下載同一個正式發布版本。2026-10-04 本機重收集的醫療主檔有 479／24,138 筆已定位，另有 23,659 筆未定位；避難處所有 5,727／5,973 筆通過座標與行政區核對。本機暫存點位 bundle 已簽章並由 Web、Android 模擬器下載驗證。當日 Android 模擬器對 NLSC 試用底圖做過 SHA-256 與飛航模式驗證，API 36 模擬器也曾驗證底圖下載；這些是 10-05 移除 NLSC 下載流程前的歷史驗收，不能代表目前隨 App 內附 OSM 底圖的重新驗收。正式 HTTPS 服務與 Android 實機驗收仍待完成。
+- **地圖與點位採離線版本。** OSM／Protomaps 底圖隨 App 提供；NLSC 試用底圖下載器已移除，2026-10-24 起改以 EMAP 線上圖磚作為可選顯示層，離線時仍是 OSM，地理範圍與 zoom 記錄在 `Map_description.md`。簽章靜態資料、告警 feed 與門牌搜尋串接仍在 Web／Android 保留；17 個縣市的門牌包已簽章產生。基隆市官方 CSV 已找到且完成實檔試跑，但簽章金鑰未設定，尚未併入 catalog；連江、宜蘭、南投與嘉義市仍未找到可用的完整門牌座標來源。新 Server 尚未部署，尚未證明兩端已下載同一個正式發布版本。2026-10-04 本機重收集的醫療主檔有 479／24,138 筆已定位，另有 23,659 筆未定位；避難處所有 5,727／5,973 筆通過座標與行政區核對。本機暫存點位 bundle 已簽章並由 Web、Android 模擬器下載驗證。當日 Android 模擬器對 NLSC 試用底圖做過 SHA-256 與飛航模式驗證，API 36 模擬器也曾驗證底圖下載；這些是 10-05 移除 NLSC 下載流程前的歷史驗收，不能代表目前隨 App 內附 OSM 底圖的重新驗收。正式 HTTPS 服務與 Android 實機驗收仍待完成。
 - **不宣稱在任何固定時間覆蓋全城。** 所有模擬數字只適用於 [`experiments/scenario.md`](experiments/scenario.md) 描述的內湖情境與接觸模型，單一 seed，非多次抽樣的信賴區間。
 - **模擬參數只校準了一半。** `max_bytes_per_round` 已用實機 BLE 接觸窗量測校準；`contact_probability`（社交接觸機率）與 `transfer_failure_prob` 仍是工程估計值 — 現有實機數據沒有一項直接對應到這兩個參數，硬套上去會是假精確。
 - **耗電只有單一機型、單一 60 秒視窗、只涵蓋持續傳輸**，不是 Emergency Mode 真實的間歇性接觸型態，也未涵蓋鎖屏情境。
-- **自動同步已通過兩機初步實測，完整驗收仍待完成。** 2026-09-27 在 Pixel 8a／Sharp SH-M32 關閉 Wi-Fi 與行動數據後，真實 BLE 與同步引擎完成互補缺片；重建 transport 再次相遇時不重複傳片。測試使用獨立資料庫；正式服務另確認熄屏時可以完成已有資料的 HELLO 核對。三機自動中繼、長時間 Doze 及正式成功率統計仍待完成，詳見 [可靠性與實機驗證](docs/reliability-device-validation.md)。
+- **自動同步已通過兩機初步實測，完整驗收仍待完成。** 2026-09-27 在 Pixel 8a／Sharp SH-M32 關閉 Wi-Fi 與行動數據後，真實 BLE 與同步引擎完成互補缺片；重建 transport 再次相遇時不重複傳片。測試使用獨立資料庫；正式服務另確認熄屏時可以完成已有資料的 HELLO 核對。2026-10-27 在 Pixel 8a／Samsung SM-A5360 以同一測試分別驗證 BLE、Nearby 與 Wi-Fi Direct 三種傳輸的互補與再次相遇；Wi-Fi Direct 第二次相遇偶有探索逾時（6 輪中 1 輪）。三機自動中繼、長時間 Doze 及正式成功率統計仍待完成，詳見 [可靠性與實機驗證](docs/reliability-device-validation.md)。
 - **民眾回報與逃生路線仍需現場驗證。** 兩者都有 JS／Kotlin JVM／Flutter 自動化測試（含用真實簽章重播 A→B→C 轉傳，以及逃生路線的三步驟 demo 情境）；雙北路線另有 Pixel 8a USB instrumentation 與 profile 畫面量測，並非實際災害或多人現場測試。回報送到政府端、確認事件送回手機，目前都靠 debug build 的 `adb` 匯出／匯入。裝置金鑰沒有撤銷機制，同一把金鑰的回報可以被串起來；「N 人回報」可以被一人多機灌票，所以不等於驗證。
 - **逃生路線只有步行、涵蓋雙北及邊界緩衝區**，遵守 OSM `oneway:foot` 與步行存取限制，但沒有高程資料。中央 Server 目前只收集靜態避難所位置與預計容量，不收集更新不定期的開設狀態；舊 fixture/replay 與手機端既有狀態處理仍保留，不代表即時狀態可用。使用者可選六種災害情境篩選，類別不明時保留警告，不自動推斷情境。路網外或未連接的場所仍可能無可達路線。原始內湖路網與測試保留。路線不是官方疏散指示；操作與同步狀態頁見 [功能紀錄](docs/sync-status-disaster-filter.md)。
 - **自動同步不支援跨接觸續傳。** 如果接觸窗關閉導致真的斷線，傳到一半的分片不會保留狀態，下次相遇會從第 0 個 byte 重傳。位元組級續傳目前只在同一條連線還開著時有效。

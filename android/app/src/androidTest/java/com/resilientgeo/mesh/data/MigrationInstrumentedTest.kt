@@ -69,7 +69,7 @@ class MigrationInstrumentedTest {
 
     private fun openLatest(): AppDatabase =
         Room.databaseBuilder(context, AppDatabase::class.java, dbName)
-            .addMigrations(AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3)
+            .addMigrations(*AppDatabase.ALL_MIGRATIONS)
             .build()
 
     @Test

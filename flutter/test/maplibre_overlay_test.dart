@@ -219,4 +219,18 @@ void main() {
     expect(routeFeatureCollection(null)['features'], isEmpty);
     expect(routeFeatureCollection(noRoute)['features'], isEmpty);
   });
+
+  test('pins a selected search result as a lon-lat point', () {
+    final collection = searchSelectionFeatureCollection(
+      const GeoPoint(longitude: 121.59, latitude: 25.08),
+    );
+    final features = collection['features'] as List<Map<String, dynamic>>;
+
+    expect(features, hasLength(1));
+    expect(features.single['geometry'], <String, dynamic>{
+      'type': 'Point',
+      'coordinates': <double>[121.59, 25.08],
+    });
+    expect(searchSelectionFeatureCollection(null)['features'], isEmpty);
+  });
 }

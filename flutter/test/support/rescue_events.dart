@@ -1,8 +1,8 @@
 import 'package:resilientgeo_flutter/data/map_models.dart';
 
-MeshEvent rescue({String status = 'ACTIVE', String expiresAt = '2026-10-12T09:00:00Z'}) => MeshEvent.fromJson(<String, dynamic>{
+MeshEvent rescue({String status = 'ACTIVE', String expiresAt = '2026-10-12T09:00:00Z', String? eventId}) => MeshEvent.fromJson(<String, dynamic>{
   'namespace': 'crowd.rescue',
-  'event_id': 'rescue:${'a' * 32}:00000000-0000-4000-8000-000000000001',
+  'event_id': eventId ?? 'rescue:${'a' * 32}:00000000-0000-4000-8000-000000000001',
   'event_version': 1,
   'event_type': 'RESCUE_REQUEST',
   'severity': 'CRITICAL',

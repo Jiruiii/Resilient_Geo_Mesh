@@ -268,7 +268,8 @@ void main() {
       expect(find.text('預計收容人數：81人'), findsOneWidget);
       expect(find.text('收容人數：無資料'), findsNothing);
       expect(find.text('來源：taipei-shelter'), findsOneWidget);
-      expect(find.text('更新時間：2026-9-5 00:00:00'), findsOneWidget);
+      // 00:00 UTC is 08:00 in Taiwan, the time zone every detail is shown in.
+      expect(find.text('更新時間：2026/09/05 08:00:00'), findsOneWidget);
       expect(find.text('資料更新：2026/09/5 08:00:00'), findsOneWidget);
     },
   );
@@ -360,10 +361,7 @@ void main() {
     expect(host.currentState!.mode, MapBasemapMode.osm);
     expect(find.text('目前：離線 OSM'), findsOneWidget);
     expect(
-      tester
-          .widget<MapCanvas>(find.byType(MapCanvas))
-          .runtimeState
-          .emapVisible,
+      tester.widget<MapCanvas>(find.byType(MapCanvas)).runtimeState.emapVisible,
       isFalse,
     );
   });

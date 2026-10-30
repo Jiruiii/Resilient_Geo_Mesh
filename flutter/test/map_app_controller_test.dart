@@ -9,6 +9,8 @@ import 'package:resilientgeo_flutter/data/map_models.dart';
 import 'package:resilientgeo_flutter/data/offline_government_feed.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'support/rescue_events.dart';
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() => SharedPreferences.setMockInitialValues(<String, Object>{}));
@@ -171,6 +173,28 @@ void main() {
       );
       expect(controller.notificationEvents, hasLength(3));
       expect(controller.unreadEvents, <MeshEvent>[outside]);
+      expect(controller.notificationCount, 1);
+    },
+  );
+
+  test(
+    'a rescue cancelled as a false alarm is not notified; a resolved one is',
+    () async {
+      // Unexpired, so only the rescue status decides what is notified.
+      const expiresAt = '2099-01-01T00:00:00Z';
+      final cancelled = rescue(status: 'CANCELLED', expiresAt: expiresAt);
+      final resolved = rescue(
+        status: 'RESOLVED',
+        expiresAt: expiresAt,
+        eventId: 'rescue:${'b' * 32}:00000000-0000-4000-8000-000000000002',
+      );
+      final controller = MapAppController(
+        bridge: _InitialEventsBridge(<MeshEvent>[cancelled, resolved]),
+      );
+      addTearDown(controller.dispose);
+      await controller.load();
+
+      expect(controller.notificationEvents, <MeshEvent>[resolved]);
       expect(controller.notificationCount, 1);
     },
   );

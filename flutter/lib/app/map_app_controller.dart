@@ -19,6 +19,7 @@ import '../data/taiwan_administrative_area_directory.dart';
 import '../data/government_api.dart';
 import '../data/offline_government_feed.dart';
 import '../data/offline_map_web_static_layers.dart';
+import '../data/rescue_request_models.dart';
 import '../data/rescue_service.dart';
 
 /// App-level presentation coordinator.
@@ -150,10 +151,17 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   /// Attestations are surfaced through the crowd report they verify, so they
-  /// never appear as notifications of their own. Dismissal only filters this
-  /// local list; the verified event stream remains intact for the map/cache.
+  /// never appear as notifications of their own. A rescue cancelled as a false
+  /// alarm is withdrawn, so it is not notified either; a resolved one stays
+  /// listed with its status. Dismissal only filters this local list; the
+  /// verified event stream remains intact for the map/cache.
   List<MeshEvent> get notificationEvents => events
       .where((event) => !isAttestationEvent(event))
+      .where(
+        (event) =>
+            RescueRequestView.fromEvent(event)?.status !=
+            RescueStatus.cancelled,
+      )
       .where(isNcdrCategoryVisibleInApp)
       .where(
         (event) =>

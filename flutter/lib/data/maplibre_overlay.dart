@@ -129,3 +129,22 @@ String eventColorHex(MeshEvent event) {
     _ => '#1565C0',
   };
 }
+
+/// A single pin for the selected search result. Roads, areas and addresses
+/// have no marker of their own, so without it the camera moves to an
+/// unmarked spot.
+Map<String, dynamic> searchSelectionFeatureCollection(GeoPoint? point) =>
+    <String, dynamic>{
+      'type': 'FeatureCollection',
+      'features': <Map<String, dynamic>>[
+        if (point != null)
+          <String, dynamic>{
+            'type': 'Feature',
+            'properties': <String, dynamic>{},
+            'geometry': <String, dynamic>{
+              'type': 'Point',
+              'coordinates': <double>[point.longitude, point.latitude],
+            },
+          },
+      ],
+    };

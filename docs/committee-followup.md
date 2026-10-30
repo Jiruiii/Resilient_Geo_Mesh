@@ -7,7 +7,7 @@
 | 建議 | 功能 | 目前限制 |
 | --- | --- | --- |
 | 定義資訊來源與孤島傳播情境 | 本機演練工作台簽署避難所、道路與物資事件；A 載入，B 用 Wi-Fi Direct 接收 | Debug 專用入口，需事先安裝 App、權限與演練公鑰；非政府發布系統 |
-| 著重避難路線 | 接收事件後沿用正式離線路線重算流程；演練 A／B 避難所與固定起點；記錄連線、分片及重算時間 | 2026-10-16 已通過一次兩機離線驗收（見下方）；不代表完整救援導航 |
+| 著重避難路線 | 接收事件後沿用正式離線路線重算流程；演練 A／B 避難所與固定起點；記錄連線、分片及重算時間 | 2026-10-16 通過兩機離線驗收，2026-10-28 重跑結果相同（見下方）；不代表完整救援導航 |
 | 增加物資資訊 | 獨立物資圖層、名稱、種類、數量、發放狀態、時間、來源；未知與過期數量不顯示為零 | 尚未接上真實政府物資資料來源；演練站點不能用於真實避難 |
 | 耗電與長時間背景運作 | 可選自適應搜尋、立即搜尋、唯讀電池採樣工具 | 節電幅度及 Doze 成功率未驗收，預設仍為持續搜尋 |
 | 模擬校準 | Wi-Fi Direct 建連等待時間 profile；扣除 setup 後計算雙向共用傳輸預算 | 只有兩次配對相遇的四個裝置觀測；吞吐量、社交接觸與失敗率是明示假設 |
@@ -115,6 +115,23 @@ adb -s <序號> shell am instrument -w -e class com.resilientgeo.mesh.data.Drill
 
 這輪不含 instrumented 測試（除下方實機流程），也沒重跑 Python 測試。
 
+### 2026-10-28 重新驗證（Windows 11，分支 `fix/device-test-findings`）
+
+| 項目 | 結果 |
+| --- | --- |
+| Flutter `analyze --no-pub` | 無問題 |
+| Flutter `test --no-pub` | 482 項通過 |
+| Flutter Web `build web --release --no-web-resources-cdn` | 成功；本機瀏覽器實測搜尋與搜尋結果標記 |
+| Android `:app:testDebugUnitTest` | 261 項，0 失敗 |
+| Android instrumented（實機） | Pixel 8a、Samsung SM-A5360 各 46 項全數通過；演練合約與 Nearby smoke 兩台通過（Pixel 的兩項於 10-28 重跑） |
+| 兩機傳輸（`RealPeerSyncInstrumentedTest`） | BLE、Nearby 通過；Wi-Fi Direct 6 輪 5 輪通過，失敗輪為第二次相遇搜尋逾時 |
+| `npm test`（pipeline＋simulator） | 389 項，388 通過；失敗 1 項同 10-16（`medical-unresolved-audit` CLI 退出碼） |
+| `npm run test:server` | 150 項，127 通過；失敗 23 項，仍是 `E:\E:\OSS\...` 路徑重複與 symlink 等 Windows 路徑問題，本分支未改動 server |
+| `npm run sim:check` | 通過 |
+| Python `unittest discover -s tests` | 7 項，6 通過；`test_android_splash` 仍在找已移除的 `copySplashLogo` gradle 任務，本分支未改動 |
+
+實機發現與修正見 [可靠性與實機驗證](reliability-device-validation.md) 的「2026-10-27～28」一節。兩機離線演練的重跑結果見下方「雙機離線驗收（2026-10-28 重跑）」。
+
 ### 雙機離線驗收（2026-10-16）
 
 Samsung SM-A536（Android 16）為 A，Pixel 8a（Android 17）為 B；兩台以 USB 供 adb 控制，Wi-Fi 未連任何路由器、行動數據關閉，兩台對外網路均不可達。debug APK 為 `com.resilientgeo.mesh`，SHA-256 `0967ecad523c697e0fe652c3cde22344663047875f9791097bf96d35a6d565f4`。
@@ -128,9 +145,34 @@ Samsung SM-A536（Android 16）為 A，Pixel 8a（Android 17）為 B；兩台以
 
 物資站事件隨同一次同步抵達 B。上表時間為各自手機計時，不可跨機相減。這是單次執行、兩節點接力，不是統計樣本。
 
+### 雙機離線驗收（2026-10-28 重跑）
+
+角色與 10-16 相同：Samsung SM-A5360（Android 16）為 A，Pixel 8a（Android 17）為 B，兩台以 USB 供 adb 控制。行動數據以 `svc data disable` 關閉，兩台的 Wi-Fi 保持開啟但未連任何路由器，`ping 8.8.8.8` 兩台都不通。
+
+| 階段 | B 的結果 |
+| --- | --- |
+| 基準線（避難所 B：OPEN） | 推薦演練避難所 B，218 公尺，顯示「沒有此避難所的官方開設狀態」 |
+| FULL（A 載入第 19 版）→ 離線同步 | B 啟動同步後約 30.9 秒建連；收 2 片並套用；B 的路線 `NO_ROUTE`，改推薦演練避難所 A，950 公尺，顯示「避難所狀態更新，已自動重新規劃」 |
+| 同版再次相遇 | Samsung 出現系統「裝置連線」邀請，按「連線」後約 2.5 秒建連；兩台都回報 `already in sync`，不重傳 |
+| OPEN（A 載入第 21 版）→ 同步 | A 重新開始同步後約 2.9 秒建連，再 0.5 秒收 2 片；推薦恢復演練避難所 B，218 公尺，「無官方開設狀態」警示消失 |
+
+結果與 10-16 一致。另外觀察到：
+
+- 再次相遇時 Pixel 先發出邀請，Samsung 會跳出系統「裝置連線」視窗，30 秒內沒人按就自動拒絕。沒人操作時，連續兩輪都是 85 秒連線逾時；逾時後 Pixel 的下一次邀請會立刻收到 `Wi-Fi Direct action failed: 0`，引擎約每 3 秒重試一次。按下「連線」後即正常。
+- Samsung 的 `adb reverse` 在 USB 重新列舉後會消失，A「載入發布資料」會顯示 `Failed to connect to /127.0.0.1:8788`；重新執行 `adb reverse tcp:8788 tcp:8788` 後再載入即可。
+- Pixel 橫向時，演練畫面的地圖區塊底部溢位 234 像素，「推薦最近避難所」按鈕被裁掉而無法點擊；直向正常。
+- 演練中旋轉手機會重建 `MeshDrillActivity`，B 的「已準備接收」狀態隨之清除，須重新按「B：只準備接收」。
+- 逃生路線卡片的「事件快照」仍顯示 UTC 原始字串（例如 `2026-10-28T04:40:28Z`），未轉台灣時間。
+
+後三項已於同日修正（Web 與 Flutter 共用）：
+
+- 橫向溢位的原因是地圖上層欄位底部固定保留 160dp 給圖層按鈕與縮放面板，地圖區塊不夠高時就溢出。改為只限制求救卡片的高度；地圖區塊低於 400dp 時，「需要救援／回報警示／推薦最近避難所」改橫排，避免疊到縮放面板。一般 App 橫向與矮視窗的 Web 也受影響，一併修正。演練畫面在橫向時把操作按鈕移到左側可捲動欄，地圖保有完整高度。
+- `MeshDrillActivity` 加上 `android:configChanges`，旋轉時只重新排版，不重建畫面；演練畫面直向與橫向共用同一個版面元件，演練資料、角色與已開啟的路線卡片都保留（2026-10-29 Pixel 實機確認）。Web 沒有演練畫面，不適用。
+- 「事件快照」改用 `formatUpdateTime`，以台灣時間顯示（Pixel 實機顯示 `2026/10/29 23:51:35`，與手機時鐘一致）。
+
 操作注意：
 
-- 同步進行中，「A：載入發布資料」與「B：只準備接收」為停用狀態。重新發布後，A 須先「停止演練同步」，再載入新版，最後重新開始同步；同步中點載入不會有任何作用，B 會一直回報 `already in sync`。畫面現在會在同步中顯示這個提示（單元測試通過，尚未重新在手機上確認）。
+- 同步進行中，「A：載入發布資料」與「B：只準備接收」為停用狀態。重新發布後，A 須先「停止演練同步」，再載入新版，最後重新開始同步；同步中點載入不會有任何作用，B 會一直回報 `already in sync`。畫面會在同步中顯示這個提示（2026-10-28 已在兩台手機確認）。
 - Android 17（API 37）需額外授予 `ACCESS_LOCAL_NETWORK`（詳見 `wifi-direct.md`）。舊版此時只顯示籠統的「請授予 Wi-Fi 權限」；現在會逐項指出缺少哪一項，例如「無法開始：缺少權限：區域網路（Android 17）」（單元測試通過，尚未重新在手機上確認）。權限可用 `adb shell pm grant com.resilientgeo.mesh android.permission.ACCESS_LOCAL_NETWORK`。
 - 已簽章的 debug APK 與裝置上既有安裝簽章不同時（`INSTALL_FAILED_UPDATE_INCOMPATIBLE`）須先解除安裝，會清除該機 App 本機資料。
 - 本次未驗收：1 分鐘 TTL 到期重算、鎖屏與 Doze、實際放電對照、距離與牆面、三節點以上。先前版本的離線 Wi-Fi Direct 證據仍保留於 `wifi-direct.md`。
