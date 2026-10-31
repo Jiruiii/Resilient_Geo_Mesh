@@ -6,7 +6,6 @@ import android.util.Log
 import com.google.android.gms.nearby.Nearby
 import com.google.android.gms.nearby.connection.*
 import kotlinx.coroutines.*
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.Mutex
@@ -23,7 +22,7 @@ class NearbyConnectionsTransport(context: Context, private val onReady: () -> Un
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val messages = MutableSharedFlow<Pair<String, ByteArray>>()
     override val receivedMessages: SharedFlow<Pair<String, ByteArray>> = messages
-    private val inbox = Channel<Pair<String, ByteArray>>(8)
+    private val inbox = NearbyReceiveQueue()
     private data class Peer(val identity: String, var visible: Boolean = true)
     private data class Link(val connection: Connection, val writes: Mutex = Mutex())
     private data class Sending(val endpoint: String, val result: CompletableDeferred<Unit>)
@@ -34,9 +33,10 @@ class NearbyConnectionsTransport(context: Context, private val onReady: () -> Un
     private val receivers = mutableMapOf<String, NearbyFraming.Receiver>()
     private val nextMessage = AtomicLong()
     private var emitPeer: ((PeerAdvertisement) -> Unit)? = null
+    private var rediscovery: Job? = null
     private var stopped = false
 
-    init { scope.launch { for (message in inbox) messages.emit(message) } }
+    init { scope.launch { inbox.forEach { messages.emit(it) } } }
 
     private fun advertise(endpoint: String) {
         val peer = peers[endpoint] ?: return
@@ -51,7 +51,7 @@ class NearbyConnectionsTransport(context: Context, private val onReady: () -> Un
                 val complete = receivers.getOrPut(endpointId) { NearbyFraming.Receiver() }
                     .accept(bytes, SystemClock.elapsedRealtime()) ?: return
                 val identity = peers[endpointId]?.identity ?: throw IOException("Unknown Nearby peer")
-                if (!inbox.trySend(identity to complete).isSuccess) throw IOException("Nearby receive queue full")
+                if (!inbox.offer(identity, complete)) throw IOException("Nearby receive queue full")
             } catch (error: Exception) {
                 Log.w(TAG, "Rejected payload: ${error.message}")
                 client.cancelPayload(payload.id)
@@ -210,7 +210,39 @@ class NearbyConnectionsTransport(context: Context, private val onReady: () -> Un
         receivers.remove(endpoint)?.clear()
         connecting.remove(endpoint)?.completeExceptionally(error)
         transfers.values.filter { it.endpoint == endpoint }.forEach { it.result.completeExceptionally(error) }
-        if (peers[endpoint]?.visible == false) peers.remove(endpoint)
+        if (peers[endpoint]?.visible == false) {
+            peers.remove(endpoint)
+            rediscover()
+        }
+    }
+
+    /**
+     * Discovery reports an endpoint once per run, and a connected peer is often
+     * reported lost. After its link drops (a failed bandwidth upgrade, say) we
+     * would never hear of it again, so the engine could not retry. Restart
+     * discovery to have it reported anew; Play services may still be closing the
+     * old link for a while, so retry a few times.
+     */
+    private fun rediscover() {
+        if (stopped || emitPeer == null || rediscovery?.isActive == true) return
+        rediscovery = scope.launch {
+            repeat(REDISCOVERY_ATTEMPTS) { attempt ->
+                delay(if (attempt == 0) 2_000 else 10_000)
+                try {
+                    client.stopDiscovery()
+                    withTimeout(15_000) {
+                        client.startDiscovery(SERVICE_ID, discovery,
+                            DiscoveryOptions.Builder().setStrategy(Strategy.P2P_POINT_TO_POINT).build())
+                            .addOnSuccessListener { if (stopped) client.stopDiscovery() }.await()
+                    }
+                    Log.i(TAG, "Nearby discovery restarted after a lost link")
+                    return@launch
+                } catch (error: Exception) {
+                    if (error is CancellationException && error !is TimeoutCancellationException) throw error
+                    Log.w(TAG, "Nearby rediscovery attempt ${attempt + 1} failed: ${error.message}")
+                }
+            }
+        }
     }
 
     private fun disconnect(endpoint: String, error: Exception) {
@@ -237,6 +269,7 @@ class NearbyConnectionsTransport(context: Context, private val onReady: () -> Un
     companion object {
         private const val TAG = "ResilientGeoNearby"
         private const val MAX_PEERS = 16
+        private const val REDISCOVERY_ATTEMPTS = 3
         const val SERVICE_ID = "com.resilientgeo.mesh.nearby.v1"
         fun validIdentity(value: String) = value.matches(Regex("nearby:[0-9a-f]{32}"))
     }
