@@ -60,7 +60,8 @@
 ## 原始資料
 
 - `raw/measure-2026-10-31-Pixel_8a.csv`：接收端，23:23 拉回，md5 `28f26bb053b1de644dc8e4bf9b7464a6`。用 `test_id` 開頭為 `tp-10m-` 的 15 列。
-- 發送端 Samsung 的 CSV 還沒拉，下次 Samsung 接電腦時補到 `raw/`。
+- `raw/measure-2026-10-31-SM-A5360.csv`：發送端，11-01 補拉，md5 `53c4dc2830f2f409dce67ca9f1a659e7`。用 14:49Z–15:22Z 的 17 列（`trial` 0、`role` sender，每次連線一列）。這些列的 `test_id`（`tools-check`）和 `environment` 是 Samsung 畫面上留下的舊值，**不採用**，條件以接收端為準。Samsung 時鐘比 Pixel 快約 5.5 秒（11-01 00:55 用 adb 比對）。
+  - 發送端也證實 Wi-Fi Direct 1.7 MB 第 1 次的慢：14:59:57Z、15:01:26Z 各記一次 85 秒 `session_failed`，第 3 次連線才在 2.4 秒內傳完。第 3 次（51 秒）在發送端是一次連線，連上用了 35.7 秒。
 
 ## 怎麼跑的
 

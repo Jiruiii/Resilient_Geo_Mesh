@@ -67,7 +67,8 @@
 - `raw/measure-2026-10-31-Pixel_8a.csv`：BLE 的 6 列（md5 `95a49e6621e0a631266caa216cdb6db1`）。
 - `raw/measure-2026-11-01-Pixel_8a.csv`：Nearby、Wi-Fi Direct 的 9 列。Nearby 40 m 第 1 次在 23:59 開始、00:02 寫入，所以在這個檔（md5 `0401aa9354090bfc477606a1e0ce7348`）。
 - `raw/dist-outdoor-merged.csv`：把上面兩個檔裡 `test_id` 開頭是 `dist-outdoor-` 的 15 列合在一起（含被排除的 4 列），表頭相同，沒有改任何欄位。
-- 發送端 Samsung 的 CSV 還沒拉，下次接電腦時補。
+- `raw/measure-2026-10-31-SM-A5360.csv`、`raw/measure-2026-11-01-SM-A5360.csv`：發送端 Samsung，11-01 補拉（md5 `53c4dc28…`、`54164f6e…`）。每次連線一列，`test_id`（`tools-check`）和 `environment`（室內走廊）是畫面上的舊值，不採用。Samsung 時鐘比 Pixel 快約 5.5 秒。
+  - 發送端對得上接收端：BLE 40 m、Nearby 40 m 第 1 次、Nearby 50 m 都**沒有**發送端紀錄，表示根本沒連上；Wi-Fi Direct 50 m 有一列 85 秒 `session_failed` 再一列 2.0 秒成功；60 m 只有一列 85 秒 `session_failed`，第 2 次連線沒有完成。
 
 ## 待補
 
