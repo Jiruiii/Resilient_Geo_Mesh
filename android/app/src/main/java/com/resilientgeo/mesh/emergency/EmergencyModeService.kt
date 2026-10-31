@@ -11,6 +11,7 @@ import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.resilientgeo.mesh.data.MeshRepository
+import com.resilientgeo.mesh.measure.ServiceMeasurementLog
 import com.resilientgeo.mesh.transport.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collect
@@ -33,6 +34,8 @@ class EmergencyModeService : Service() {
     private val status by lazy { SyncStatusStore(applicationContext) }
     private val repository by lazy { MeshRepository(applicationContext) }
     private val nodeId by lazy { NodeIdentity(applicationContext).nodeId }
+    private val measurementLog by lazy { ServiceMeasurementLog(applicationContext) }
+    private var lastMeasurementSampleAt = 0L
     private val policy = AutomaticTransportPolicy()
     private class Lane(val mode: String, val radio: PeerTransport, val engine: AutoPeerSyncEngine) {
         var discovery = true
@@ -52,10 +55,12 @@ class EmergencyModeService : Service() {
             NotificationChannel(CHANNEL, "Emergency Mode", NotificationManager.IMPORTANCE_LOW),
         )
         startForeground(NOTIFICATION, notification())
+        logMeasurement { measurementLog.sample("start", emptyList(), null, null) }
         scope.launch {
             while (isActive) {
                 maintain()
                 publish()
+                sampleMeasurement()
                 delay(5_000)
             }
         }
@@ -89,6 +94,8 @@ class EmergencyModeService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
     override fun onDestroy() {
         lanes.keys.toList().forEach(::stopLane)
+        val stopped = stats()
+        logMeasurement { measurementLog.sample("stop", emptyList(), null, stopped) }
         status.stopped()
         scope.cancel()
         super.onDestroy()
@@ -170,6 +177,8 @@ class EmergencyModeService : Service() {
                         if (settings.mode == MeshTransportSettings.AUTO && policy.active == mode)
                             policy.outcome(outcome.succeeded, outcome.failureCode)
                         status.record(outcome, mode)
+                        val totals = stats()
+                        logMeasurement { measurementLog.outcome(mode, outcome, totals) }
                         publish()
                     }
                 } },
@@ -218,6 +227,25 @@ class EmergencyModeService : Service() {
         status.heartbeat(active.isNotEmpty(), peers, stats)
         getSystemService(NotificationManager::class.java).notify(NOTIFICATION, notification())
         Log.i(TAG, "HEARTBEAT transports=$active peers=$peers active_sessions=${stats.activeSessions} chunks_applied=${stats.chunksApplied}")
+    }
+
+    /** Doze can stretch the 5 s loop; gaps between samples in the CSV are part of the measurement. */
+    private fun sampleMeasurement() {
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastMeasurementSampleAt < ServiceMeasurementLog.SAMPLE_INTERVAL_MILLIS) return
+        lastMeasurementSampleAt = now
+        val active = lanes.values.filter { it.discovery }.map { it.mode }
+        val peers = lanes.values.sumOf { it.engine.visiblePeerCount(30_000) }
+        val totals = stats()
+        logMeasurement { measurementLog.sample("sample", active, peers, totals) }
+    }
+
+    /** The log is off unless a debug build enabled it; file I/O stays off the main thread. */
+    private fun logMeasurement(write: () -> Unit) {
+        if (!measurementLog.enabled) return
+        CoroutineScope(Dispatchers.IO).launch {
+            runCatching(write).onFailure { Log.w(TAG, "Measurement log write failed", it) }
+        }
     }
 
     private fun notification(): Notification {

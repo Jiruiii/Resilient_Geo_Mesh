@@ -27,6 +27,9 @@ final class SyncStatus {
     this.lastFailureTransport,
     this.discoveryMode = 'balanced',
     this.discoveryResting = false,
+    this.measurementLogAvailable = false,
+    this.measurementLogEnabled = false,
+    this.measurementLogDirectory,
   });
 
   final bool emergencyModeEnabled,
@@ -69,6 +72,10 @@ final class SyncStatus {
 
   final String discoveryMode;
   final bool discoveryResting;
+
+  /// Debug builds can log the real service to CSV for lock-screen and battery tests.
+  final bool measurementLogAvailable, measurementLogEnabled;
+  final String? measurementLogDirectory;
   final bool wifiDirectAvailable,
       wifiEnabled,
       wifiPermissionsGranted,
@@ -116,6 +123,11 @@ final class SyncStatus {
       lastFailureTransport: message['last_failure_transport'] as String?,
       discoveryMode: message['discovery_mode'] as String? ?? 'balanced',
       discoveryResting: message['discovery_resting'] as bool? ?? false,
+      measurementLogAvailable:
+          message['measurement_log_available'] as bool? ?? false,
+      measurementLogEnabled:
+          message['measurement_log_enabled'] as bool? ?? false,
+      measurementLogDirectory: message['measurement_log_directory'] as String?,
       wifiDirectAvailable: message['wifi_direct_available'] as bool? ?? false,
       wifiEnabled: message['wifi_enabled'] as bool? ?? false,
       wifiPermissionsGranted:

@@ -86,6 +86,60 @@ void main() {
       await tester.pumpWidget(const SizedBox());
     },
   );
+  testWidgets('measurement log switch appears only when the build offers it', (
+    tester,
+  ) async {
+    const channel = MethodChannel('test/measurement-log');
+    var available = false, logging = false;
+    final calls = <bool>[];
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'setMeasurementLog') {
+        logging = (call.arguments as Map)['enabled'] as bool;
+        calls.add(logging);
+      }
+      return {
+        ...message(),
+        'measurement_log_available': available,
+        'measurement_log_enabled': logging,
+        'measurement_log_directory':
+            available ? '/sdcard/Android/data/app/files/measurements' : null,
+      };
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+    // Tall enough that the lazy list builds every card, so findsNothing is meaningful.
+    tester.view.physicalSize = const Size(1080, 6000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    Future<void> show() async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SyncStatusScreen(
+            key: UniqueKey(),
+            bridge: MapBridge(methodChannel: channel),
+          ),
+        ),
+      );
+      await tester.pump();
+    }
+
+    await show();
+    expect(find.byKey(const ValueKey('measurement-log')), findsNothing);
+
+    available = true;
+    await show();
+    final toggle = find.byKey(const ValueKey('measurement-log'));
+    await tester.ensureVisible(toggle);
+    await tester.pumpAndSettle();
+    await tester.tap(toggle);
+    await tester.pump();
+    expect(calls, [true]);
+    expect(tester.widget<SwitchListTile>(toggle).value, isTrue);
+    expect(find.textContaining('files/measurements'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   test('Wi-Fi Direct readiness does not depend on Bluetooth', () {
     final wifi =
         message()..addAll({

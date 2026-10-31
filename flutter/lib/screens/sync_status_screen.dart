@@ -88,6 +88,24 @@ class _SyncStatusScreenState extends State<SyncStatusScreen>
     }
   }
 
+  Future<void> _setMeasurementLog(bool enabled) async {
+    if (_changing) return;
+    setState(() => _changing = true);
+    try {
+      final status = await widget.bridge.setMeasurementLog(enabled: enabled);
+      if (mounted) {
+        setState(() {
+          _status = status;
+          _error = null;
+        });
+      }
+    } catch (error) {
+      if (mounted) setState(() => _error = error);
+    } finally {
+      if (mounted) setState(() => _changing = false);
+    }
+  }
+
   @override
   void dispose() {
     _timer?.cancel();
@@ -455,6 +473,35 @@ class _SyncStatusScreenState extends State<SyncStatusScreen>
                 ],
               ),
             ),
+            if (status.measurementLogAvailable) ...[
+              const SizedBox(height: 12),
+              Card(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SwitchListTile(
+                      key: const ValueKey('measurement-log'),
+                      title: const Text('量測紀錄（開發版）'),
+                      subtitle: const Text(
+                        '記錄每次同步結果，並每 5 分鐘記錄電量、螢幕與 Doze 狀態，用於鎖屏與耗電測試。',
+                      ),
+                      value: status.measurementLogEnabled,
+                      onChanged:
+                          _changing || _error != null
+                              ? null
+                              : _setMeasurementLog,
+                    ),
+                    if (status.measurementLogDirectory != null)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                        child: SelectableText(
+                          '紀錄位置：${status.measurementLogDirectory}',
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
           ],
         ],
       ),

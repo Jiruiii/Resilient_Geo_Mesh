@@ -272,6 +272,83 @@ class AutoPeerSyncEngineTest {
         client.stop(); server.stop()
     }
 
+    @Test fun `a peer that restarts mid transfer gets a fresh hello and only the missing chunks`() = runTest {
+        val medium = FakeMedium()
+        val a = FakeTransport("a", medium)
+        val b = FakeTransport("b", medium)
+        medium.register(a); medium.register(b)
+        val chunks = listOf(testChunk("first"), testChunk("second"))
+        val sent = mutableListOf<String>()
+        var linkDropped = false
+        // The first "second" transfer fails as if the link dropped mid-exchange.
+        val flaky = object : PeerTransport by a {
+            override suspend fun send(connection: Connection, payload: ByteArray): TransferResult {
+                val envelope = JSONObject(String(payload))
+                if (envelope.getString("type") == "TRANSFER") {
+                    val id = envelope.getJSONObject("chunk").getString("chunk_id")
+                    if (id == "second" && !linkDropped) { linkDropped = true; return TransferResult.Failed("link lost") }
+                    sent += id
+                }
+                return a.send(connection, payload)
+            }
+        }
+        val received = mutableListOf<JSONObject>()
+        val outcomes = mutableListOf<AutoPeerSyncEngine.SyncOutcome>()
+        val server = AutoPeerSyncEngine(flaky, "a", { summaryJson("a", chunks) },
+            { _, _, id -> chunks.find { it.getString("chunk_id") == id } },
+            { ChunkIngestResult.Applied(emptyList()) }, backgroundScope,
+            receptiveWindowMillis = 100, failureCooldownMillis = 0, clock = { testScheduler.currentTime })
+        val client = AutoPeerSyncEngine(b, "b", { summaryJson("b", received) }, { _, _, _ -> null },
+            { received += it; ChunkIngestResult.Applied(emptyList()) }, backgroundScope,
+            // Far longer than the test runs: only the restart can end this exchange.
+            requestedChunkTimeoutMillis = 200_000, receptiveWindowMillis = 100,
+            clock = { testScheduler.currentTime }, onSyncOutcome = { outcomes += it })
+        server.start(); client.start(); runCurrent()
+        a.advertise(b.peerId); b.advertise(a.peerId)
+        settle()
+        assertEquals(listOf("first"), received.map { it.getString("chunk_id") })
+        a.advertise(b.peerId) // The server reconnects and sends a new HELLO.
+        settle()
+        assertEquals(listOf("first", "second"), received.map { it.getString("chunk_id") })
+        assertEquals("the applied chunk must not be requested again", listOf("first", "second"), sent)
+        assertEquals(listOf(AutoPeerSyncEngine.SyncOutcome(false, "peer_restarted"),
+            AutoPeerSyncEngine.SyncOutcome(true)), outcomes)
+        assertEquals(1, client.stats().peersSynced)
+        assertEquals(1, server.stats().peersSynced)
+        server.stop(); client.stop()
+    }
+
+    @Test fun `a new hello after the exchange has everything does not abandon it`() = runTest {
+        val medium = FakeMedium()
+        val a = FakeTransport("a", medium)
+        val b = FakeTransport("b", medium)
+        medium.register(a); medium.register(b)
+        val chunk = testChunk("only")
+        val outcomes = mutableListOf<AutoPeerSyncEngine.SyncOutcome>()
+        // The client keeps serving after its chunk arrived, so its exchange is still open.
+        val slowServing = object : PeerTransport by b {
+            override suspend fun send(connection: Connection, payload: ByteArray): TransferResult {
+                if (JSONObject(String(payload)).getString("type") == "TRANSFER") delay(5_000)
+                return b.send(connection, payload)
+            }
+        }
+        val server = AutoPeerSyncEngine(a, "a", { summaryJson("a", listOf(chunk)) }, { _, _, _ -> chunk },
+            { ChunkIngestResult.Applied(emptyList()) }, backgroundScope, receptiveWindowMillis = 100)
+        val clientChunk = testChunk("from-client")
+        val client = AutoPeerSyncEngine(slowServing, "b", { summaryJson("b", listOf(clientChunk)) },
+            { _, _, _ -> clientChunk }, { ChunkIngestResult.Applied(emptyList()) }, backgroundScope,
+            receptiveWindowMillis = 100, onSyncOutcome = { outcomes += it })
+        server.start(); client.start(); runCurrent()
+        a.advertise(b.peerId); b.advertise(a.peerId)
+        advanceTimeBy(1_000); runCurrent()
+        // A HELLO from another remote session while nothing is owed must not end the exchange.
+        b.receive(a.peerId, JSONObject().put("type", "HELLO").put("summary", summaryJson("a", listOf(chunk)))
+            .put("session_id", "another-session").toString().toByteArray())
+        settle()
+        assertEquals(AutoPeerSyncEngine.SyncOutcome(true), outcomes.first())
+        server.stop(); client.stop()
+    }
+
     private fun testChunk(id: String) = JSONObject().put("dataset_id", "demo").put("namespace", "official")
         .put("chunk_id", id).put("chunk_hash", "sha256:$id").put("size_bytes", 10)
 
@@ -541,6 +618,41 @@ class AutoPeerSyncEngineTest {
         assertEquals(1, engineA.stats().peersSynced)
         assertEquals(1, engineB.stats().peersSynced)
         assertEquals(1, engineA.stats().chunksApplied)
+    }
+
+    @Test
+    fun `traces report one exchange in order without changing it`() = runTest {
+        val medium = FakeMedium()
+        val nodeA = FakeTransport("node-a-addr", medium)
+        val nodeB = FakeTransport("node-b-addr", medium)
+        medium.register(nodeA)
+        medium.register(nodeB)
+        val chunk = JSONObject().put("dataset_id", "demo").put("namespace", "official")
+            .put("chunk_id", "demo:chunk:0").put("chunk_hash", "sha256:fake").put("size_bytes", 10)
+        val traces = mutableListOf<AutoPeerSyncEngine.Trace>()
+        val engineA = AutoPeerSyncEngine(nodeA, "node-a", { summaryJson("node-a", emptyList()) }, { _, _, _ -> null },
+            { ChunkIngestResult.Applied(emptyList()) }, backgroundScope, connectTimeoutMillis = 1_000,
+            helloTimeoutMillis = 1_000, requestedChunkTimeoutMillis = 2_000, receptiveWindowMillis = 200,
+            onTrace = { traces += it })
+        val engineB = AutoPeerSyncEngine(nodeB, "node-b", { summaryJson("node-b", listOf(chunk)) }, { _, _, _ -> chunk },
+            { ChunkIngestResult.Applied(emptyList()) }, backgroundScope, connectTimeoutMillis = 1_000,
+            helloTimeoutMillis = 1_000, requestedChunkTimeoutMillis = 2_000, receptiveWindowMillis = 200)
+        engineA.start()
+        engineB.start()
+        runCurrent()
+        nodeA.advertise(nodeB.peerId)
+        nodeB.advertise(nodeA.peerId)
+        settle()
+
+        val kinds = traces.map { it::class.simpleName }.distinct()
+        assertEquals(listOf("PeerSeen", "Connecting", "Connected"), kinds.take(3))
+        assertTrue(kinds.indexOf("HelloReceived") < kinds.indexOf("ChunkApplied"))
+        assertEquals(1, traces.filterIsInstance<AutoPeerSyncEngine.Trace.Requested>().single().chunks)
+        val applied = traces.filterIsInstance<AutoPeerSyncEngine.Trace.ChunkApplied>().single()
+        assertEquals("demo:chunk:0", applied.chunkId)
+        assertTrue(applied.messageBytes > 0)
+        assertEquals(AutoPeerSyncEngine.Trace.SessionEnded(nodeB.peerId, true, null), traces.last())
+        assertEquals(1, engineA.stats().peersSynced)
     }
 
     @Test
