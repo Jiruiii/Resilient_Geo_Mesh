@@ -89,6 +89,10 @@ class AutoPeerSyncEngine(
     private val clock: () -> Long = System::currentTimeMillis,
     private val onSyncOutcome: (SyncOutcome) -> Unit = {},
     private val mayInitiate: () -> Boolean = { true },
+    /** Upper bound for waiting on a whole exchange; the measurement harness raises it for large payloads. */
+    private val exchangeTimeoutCapMillis: Long = EXCHANGE_TIMEOUT_CAP_MS,
+    /** Structured timing points for measurement; production callers leave it as a no-op. */
+    private val onTrace: (Trace) -> Unit = {},
 ) {
     private enum class Phase {
         DISCOVERED, CONNECTING, EXCHANGING, SYNCED, FAILED;
@@ -116,6 +120,11 @@ class AutoPeerSyncEngine(
         @Volatile var retryNotBeforeMillis: Long = 0L
         @Volatile var lastSeenAtMillis: Long = 0L
         @Volatile var syncRequestedAfterCurrent: Boolean = false
+        @Volatile var job: Job? = null
+
+        /** The remote session this exchange answers; a HELLO with another id means the peer gave up on it. */
+        @Volatile var remoteSessionId: String? = null
+        @Volatile var abandonedByPeer: Boolean = false
 
         @Volatile private var latestRemoteSummary: RemoteHello? = null
         @Volatile var requestsDoneSessionId: String? = null
@@ -147,6 +156,19 @@ class AutoPeerSyncEngine(
 
     data class Stats(val peersSynced: Int, val chunksApplied: Int, val activeSessions: Int)
     data class SyncOutcome(val succeeded: Boolean, val failureCode: String? = null)
+
+    /** Timing points of one exchange, keyed by the same peer id the engine uses for its session. */
+    sealed class Trace {
+        abstract val peerId: String
+        data class PeerSeen(override val peerId: String, val rssi: Int?) : Trace()
+        data class Connecting(override val peerId: String) : Trace()
+        data class Connected(override val peerId: String) : Trace()
+        data class HelloReceived(override val peerId: String) : Trace()
+        data class Requested(override val peerId: String, val chunks: Int, val bytes: Long) : Trace()
+        data class ChunkApplied(override val peerId: String, val chunkId: String, val messageBytes: Int) : Trace()
+        data class ChunkRejected(override val peerId: String, val chunkId: String, val reason: String) : Trace()
+        data class SessionEnded(override val peerId: String, val succeeded: Boolean, val failureCode: String?) : Trace()
+    }
     private data class RemoteHello(val summary: PeerSummary, val sessionId: String?)
     private data class ChunkKey(val datasetId: String, val namespace: String, val chunkId: String, val chunkHash: String)
 
@@ -253,6 +275,7 @@ class AutoPeerSyncEngine(
             return
         }
         val peerId = advertisement.transportIdentity ?: advertisement.peerId
+        onTrace(Trace.PeerSeen(peerId, advertisement.rssi))
         // Keep advertisements visible while a faster transport gets a short head start.
         // Incoming messages are still accepted; repeated sightings retry after the gate opens.
         if (!mayInitiate() && sessions[peerId]?.hasUnconsumedHello() != true) return
@@ -285,9 +308,10 @@ class AutoPeerSyncEngine(
             session.phase = Phase.DISCOVERED
             return
         }
-        workers.launch {
+        session.job = workers.launch {
             runSession(session)
-        }.invokeOnCompletion {
+        }
+        session.job?.invokeOnCompletion {
             // Also releases the slot when stop() cancels a queued coroutine
             // before its body ever starts.
             semaphore.release()
@@ -312,8 +336,11 @@ class AutoPeerSyncEngine(
         // encounter may no longer be advertised and must not poison this one.
         session.pendingChunks.clear()
         session.servingFailed = false
+        session.remoteSessionId = null
+        session.abandonedByPeer = false
         var servingJob: Job? = null
         try {
+            onTrace(Trace.Connecting(peerId))
             val conn = withTimeoutOrNull(connectTimeoutMillis) { transport.connect(session.connectionAddress ?: peerId) }
             if (conn == null) {
                 onLog("connect timeout/failed for $peerId")
@@ -323,6 +350,7 @@ class AutoPeerSyncEngine(
             session.connection = conn
             session.phase = Phase.EXCHANGING
             onLog("connected to $peerId")
+            onTrace(Trace.Connected(peerId))
             servingJob = launch {
                 for (request in session.bufferedRequests) {
                     try {
@@ -358,9 +386,11 @@ class AutoPeerSyncEngine(
                 fail(session, "hello_timeout")
                 return@coroutineScope
             }
+            session.remoteSessionId = remoteSummary.sessionId
 
             val localSummary = PeerSummary.fromJson(localSummaryJson)
             val requests = buildRequestsForMissingData(localSummary, remoteSummary.summary)
+            onTrace(Trace.Requested(peerId, requests.sumOf { it.chunks.size }, requests.sumOf { it.maxTotalBytes }))
             for (request in requests) {
                 for (chunk in request.chunks) {
                     session.pendingChunks[ChunkKey(request.datasetId, request.namespace, chunk.chunkId, chunk.chunkHash)] = CompletableDeferred()
@@ -390,13 +420,13 @@ class AutoPeerSyncEngine(
                 val allRequestedDone = async {
                     if (pending.isEmpty()) true
                     else withTimeoutOrNull(maxOf(requestedChunkTimeoutMillis,
-                        (requests.sumOf { it.maxTotalBytes } * 1000 / 1024 + requestedChunkTimeoutMillis).coerceAtMost(300_000L))) {
+                        (requests.sumOf { it.maxTotalBytes } * 1000 / 1024 + requestedChunkTimeoutMillis).coerceAtMost(exchangeTimeoutCapMillis))) {
                         pending.awaitAll().all { it }
                     } ?: false
                 }
                 val allServed = async {
                     if (remoteSummary.sessionId == null) delay(receptiveWindowMillis)
-                    withTimeoutOrNull(300_000L) {
+                    withTimeoutOrNull(exchangeTimeoutCapMillis) {
                         while ((remoteSummary.sessionId != null &&
                                 session.requestsDoneSessionId != remoteSummary.sessionId) ||
                             session.outgoingRequests.get() > 0) delay(100)
@@ -418,9 +448,13 @@ class AutoPeerSyncEngine(
             session.retryNotBeforeMillis = clock() + syncCooldownMillis
             peersSyncedCounter.incrementAndGet()
             onSyncOutcome(SyncOutcome(true))
+            onTrace(Trace.SessionEnded(peerId, true, null))
             onLog("sync with $peerId complete")
         } catch (e: Exception) {
-            if (e is CancellationException) throw e
+            if (e is CancellationException) {
+                if (session.abandonedByPeer) fail(session, "peer_restarted")
+                throw e
+            }
             onLog("session with $peerId failed: ${e.message}")
             fail(session, "session_failed")
         } finally {
@@ -439,6 +473,7 @@ class AutoPeerSyncEngine(
         session.phase = Phase.FAILED
         session.retryNotBeforeMillis = clock() + failureCooldownMillis
         onSyncOutcome(SyncOutcome(false, code))
+        onTrace(Trace.SessionEnded(session.peerId, false, code))
     }
 
     /**
@@ -484,15 +519,49 @@ class AutoPeerSyncEngine(
         val identity = envelope.optString("sender_transport_id").takeIf { it.matches(Regex("ble:[0-9a-f]{16}")) }
         val session = sessions.computeIfAbsent(identity ?: peerId) { PeerSession(it) }
         when (envelope.optString("type")) {
-            "HELLO" -> session.recordHello(RemoteHello(
-                PeerSummary.fromJson(envelope.getJSONObject("summary")),
-                envelope.optString("session_id").takeIf { it.isNotEmpty() },
-            ))
+            "HELLO" -> {
+                val remoteSessionId = envelope.optString("session_id").takeIf { it.isNotEmpty() }
+                session.recordHello(RemoteHello(
+                    PeerSummary.fromJson(envelope.getJSONObject("summary")),
+                    remoteSessionId,
+                ))
+                onTrace(Trace.HelloReceived(session.peerId))
+                abandonIfPeerRestarted(session, remoteSessionId)
+            }
             "REQUESTS_DONE" -> session.requestsDoneSessionId = envelope.optString("session_id").takeIf { it.isNotEmpty() }
             "REQUEST" -> handleRequest(session, envelope.getJSONObject("request"))
-            "TRANSFER" -> handleTransfer(session, envelope.getJSONObject("chunk"))
+            "TRANSFER" -> handleTransfer(session, envelope.getJSONObject("chunk"), bytes.size)
             else -> onLog("unknown envelope type from $peerId: ${envelope.optString("type")}")
         }
+    }
+
+    /**
+     * A peer that gave up on our exchange (its own timeout, or a dropped link)
+     * reconnects with a new HELLO and waits for ours. We send HELLO only when a
+     * session starts, so finishing the stale exchange first would leave the peer
+     * waiting until one of the two timeouts. End it now and answer with a fresh
+     * session; its diff skips the chunks this exchange already applied.
+     */
+    private fun abandonIfPeerRestarted(session: PeerSession, remoteSessionId: String?) {
+        val stale = synchronized(session) {
+            val current = session.remoteSessionId
+            if (session.phase != Phase.EXCHANGING || current == null || remoteSessionId == null ||
+                current == remoteSessionId || session.abandonedByPeer) return@synchronized false
+            // Links deliver in order, so everything the old remote session sent has
+            // been handled by now. With nothing outstanding the exchange finishes on
+            // its own; only an exchange still waiting on the gone session is stale.
+            val waiting = session.pendingChunks.values.any { !it.isCompleted } ||
+                session.requestsDoneSessionId != current
+            if (!waiting) return@synchronized false
+            session.abandonedByPeer = true
+            session.syncRequestedAfterCurrent = true
+            // The HELLO itself proves the peer is here, which the restart requires.
+            session.lastSeenAtMillis = clock()
+            true
+        }
+        if (!stale) return
+        onLog("${session.peerId} started a new session; ending the stale exchange")
+        session.job?.cancel()
     }
 
     private fun handleRequest(session: PeerSession, requestJson: JSONObject) {
@@ -533,15 +602,19 @@ class AutoPeerSyncEngine(
         return complete
     }
 
-    private suspend fun handleTransfer(session: PeerSession, chunkJson: JSONObject) {
+    private suspend fun handleTransfer(session: PeerSession, chunkJson: JSONObject, messageBytes: Int) {
         val chunkId = chunkJson.optString("chunk_id")
         val result = chunkIngestor(chunkJson)
         when (result) {
             is ChunkIngestResult.Applied -> {
                 chunksAppliedCounter.incrementAndGet()
                 onLog("applied TRANSFER for $chunkId, ${result.eventResults.size} event(s)")
+                onTrace(Trace.ChunkApplied(session.peerId, chunkId, messageBytes))
             }
-            is ChunkIngestResult.Rejected -> onLog("rejected TRANSFER for $chunkId: ${result.reason}")
+            is ChunkIngestResult.Rejected -> {
+                onLog("rejected TRANSFER for $chunkId: ${result.reason}")
+                onTrace(Trace.ChunkRejected(session.peerId, chunkId, result.reason))
+            }
         }
         val key = ChunkKey(chunkJson.optString("dataset_id"), chunkJson.optString("namespace"),
             chunkId, chunkJson.optString("chunk_hash"))
@@ -591,6 +664,7 @@ class AutoPeerSyncEngine(
         private const val HELLO_POLL_INTERVAL_MS = 200L
         private const val REQUESTED_CHUNK_TIMEOUT_MS = 20_000L
         private const val RECEPTIVE_WINDOW_MS = 6_000L
+        private const val EXCHANGE_TIMEOUT_CAP_MS = 300_000L
 
         /** A peer we just finished syncing with isn't retried until this much later. */
         private const val SYNC_COOLDOWN_MS = 60_000L

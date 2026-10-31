@@ -140,6 +140,11 @@ class MapBridge {
         await _invokeRequiredMap('setSyncTransport', {'transport': transport}),
       );
 
+  Future<SyncStatus> setMeasurementLog({required bool enabled}) async =>
+      SyncStatus.fromMessage(
+        await _invokeRequiredMap('setMeasurementLog', {'enabled': enabled}),
+      );
+
   Future<SyncStatus> setDiscoveryMode(String mode) async =>
       SyncStatus.fromMessage(
         await _invokeRequiredMap('setDiscoveryMode', {'mode': mode}),

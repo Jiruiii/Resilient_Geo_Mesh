@@ -75,10 +75,15 @@ class WifiDirectTransport(context: Context, private val serviceInstance: String 
     private val discoveryStartedAt = SystemClock.elapsedRealtime()
     private val discoverySchedule = WifiDirectDiscoverySchedule(discoveryStartedAt,
         adaptive = MeshTransportSettings(app).discoveryMode == "adaptive")
+    private val staleGroup = WifiDirectStaleGroup()
+    /** Set after leaving a group without IPv4: our own invitation carries the IPv4 mode. */
+    @Volatile private var needOwnInvite = false
     private var invitationUntil = 0L
     private var lastRawPeerCount = -1
 
     private fun trace(message: String) = Log.i(TAG, "discovery_ms=${SystemClock.elapsedRealtime() - discoveryStartedAt} $message")
+
+    private class ActionFailed(val reason: Int) : IOException("Wi-Fi Direct action failed: $reason")
 
     private class Link(val peer: String, val socket: Socket, val input: DataInputStream, val output: DataOutputStream) {
         val id = UUID.randomUUID().toString()
@@ -142,10 +147,7 @@ class WifiDirectTransport(context: Context, private val serviceInstance: String 
             }
         })
         try {
-            service = WifiP2pDnsSdServiceInfo.newInstance(serviceInstance, TYPE, mapOf("v" to "1", "id" to localIdentity))
-            action { manager.addLocalService(ch, service, it) }
-            request = WifiP2pDnsSdServiceRequest.newInstance(serviceInstance, TYPE)
-            action { manager.addServiceRequest(ch, request, it) }
+            registerService(ch)
             trace("service registered identity=$localIdentity")
         } catch (error: Exception) {
             teardown()
@@ -184,6 +186,8 @@ class WifiDirectTransport(context: Context, private val serviceInstance: String 
                         discoverySchedule.failed(SystemClock.elapsedRealtime())
                         WifiDiscoveryControl.resting = false
                         Log.w(TAG, "discovery step=$step failed: ${error.message}")
+                        if (error is ActionFailed && WifiDirectConnectionPolicy.mustReregister(error.reason))
+                            reregisterService(ch)
                     }
                 }
                 delay(250)
@@ -191,6 +195,27 @@ class WifiDirectTransport(context: Context, private val serviceInstance: String 
         }
         awaitClose { refresh.cancel(); teardown() }
     }.flowOn(Dispatchers.Main.immediate)
+
+    private suspend fun registerService(ch: WifiP2pManager.Channel) {
+        service = WifiP2pDnsSdServiceInfo.newInstance(serviceInstance, TYPE, mapOf("v" to "1", "id" to localIdentity))
+        action { manager.addLocalService(ch, service, it) }
+        request = WifiP2pDnsSdServiceRequest.newInstance(serviceInstance, TYPE)
+        action { manager.addServiceRequest(ch, request, it) }
+    }
+
+    /** After an idle shutdown the framework has forgotten both registrations, so
+     * neither side can find the other until they are added again. */
+    private suspend fun reregisterService(ch: WifiP2pManager.Channel) {
+        try {
+            runCatching { action { manager.clearLocalServices(ch, it) } }
+            runCatching { action { manager.clearServiceRequests(ch, it) } }
+            registerService(ch)
+            Log.i(TAG, "service registration restored")
+        } catch (error: Exception) {
+            if (error is CancellationException) throw error
+            Log.w(TAG, "restoring service registration failed: ${error.message}")
+        }
+    }
 
     private fun advertise(identity: String) {
         emitPeer?.invoke(PeerAdvertisement(identity, null, System.currentTimeMillis(), identity))
@@ -210,15 +235,24 @@ class WifiDirectTransport(context: Context, private val serviceInstance: String 
                         withContext(Dispatchers.Main.immediate) {
                             val ch = p2pChannel ?: throw IOException("Discovery not running")
                             val peer = peers[peerId]
-                            if (!invited && !groupPresent && peer != null &&
-                                WifiDirectConnectionPolicy.shouldInitiate(localIdentity, peerId, peer.isGroupOwner)) {
+                            if (!invited && !groupPresent && peer != null && (needOwnInvite ||
+                                    WifiDirectConnectionPolicy.shouldInitiate(localIdentity, peerId, peer.isGroupOwner))) {
                                 initiatedGroup = true
                                 outboundInvitation = true
-                                Log.i(TAG, "inviting peer=$peerId existing_owner=${peer.isGroupOwner}")
-                                // Let connect stop discovery. Stopping it first can
-                                // make Samsung discard the peer before the invitation.
-                                action { manager.connect(ch, connectionConfig(peer.address), it) }
-                                invited = true
+                                Log.i(TAG, "inviting peer=$peerId existing_owner=${peer.isGroupOwner} own_ipv4=$needOwnInvite")
+                                try {
+                                    // Let connect stop discovery. Stopping it first can
+                                    // make Samsung discard the peer before the invitation.
+                                    action { manager.connect(ch, connectionConfig(peer.address), it) }
+                                    invited = true
+                                } catch (error: ActionFailed) {
+                                    if (error.reason == WifiP2pManager.P2P_UNSUPPORTED) throw error
+                                    // The framework drops connect requests while it is
+                                    // still removing a group; retry within this window.
+                                    outboundInvitation = false
+                                    Log.w(TAG, "invitation not accepted yet: ${error.message}")
+                                    delay(2_000)
+                                }
                             }
                         }
                         delay(200)
@@ -244,6 +278,7 @@ class WifiDirectTransport(context: Context, private val serviceInstance: String 
                 if (!info.groupFormed) {
                     if (groupPresent) clearSockets()
                     groupPresent = false
+                    staleGroup.observe(SystemClock.elapsedRealtime(), groupFormed = false, hasIpv4 = false, hasLinks = false)
                     return@requestConnectionInfo
                 }
                 groupPresent = true
@@ -252,6 +287,21 @@ class WifiDirectTransport(context: Context, private val serviceInstance: String 
                     if (peers.values.any { peer -> group.owner?.deviceAddress == peer.address ||
                             group.clientList.any { it.deviceAddress == peer.address } }) usedGroup = true
                     val name = group.`interface` ?: return@requestGroupInfo
+                    if (staleGroup.observe(SystemClock.elapsedRealtime(), groupFormed = true,
+                            hasIpv4 = runCatching { localAddress(name) }.isSuccess, hasLinks = links.isNotEmpty())) {
+                        // A passive join reuses the framework's last client IP mode,
+                        // which Nearby's bandwidth upgrade leaves at IPv6 link-local
+                        // ("start Ip client with provisioning mode: 1"); being invited
+                        // again would repeat this. Leave, then invite ourselves:
+                        // connectionConfig() asks for IPv4 DHCP.
+                        Log.w(TAG, "leaving group on $name: no IPv4 after ${WifiDirectStaleGroup.NO_IPV4_LIMIT_MS} ms")
+                        needOwnInvite = true
+                        manager.removeGroup(ch, object : WifiP2pManager.ActionListener {
+                            override fun onSuccess() { Log.i(TAG, "left group without IPv4") }
+                            override fun onFailure(reason: Int) { Log.w(TAG, "leaving group failed: $reason") }
+                        })
+                        return@requestGroupInfo
+                    }
                     if (groupInterface != null && groupInterface != name) clearSockets()
                     groupInterface = name
                     if (info.isGroupOwner) startServer(name)
@@ -328,6 +378,7 @@ class WifiDirectTransport(context: Context, private val serviceInstance: String 
             if (links.putIfAbsent(identity, next) != null) throw IOException("Duplicate peer socket")
             link = next
             usedGroup = true
+            needOwnInvite = false
             socket.soTimeout = 30_000
             advertise(identity)
             Log.i(TAG, "socket ready peer=$identity")
@@ -392,7 +443,7 @@ class WifiDirectTransport(context: Context, private val serviceInstance: String 
             call(object : WifiP2pManager.ActionListener {
                 override fun onSuccess() { if (continuation.isActive) continuation.resume(Unit) }
                 override fun onFailure(reason: Int) {
-                    if (continuation.isActive) continuation.resumeWithException(IOException("Wi-Fi Direct action failed: $reason"))
+                    if (continuation.isActive) continuation.resumeWithException(ActionFailed(reason))
                 }
             })
         }

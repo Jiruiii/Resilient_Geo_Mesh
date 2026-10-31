@@ -35,6 +35,12 @@
         <activity android:name=".debug.MeshDrillActivity" android:exported="true"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:theme="@style/Theme.ResilientGeoMesh.OfflineGis" />
+        <!-- Field measurement harness; same isolation as the drill. -->
+        <activity android:name=".debug.MeshMeasureActivity" android:exported="true"
+            android:launchMode="singleTop"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+            android:windowSoftInputMode="adjustResize"
+            android:label="傳輸量測" />
         <activity
             android:name=".debug.RouteValidationActivity"
             android:exported="true"

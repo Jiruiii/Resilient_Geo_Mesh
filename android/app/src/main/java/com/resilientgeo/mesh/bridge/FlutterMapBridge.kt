@@ -121,6 +121,13 @@ class FlutterMapBridge(
                     result.success(syncStatus.message())
                 }
             }
+            "setMeasurementLog" -> {
+                val enabled = (call.arguments as? Map<*, *>)?.get("enabled") as? Boolean
+                val log = com.resilientgeo.mesh.measure.ServiceMeasurementLog(appContext)
+                if (enabled == null) result.error(INVALID_ARGUMENTS, "Requires enabled", null)
+                else if (enabled && !log.available) result.error(METHOD_ERROR, "量測紀錄只在 debug 版提供", null)
+                else { log.enabled = enabled; result.success(syncStatus.message()) }
+            }
             "setSyncTransport" -> {
                 val mode = (call.arguments as? Map<*, *>)?.get("transport") as? String
                 if (mode !in MeshTransportSettings.MODES) {

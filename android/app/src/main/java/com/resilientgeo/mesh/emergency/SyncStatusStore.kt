@@ -8,6 +8,7 @@ import android.os.Build
 import android.os.SystemClock
 import androidx.core.content.ContextCompat
 import com.resilientgeo.mesh.bridge.SharedPreferencesEmergencyModeState
+import com.resilientgeo.mesh.measure.ServiceMeasurementLog
 import com.resilientgeo.mesh.transport.MeshTransportSettings
 import java.time.Instant
 
@@ -37,6 +38,7 @@ class SyncStatusStore(context: Context) {
         val live = telemetry.snapshot(SystemClock.elapsedRealtime())
         val transport = MeshTransportSettings(appContext)
         val active = if (enabled && live.serviceRunning) activeTransports.filter { transport.ready(it) } else emptyList()
+        val measurementLog = ServiceMeasurementLog(appContext)
         val discovery = enabled && live.serviceRunning && live.discoveryActive && active.isNotEmpty()
         return mapOf(
             "transport" to transport.mode,
@@ -66,6 +68,9 @@ class SyncStatusStore(context: Context) {
             "last_failure_at" to preferences.getString("last_failure_at", null),
             "last_failure_code" to preferences.getString("last_failure_code", null),
             "last_failure_transport" to preferences.getString("last_failure_transport", null),
+            "measurement_log_available" to measurementLog.available,
+            "measurement_log_enabled" to measurementLog.enabled,
+            "measurement_log_directory" to if (measurementLog.available) measurementLog.directory()?.absolutePath else null,
             "observed_at" to Instant.now().toString(),
         )
     }
