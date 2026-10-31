@@ -3,3 +3,4 @@ flutter/assets/map/fonts/**/*.pbf binary
 flutter/assets/map/fonts/**/LICENSE.md text eol=lf
 android/app/src/main/assets/routing/*.rgm.gz filter=lfs diff=lfs merge=lfs -text
 android/app/src/main/assets/routing/*.rgmz filter=lfs diff=lfs merge=lfs -text
+tools/measure/*.sh text eol=lf
