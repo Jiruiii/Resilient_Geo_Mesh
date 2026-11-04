@@ -45,7 +45,7 @@ python3 -m pip install -r tools/maps/requirements-pmtiles.txt
 python3 tools/showcase/clip_north_pmtiles.py flutter/assets/map/pmtiles/taiwan-north.pmtiles flutter/build/web/assets/assets/map/pmtiles/taiwan-north-clipped.pmtiles
 mv flutter/build/web/assets/assets/map/pmtiles/taiwan-north-clipped.pmtiles flutter/build/web/assets/assets/map/pmtiles/taiwan-north.pmtiles
 python3 tools/showcase/prepare_pages.py flutter/build/web
-mkdir -p /tmp/oss-pages-preview/OSS
+mkdir -p /tmp/oss-pages-preview/Resilient_Geo_Mesh
 cp -R flutter/build/web/. /tmp/oss-pages-preview/Resilient_Geo_Mesh/
 python3 -m http.server 8765 --directory /tmp/oss-pages-preview
 ```

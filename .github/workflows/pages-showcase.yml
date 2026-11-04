@@ -25,6 +25,9 @@ jobs:
         with:
           lfs: true
 
+      - name: Verify GitHub Pages base path
+        run: python3 tests/test_showcase_pages.py
+
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: 3.29.2

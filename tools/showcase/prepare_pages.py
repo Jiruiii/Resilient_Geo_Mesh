@@ -32,7 +32,9 @@ def prepare(root: Path) -> None:
     index_path = root / "index.html"
     html = index_path.read_text()
     if '<base href="/Resilient_Geo_Mesh/">' not in html:
-        raise ValueError("Flutter Web must be built with --base-href /Resilient_Geo_Mesh/")
+        raise ValueError(
+            "Flutter Web must be built with --base-href /Resilient_Geo_Mesh/"
+        )
     if 'name="viewport"' not in html:
         html = html.replace(
             '<meta charset="UTF-8">',
