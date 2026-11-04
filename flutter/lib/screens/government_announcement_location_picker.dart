@@ -79,8 +79,11 @@ class _GovernmentAnnouncementLocationPickerState
 
   Future<void> _loadSearchIndex() async {
     try {
+      // Both the worker and the Web index keep parsed entries; do not also
+      // retain the 40+ MB source text in the asset bundle cache.
       final raw = await rootBundle.loadString(
         'assets/map/search/taiwan-roads.json',
+        cache: false,
       );
       if (!kIsWeb) {
         _searchWorker = await OfflineSearchWorker.start(raw);

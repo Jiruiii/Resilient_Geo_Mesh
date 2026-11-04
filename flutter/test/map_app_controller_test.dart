@@ -90,6 +90,12 @@ void main() {
       await controller.markEventRead(firstVersion);
       expect(controller.notificationEvents, contains(firstVersion));
       expect(controller.notificationCount, 1);
+      // The app shell computes these once per build from one events list.
+      final notifications = controller.notificationEventsFrom(
+        controller.events,
+      );
+      expect(notifications, controller.notificationEvents);
+      expect(controller.unreadAmong(notifications), <MeshEvent>[secondNotice]);
       await controller.markAllNotificationsRead();
       expect(controller.notificationCount, 0);
       expect(

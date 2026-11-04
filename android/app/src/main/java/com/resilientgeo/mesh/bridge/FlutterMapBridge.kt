@@ -36,6 +36,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -180,6 +181,7 @@ class FlutterMapBridge(
         eventObservation?.cancel()
         if (events == null) return
 
+        val messages = BridgeEventMessageCache()
         eventObservation = scope.launch {
             rowsWithOfficialExpiryPurge(
                 source = repository.observeBridgeEvents(),
@@ -187,11 +189,14 @@ class FlutterMapBridge(
                     withContext(Dispatchers.IO) { repository.purgeExpiredOfficialEvents(now) }
                 },
             )
-                .map { rows ->
-                    val now = Instant.now()
-                    rows.map { EventPayloadMapper.toMessage(it, now) }
-                }
+                // A mesh burst writes chunks one by one; coalesce the full-table
+                // re-emissions instead of forwarding every intermediate snapshot.
+                .throttleLatest(BRIDGE_EVENT_MIN_INTERVAL_MILLIS)
+                .map { rows -> messages.toMessages(rows, Instant.now()) }
                 .distinctUntilChanged()
+                // Flutter's UI runs on the Android main thread (merged threads):
+                // JSON parsing and the structural comparison must stay off it.
+                .flowOn(Dispatchers.Default)
                 .catch { error ->
                     android.util.Log.e("FlutterMapBridge", "Event observation failed", error)
                     events.error(EVENT_OBSERVATION_ERROR, error.message, null)
@@ -223,12 +228,14 @@ class FlutterMapBridge(
                     repository.purgeUnsupportedOfficialEventData()
                     repository.purgeExpiredOfficialEvents(Instant.now())
                 }
-                result.success(
+                val emergencyModeEnabled = emergencyMode.isEnabled
+                val state = withContext(Dispatchers.Default) {
                     MapBridgeProtocol.initialBridgeState(
                         events = repository.observeBridgeEvents().first(),
-                        emergencyModeEnabled = emergencyMode.isEnabled,
-                    ),
-                )
+                        emergencyModeEnabled = emergencyModeEnabled,
+                    )
+                }
+                result.success(state)
             } catch (error: Throwable) {
                 android.util.Log.e("FlutterMapBridge", "Initial event snapshot failed", error)
                 result.error(METHOD_ERROR, error.message, null)

@@ -62,6 +62,10 @@ class ResilientGeoApp extends StatefulWidget {
 class _ResilientGeoAppState extends State<ResilientGeoApp> {
   late final MapAppController _controller;
   late final SirenController _siren;
+  // ColorScheme.fromSeed is costly; build each theme once, not per update.
+  final ThemeData _lightTheme = AppTheme.light();
+  final ThemeData _darkTheme = AppTheme.dark();
+  late ThemeMode _themeMode;
 
   @override
   void initState() {
@@ -71,28 +75,35 @@ class _ResilientGeoAppState extends State<ResilientGeoApp> {
       AppPerformance.replayEvents =
           _controller.replayEventSnapshotForMeasurement;
     }
+    _themeMode = _controller.themeMode;
+    _controller.addListener(_onControllerChanged);
     _siren = SirenController(SirenPlatform.forPlatform());
+  }
+
+  /// Event and status updates only rebuild [_MapAppHome]; MaterialApp (theme,
+  /// navigator) is rebuilt only when the theme mode itself changes.
+  void _onControllerChanged() {
+    if (_controller.themeMode != _themeMode) {
+      setState(() => _themeMode = _controller.themeMode);
+    }
   }
 
   @override
   void dispose() {
     if (!kReleaseMode) AppPerformance.replayEvents = null;
+    _controller.removeListener(_onControllerChanged);
     _siren.dispose();
     _controller.dispose();
     super.dispose();
   }
 
   @override
-  Widget build(BuildContext context) => AnimatedBuilder(
-    animation: _controller,
-    builder:
-        (context, _) => MaterialApp(
-          debugShowCheckedModeBanner: false,
-          themeMode: _controller.themeMode,
-          theme: AppTheme.light(),
-          darkTheme: AppTheme.dark(),
-          home: _MapAppHome(controller: _controller, siren: _siren),
-        ),
+  Widget build(BuildContext context) => MaterialApp(
+    debugShowCheckedModeBanner: false,
+    themeMode: _themeMode,
+    theme: _lightTheme,
+    darkTheme: _darkTheme,
+    home: _MapAppHome(controller: _controller, siren: _siren),
   );
 }
 
@@ -110,6 +121,31 @@ class _MapAppHomeState extends State<_MapAppHome> {
   int _selectedIndex = 0;
   MeshEvent? _notificationFocusEvent;
   int _notificationFocusRequestId = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.addListener(_onControllerChanged);
+  }
+
+  @override
+  void didUpdateWidget(covariant _MapAppHome oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      oldWidget.controller.removeListener(_onControllerChanged);
+      widget.controller.addListener(_onControllerChanged);
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_onControllerChanged);
+    super.dispose();
+  }
+
+  void _onControllerChanged() {
+    if (mounted) setState(() {});
+  }
 
   void _openNotificationOnMap(MeshEvent event) {
     unawaited(widget.controller.markEventRead(event));
@@ -148,6 +184,9 @@ class _MapAppHomeState extends State<_MapAppHome> {
       );
     }
 
+    // Each getter re-filters every event; compute the lists once per build.
+    final events = controller.events;
+    final notificationEvents = controller.notificationEventsFrom(events);
     return Scaffold(
       body: Column(
         children: <Widget>[
@@ -199,10 +238,10 @@ class _MapAppHomeState extends State<_MapAppHome> {
                   notificationFocusRequestId: _notificationFocusRequestId,
                 ),
                 NotificationsScreen(
-                  events: controller.notificationEvents,
+                  events: notificationEvents,
                   readEventKeys: controller.readEventKeys,
                   areaDirectory: controller.notificationAreaDirectory,
-                  attestationSource: controller.events,
+                  attestationSource: events,
                   onEventRead: controller.markEventRead,
                   onEventMapRequested: _openNotificationOnMap,
                   onMarkAllRead: controller.markAllNotificationsRead,
@@ -234,7 +273,7 @@ class _MapAppHomeState extends State<_MapAppHome> {
       ),
       bottomNavigationBar: AppBottomNavigation(
         currentIndex: _selectedIndex,
-        notificationCount: controller.notificationCount,
+        notificationCount: controller.unreadAmong(notificationEvents).length,
         onSelected: (index) => setState(() => _selectedIndex = index),
       ),
     );

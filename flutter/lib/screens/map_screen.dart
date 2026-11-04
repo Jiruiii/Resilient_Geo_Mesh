@@ -635,8 +635,11 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   }
 
   Future<TaiwanSearchAsset> _loadSearchAsset() async {
+    // The decoded asset is kept in TaiwanSearchAsset; do not also retain the
+    // 40+ MB source text in the asset bundle's string cache.
     final raw = await rootBundle.loadString(
       'assets/map/search/taiwan-roads.json',
+      cache: false,
     );
     final decoded = jsonDecode(raw);
     if (decoded is! Map) {
@@ -663,8 +666,11 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   Future<void> _loadSearchAssetInBackground() async {
     try {
       if (!kIsWeb) {
+        // The worker keeps the parsed index; the asset bundle must not also
+        // retain the 40+ MB source text for the lifetime of the app.
         final raw = await rootBundle.loadString(
           'assets/map/search/taiwan-roads.json',
+          cache: false,
         );
         final worker = await OfflineSearchWorker.start(raw);
         if (!mounted) {

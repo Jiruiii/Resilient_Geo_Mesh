@@ -155,7 +155,10 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
   /// alarm is withdrawn, so it is not notified either; a resolved one stays
   /// listed with its status. Dismissal only filters this local list; the
   /// verified event stream remains intact for the map/cache.
-  List<MeshEvent> get notificationEvents => events
+  List<MeshEvent> get notificationEvents => notificationEventsFrom(events);
+
+  /// [notificationEvents] for an [events] list the caller already computed.
+  List<MeshEvent> notificationEventsFrom(List<MeshEvent> events) => events
       .where((event) => !isAttestationEvent(event))
       .where(
         (event) =>
@@ -181,7 +184,10 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
   /// version, matching notification dismissal and map marker identity.
   Set<String> get readEventKeys => Set<String>.unmodifiable(_readEventKeys);
 
-  List<MeshEvent> get unreadEvents => notificationEvents
+  List<MeshEvent> get unreadEvents => unreadAmong(notificationEvents);
+
+  /// Unread subset of a [notificationEvents] list the caller already computed.
+  List<MeshEvent> unreadAmong(List<MeshEvent> notifications) => notifications
       .where((event) => !_readEventKeys.contains(meshEventIdentity(event)))
       .toList(growable: false);
 

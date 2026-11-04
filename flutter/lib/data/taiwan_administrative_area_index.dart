@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import 'map_models.dart';
@@ -42,9 +43,20 @@ class TaiwanAdministrativeAreaIndex {
     TaiwanAdministrativeAreaDirectory directory, {
     AssetBundle? bundle,
   }) async {
-    final raw = await (bundle ?? rootBundle).loadString(assetPath);
-    return TaiwanAdministrativeAreaIndex.fromJson(directory, jsonDecode(raw));
+    // 40+ MB of JSON: read bytes (not cached by the bundle, unlike
+    // loadString) and decode them off the UI isolate. Area objects are still
+    // resolved here so they stay identical to the directory's instances.
+    final data = await (bundle ?? rootBundle).load(assetPath);
+    final decoded = await compute(
+      _decodeUtf8Json,
+      data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
+      debugLabel: 'decode administrative area index',
+    );
+    return TaiwanAdministrativeAreaIndex.fromJson(directory, decoded);
   }
+
+  static Object? _decodeUtf8Json(Uint8List bytes) =>
+      const Utf8Decoder().fuse(const JsonDecoder()).convert(bytes);
 
   factory TaiwanAdministrativeAreaIndex.fromJson(
     TaiwanAdministrativeAreaDirectory directory,

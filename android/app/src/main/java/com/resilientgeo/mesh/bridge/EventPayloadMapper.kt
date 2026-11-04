@@ -15,12 +15,18 @@ import org.json.JSONObject
  */
 object EventPayloadMapper {
 
-    fun toMessage(event: EventBridgeRow, now: Instant = Instant.now()): Map<String, Any?> {
-        val payload = JSONObject(event.bridgePayloadJson ?: "{}")
-        return payload.toMessageMap().toMutableMap().apply {
+    fun toMessage(event: EventBridgeRow, now: Instant = Instant.now()): Map<String, Any?> =
+        withApplyState(payloadMap(event), event, now)
+
+    /** Parses the stored payload once; the result is never mutated afterwards. */
+    fun payloadMap(event: EventBridgeRow): Map<String, Any?> =
+        JSONObject(event.bridgePayloadJson ?: "{}").toMessageMap()
+
+    /** apply_state depends on the clock, so it is overlaid on every emission. */
+    fun withApplyState(payload: Map<String, Any?>, event: EventBridgeRow, now: Instant): Map<String, Any?> =
+        LinkedHashMap<String, Any?>(payload).apply {
             put("apply_state", ApplyState.at(event.namespace, event.expiresAt, now).name)
         }
-    }
 
     fun toMessage(event: EventEntity, now: Instant = Instant.now()): Map<String, Any?> {
         val payload = event.bridgePayloadJson?.let(::JSONObject) ?: JSONObject(event.eventJson).also {
