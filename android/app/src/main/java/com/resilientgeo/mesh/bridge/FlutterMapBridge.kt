@@ -1,6 +1,7 @@
 package com.resilientgeo.mesh.bridge
 
 import android.content.Context
+import android.content.pm.ApplicationInfo
 import com.resilientgeo.mesh.data.ChunkIngestResult
 import com.resilientgeo.mesh.data.CrowdReportResult
 import com.resilientgeo.mesh.data.GovernmentWarningResult
@@ -31,6 +32,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
@@ -107,6 +109,7 @@ class FlutterMapBridge(
         when (call.method) {
             METHOD_GET_INITIAL_STATE -> getInitialState(result)
             "getSyncStatus" -> result.success(syncStatus.message())
+            METHOD_MEASUREMENT_EVENT_BURST -> measurementEventBurst(call, result)
             "setDiscoveryMode" -> {
                 val mode = (call.arguments as? Map<*, *>)?.get("mode") as? String
                 if (mode !in listOf("balanced", "adaptive")) result.error(INVALID_ARGUMENTS, "Unknown discovery mode", null)
@@ -500,6 +503,61 @@ class FlutterMapBridge(
         }
     }
 
+    /**
+     * Debuggable builds only (debug/profile). Touches the event table [count]
+     * times, [interval_ms] apart — the shape of a mesh ingest burst — while a
+     * main-thread heartbeat records how late each 16 ms tick ran. Flutter's UI
+     * shares this thread, so the lag is the jank the burst would cause.
+     */
+    private fun measurementEventBurst(call: MethodCall, result: MethodChannel.Result) {
+        val debuggable = (appContext.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
+        val args = call.arguments as? Map<*, *>
+        val count = (args?.get("count") as? Number)?.toInt()
+        val intervalMs = (args?.get("interval_ms") as? Number)?.toLong()
+        if (!debuggable) {
+            result.error(METHOD_ERROR, "measurement is only available in debuggable builds", null)
+            return
+        }
+        if (count == null || count !in 1..500 || intervalMs == null || intervalMs !in 0..1_000) {
+            result.error(INVALID_ARGUMENTS, "count 1..500 and interval_ms 0..1000 are required", null)
+            return
+        }
+        scope.launch {
+            val lags = mutableListOf<Long>()
+            val heartbeat = launch {
+                while (true) {
+                    val started = System.nanoTime()
+                    delay(HEARTBEAT_MS)
+                    lags += ((System.nanoTime() - started) / 1_000_000 - HEARTBEAT_MS).coerceAtLeast(0)
+                }
+            }
+            val startedAt = System.nanoTime()
+            try {
+                var rows = 0
+                repeat(count) {
+                    rows = repository.touchEventsForMeasurement()
+                    delay(intervalMs)
+                }
+                // Let the last emissions reach the bridge before stopping the clock.
+                delay(1_000)
+                heartbeat.cancel()
+                val sorted = lags.sorted()
+                result.success(mapOf(
+                    "touched_rows" to rows,
+                    "touches" to count,
+                    "duration_ms" to (System.nanoTime() - startedAt) / 1_000_000,
+                    "heartbeats" to sorted.size,
+                    "main_lag_p95_ms" to (sorted.getOrNull(((sorted.size - 1) * 0.95).toInt()) ?: 0L),
+                    "main_lag_max_ms" to (sorted.lastOrNull() ?: 0L),
+                    "main_ticks_over_16ms_late" to sorted.count { it > HEARTBEAT_MS },
+                ))
+            } catch (error: Throwable) {
+                heartbeat.cancel()
+                result.error(METHOD_ERROR, error.message, null)
+            }
+        }
+    }
+
     private fun calculateEvacuationRoute(call: MethodCall, result: MethodChannel.Result) {
         scope.launch {
             try {
@@ -531,6 +589,8 @@ class FlutterMapBridge(
         const val CONFLICT = "conflict"
         const val RATE_LIMITED = "rate_limited"
         const val METHOD_CALCULATE_EVACUATION_ROUTE = "calculateEvacuationRoute"
+        const val METHOD_MEASUREMENT_EVENT_BURST = "measurementEventBurst"
+        const val HEARTBEAT_MS = 16L
         const val INVALID_INPUT = "invalid_input"
         const val SIGNING_UNAVAILABLE = "signing_unavailable"
         const val DEVICE_NOT_AUTHORIZED = "government_device_not_authorized"

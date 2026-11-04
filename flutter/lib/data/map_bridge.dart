@@ -150,6 +150,15 @@ class MapBridge {
         await _invokeRequiredMap('setDiscoveryMode', {'mode': mode}),
       );
 
+  /// Debuggable Android builds only; see FlutterMapBridge.measurementEventBurst.
+  Future<Map<String, dynamic>> measurementEventBurst({
+    required int count,
+    required int intervalMs,
+  }) => _invokeRequiredMap('measurementEventBurst', <String, dynamic>{
+    'count': count,
+    'interval_ms': intervalMs,
+  });
+
   Future<SyncStatus> searchPeersNow() async =>
       SyncStatus.fromMessage(await _invokeRequiredMap('searchPeersNow'));
 

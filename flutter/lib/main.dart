@@ -67,11 +67,16 @@ class _ResilientGeoAppState extends State<ResilientGeoApp> {
   void initState() {
     super.initState();
     _controller = MapAppController()..load();
+    if (!kReleaseMode) {
+      AppPerformance.replayEvents =
+          _controller.replayEventSnapshotForMeasurement;
+    }
     _siren = SirenController(SirenPlatform.forPlatform());
   }
 
   @override
   void dispose() {
+    if (!kReleaseMode) AppPerformance.replayEvents = null;
     _siren.dispose();
     _controller.dispose();
     super.dispose();

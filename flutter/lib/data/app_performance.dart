@@ -12,8 +12,53 @@ import 'map_search.dart';
 /// Bounded, opt-in diagnostics in debug/profile builds; no release overhead.
 class AppPerformance {
   static Future<MapSearchQuery> Function(String)? search;
+
+  /// Set by the app shell: replays the current event snapshot, returns size.
+  static int Function()? replayEvents;
+  static Future<Map<String, dynamic>>? _eventBurst;
+
   static void register() {
     if (kReleaseMode) return;
+    // Starts a burst and returns at once so the caller can pan meanwhile;
+    // `eventBurstResult` waits for it. mode=native touches Room through the
+    // Android bridge; mode=replay re-delivers the snapshot inside Flutter.
+    developer.registerExtension('ext.resilientgeo.eventBurst', (
+      _,
+      parameters,
+    ) async {
+      final count = int.parse(parameters['count'] ?? '60');
+      final intervalMs = int.parse(parameters['interval_ms'] ?? '50');
+      final mode = parameters['mode'] ?? 'native';
+      _eventBurst = switch (mode) {
+        'native' => MapBridge().measurementEventBurst(
+          count: count,
+          intervalMs: intervalMs,
+        ),
+        'replay' => _replayBurst(count, intervalMs),
+        _ => Future.error(ArgumentError.value(mode, 'mode')),
+      };
+      return developer.ServiceExtensionResponse.result(
+        jsonEncode({'started': mode}),
+      );
+    });
+    developer.registerExtension('ext.resilientgeo.eventBurstResult', (
+      _,
+      __,
+    ) async {
+      final burst = _eventBurst;
+      if (burst == null) {
+        return developer.ServiceExtensionResponse.result('{"started":false}');
+      }
+      try {
+        return developer.ServiceExtensionResponse.result(
+          jsonEncode(await burst),
+        );
+      } on Object catch (error) {
+        return developer.ServiceExtensionResponse.result(
+          jsonEncode({'error': error.toString()}),
+        );
+      }
+    });
     developer.registerExtension('ext.resilientgeo.search', (
       _,
       parameters,
@@ -105,5 +150,25 @@ class AppPerformance {
         }),
       );
     });
+  }
+
+  static Future<Map<String, dynamic>> _replayBurst(
+    int count,
+    int intervalMs,
+  ) async {
+    final replay = replayEvents;
+    if (replay == null) throw StateError('event replay is not registered');
+    final watch = Stopwatch()..start();
+    var events = 0;
+    for (var index = 0; index < count; index += 1) {
+      events = replay();
+      await Future<void>.delayed(Duration(milliseconds: intervalMs));
+    }
+    await Future<void>.delayed(const Duration(seconds: 1));
+    return <String, dynamic>{
+      'replays': count,
+      'events_per_snapshot': events,
+      'duration_ms': watch.elapsedMilliseconds,
+    };
   }
 }

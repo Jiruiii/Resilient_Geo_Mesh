@@ -46,6 +46,31 @@ void main() {
   );
 
   test(
+    'measurement replay re-delivers the snapshot without changing it',
+    () async {
+      final notice = _governmentAnnouncement('notice:replay', 1);
+      final controller = MapAppController(
+        bridge: _InitialEventsBridge(<MeshEvent>[notice]),
+      );
+      addTearDown(controller.dispose);
+      await controller.load();
+      await pumpEventQueue();
+      final delivered = <List<MeshEvent>>[];
+      final subscription = controller.eventUpdates.listen(delivered.add);
+      addTearDown(subscription.cancel);
+      var notifications = 0;
+      controller.addListener(() => notifications += 1);
+
+      expect(controller.replayEventSnapshotForMeasurement(), 1);
+      await pumpEventQueue();
+
+      expect(delivered.single, <MeshEvent>[notice]);
+      expect(notifications, 1);
+      expect(controller.events, <MeshEvent>[notice]);
+    },
+  );
+
+  test(
     'notification read and deletion state persists without deleting map events',
     () async {
       final firstVersion = _governmentAnnouncement('station:1', 1);

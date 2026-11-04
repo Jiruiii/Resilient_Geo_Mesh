@@ -406,6 +406,17 @@ class MapAppController extends ChangeNotifier with WidgetsBindingObserver {
       );
   }
 
+  /// Debug/profile measurement: deliver the current snapshot again exactly as
+  /// a native update would (stream + listeners), without changing any data.
+  /// Returns the number of events in the replayed snapshot.
+  int replayEventSnapshotForMeasurement() {
+    if (_disposed) return 0;
+    final snapshot = List<MeshEvent>.unmodifiable(_publishedEvents);
+    _eventUpdates.add(snapshot);
+    _notifyIfAlive();
+    return snapshot.length;
+  }
+
   void _listenToNativeEvents() {
     _eventSubscription = bridge.events.listen(
       (events) {

@@ -1275,6 +1275,10 @@ class MeshRepository(
     /** How many verified chunks this node currently holds — for status UI/logs. */
     suspend fun heldChunkCount(): Int = withContext(Dispatchers.IO) { chunkDao.countSync() }
 
+    /** Debuggable-build measurement: re-emit event observers without changing rows. */
+    suspend fun touchEventsForMeasurement(): Int =
+        withContext(Dispatchers.IO) { db.eventDao().touchAllForMeasurementSync() }
+
     private fun JSONObject.toChunkEntity(now: Instant) = ChunkEntity(
         datasetId = getString("dataset_id"),
         namespace = getString("namespace"),

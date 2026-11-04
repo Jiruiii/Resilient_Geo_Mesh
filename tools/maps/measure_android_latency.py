@@ -25,7 +25,13 @@ def main():
     parser.add_argument('--long-routes', action='store_true')
     parser.add_argument('--restart', action='store_true', help='Measure from a fresh app process')
     parser.add_argument('--over-keyguard', action='store_true', help='Opt in to debuggable test display while locked')
+    parser.add_argument('--event-burst', action='store_true', help='Pan while a burst of Room event updates arrives')
+    parser.add_argument('--event-burst-only', action='store_true', help='Skip search/route latency; run only the event burst scenario')
+    parser.add_argument('--burst-count', type=int, default=60, help='Room touches or Flutter replays per burst')
+    parser.add_argument('--burst-interval-ms', type=int, default=50)
     args = parser.parse_args()
+    if args.event_burst_only:
+        args.event_burst = True
     def adb(*command):
         return subprocess.check_output([args.adb,'-s',args.serial,*command],text=True,encoding='utf-8',errors='replace')
     startup = None
@@ -65,6 +71,32 @@ def main():
         def call(method, **params):
             return rpc('ext.resilientgeo.'+method,isolateId=isolate,**params)
         observations = {'captured_at':datetime.now(timezone.utc).isoformat(),'device_serial':args.serial}
+        def swipe_frames():
+            """Pans for ~9 s; returns the frame timings recorded meanwhile."""
+            for i in range(12):
+                start,end = (750,350) if i%2==0 else (350,750)
+                adb('shell','input','swipe',str(start),'1100',str(end),'1100','600')
+                time.sleep(.15)
+            time.sleep(.8)
+            return call('performance')
+        if args.event_burst:
+            # Same pan gesture three ways: quiet, while Android re-emits the
+            # Room event table (mesh-sync shape, no data changed), and while
+            # Flutter replays the event snapshot (controller + map rebuilds).
+            burst = {'count':args.burst_count,'interval_ms':args.burst_interval_ms}
+            observations['event_burst'] = {'parameters':burst}
+            call('performance',reset='true')
+            observations['event_burst']['quiet_pan_frames'] = swipe_frames()
+            for mode in ('native','replay'):
+                call('performance',reset='true')
+                call('eventBurst',mode=mode,count=args.burst_count,interval_ms=args.burst_interval_ms)
+                frames = swipe_frames()
+                observations['event_burst'][mode] = {'pan_frames':frames,'result':call('eventBurstResult')}
+        if args.event_burst_only:
+            args.output.parent.mkdir(parents=True,exist_ok=True)
+            args.output.write_text(json.dumps(observations,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+            print(json.dumps({'event_burst':observations['event_burst'],'output':str(args.output)},ensure_ascii=False))
+            return
         # Wait in short intervals for the already-backgrounded search asset.
         for _ in range(60):
             if call('search',query='成功路').get('ready'):
@@ -98,12 +130,7 @@ def main():
                 observations['routes'].append({'case':name,'iteration':iteration,**result})
         if args.swipes:
             call('performance',reset='true')
-            for i in range(12):
-                start,end = (750,350) if i%2==0 else (350,750)
-                adb('shell','input','swipe',str(start),'1100',str(end),'1100','600')
-                time.sleep(.15)
-            time.sleep(.8)
-            observations['pan_frames'] = call('performance')
+            observations['pan_frames'] = swipe_frames()
         observations['dart_memory'] = rpc('getMemoryUsage',isolateId=isolate)
         observations['android_memory'] = adb('shell','dumpsys','meminfo','com.resilientgeo.mesh')
         observations['thermal_status'] = '\n'.join(line for line in adb('shell','dumpsys','thermalservice').splitlines() if 'Thermal Status' in line)
@@ -121,7 +148,7 @@ def main():
         }
         args.output.parent.mkdir(parents=True,exist_ok=True)
         args.output.write_text(json.dumps(observations,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
-        print(json.dumps({'summary':observations['summary'],'pan_frames':observations.get('pan_frames'),'thermal_status':observations['thermal_status'],'output':str(args.output)},ensure_ascii=True))
+        print(json.dumps({'summary':observations['summary'],'pan_frames':observations.get('pan_frames'),'event_burst':observations.get('event_burst'),'thermal_status':observations['thermal_status'],'output':str(args.output)},ensure_ascii=True))
     finally:
         adb('forward','--remove',f'tcp:{host_port}')
 

@@ -56,6 +56,14 @@ interface EventDao {
     @Query("DELETE FROM event_tombstones WHERE namespace = :namespace AND eventId = :eventId")
     fun clearVersionFloorSync(namespace: String, eventId: String)
 
+    /**
+     * Measurement only: rewrites every row with its own value. No data changes,
+     * but Room's invalidation tracker re-emits every observer, which is the
+     * same main-thread/bridge path a mesh ingest burst takes.
+     */
+    @Query("UPDATE events SET applyState = applyState")
+    fun touchAllForMeasurementSync(): Int
+
     /** Drives the event-list / map UI so it updates live as ingestion writes new rows. */
     @Query("SELECT * FROM events ORDER BY namespace, eventId")
     fun observeAll(): Flow<List<EventEntity>>
