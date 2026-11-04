@@ -106,6 +106,46 @@ void main() {
         );
       }
     });
+
+    test(
+      'showcase styles include EMAP with the matching theme paint',
+      () async {
+        for (final entry
+            in <String, bool>{
+              'assets/map/styles/showcase-light.json': false,
+              'assets/map/styles/showcase-dark.json': true,
+            }.entries) {
+          final style =
+              jsonDecode(
+                    await OfflineMapAssetStore().loadStyle(
+                      styleAsset: entry.key,
+                      installNativeAssets: false,
+                      includeEmap: true,
+                    ),
+                  )
+                  as Map<String, dynamic>;
+          final sources = style['sources'] as Map<String, dynamic>;
+          final layers = (style['layers'] as List).cast<Map<String, dynamic>>();
+          final emapLayers =
+              layers
+                  .where((layer) => layer['id'] == MapBasemap.emapLayerId)
+                  .toList();
+          expect(emapLayers, hasLength(1), reason: entry.key);
+          expect(
+            emapLayers.single['paint'],
+            entry.value ? isNotEmpty : isEmpty,
+            reason: entry.key,
+          );
+          if (entry.value) {
+            final paint = emapLayers.single['paint'] as Map<String, dynamic>;
+            expect(paint['raster-brightness-min'], 0.86, reason: entry.key);
+            expect(paint['raster-brightness-max'], 0.15, reason: entry.key);
+            expect(paint['raster-hue-rotate'], 180, reason: entry.key);
+          }
+          expect(sources['taiwan-overview'], isNotNull, reason: entry.key);
+        }
+      },
+    );
   });
 
   group('MapBasemapMode', () {
@@ -128,20 +168,32 @@ void main() {
       );
     });
 
-    test('before the first probe auto waits on OSM and EMAP mode starts on EMAP', () {
-      expect(
-        MapBasemap.emapVisible(mode: MapBasemapMode.auto, emapReachable: null),
-        isFalse,
-      );
-      expect(
-        MapBasemap.emapVisible(mode: MapBasemapMode.emap, emapReachable: null),
-        isTrue,
-      );
-      expect(
-        MapBasemap.emapVisible(mode: MapBasemapMode.emap, emapReachable: true),
-        isTrue,
-      );
-    });
+    test(
+      'before the first probe auto waits on OSM and EMAP mode starts on EMAP',
+      () {
+        expect(
+          MapBasemap.emapVisible(
+            mode: MapBasemapMode.auto,
+            emapReachable: null,
+          ),
+          isFalse,
+        );
+        expect(
+          MapBasemap.emapVisible(
+            mode: MapBasemapMode.emap,
+            emapReachable: null,
+          ),
+          isTrue,
+        );
+        expect(
+          MapBasemap.emapVisible(
+            mode: MapBasemapMode.emap,
+            emapReachable: true,
+          ),
+          isTrue,
+        );
+      },
+    );
 
     test('unknown stored names fall back to auto', () {
       expect(MapBasemapMode.fromName(null), MapBasemapMode.auto);
@@ -180,71 +232,77 @@ void main() {
       expect(notifications, greaterThan(0));
     });
 
-    test('EMAP mode falls back to OSM offline; OSM mode never probes', () async {
-      var reachable = false;
-      var probes = 0;
-      final controller = MapAppController(
-        bridge: _EmptyVerifiedBridge(),
-        emapProbe: () async {
-          probes += 1;
-          return reachable;
-        },
-      );
-      addTearDown(controller.dispose);
-      await controller.load();
-      await pumpEventQueue();
-      expect(probes, 1);
+    test(
+      'EMAP mode falls back to OSM offline; OSM mode never probes',
+      () async {
+        var reachable = false;
+        var probes = 0;
+        final controller = MapAppController(
+          bridge: _EmptyVerifiedBridge(),
+          emapProbe: () async {
+            probes += 1;
+            return reachable;
+          },
+        );
+        addTearDown(controller.dispose);
+        await controller.load();
+        await pumpEventQueue();
+        expect(probes, 1);
 
-      // Offline: the forced EMAP mode also shows OSM.
-      await controller.setBasemapMode(MapBasemapMode.emap);
-      await pumpEventQueue();
-      expect(probes, 2);
-      expect(controller.emapVisible, isFalse);
+        // Offline: the forced EMAP mode also shows OSM.
+        await controller.setBasemapMode(MapBasemapMode.emap);
+        await pumpEventQueue();
+        expect(probes, 2);
+        expect(controller.emapVisible, isFalse);
 
-      reachable = true;
-      controller.didChangeAppLifecycleState(AppLifecycleState.resumed);
-      await pumpEventQueue();
-      expect(probes, 3);
-      expect(controller.emapVisible, isTrue);
+        reachable = true;
+        controller.didChangeAppLifecycleState(AppLifecycleState.resumed);
+        await pumpEventQueue();
+        expect(probes, 3);
+        expect(controller.emapVisible, isTrue);
 
-      await controller.setBasemapMode(MapBasemapMode.osm);
-      controller.didChangeAppLifecycleState(AppLifecycleState.resumed);
-      controller.refreshEmapReachability();
-      await pumpEventQueue();
-      expect(probes, 3);
-      expect(controller.emapVisible, isFalse);
-      final preferences = await SharedPreferences.getInstance();
-      expect(preferences.getString('map.basemap_mode'), 'osm');
+        await controller.setBasemapMode(MapBasemapMode.osm);
+        controller.didChangeAppLifecycleState(AppLifecycleState.resumed);
+        controller.refreshEmapReachability();
+        await pumpEventQueue();
+        expect(probes, 3);
+        expect(controller.emapVisible, isFalse);
+        final preferences = await SharedPreferences.getInstance();
+        expect(preferences.getString('map.basemap_mode'), 'osm');
 
-      await controller.setBasemapMode(MapBasemapMode.auto);
-      await pumpEventQueue();
-      expect(probes, 4);
-    });
+        await controller.setBasemapMode(MapBasemapMode.auto);
+        await pumpEventQueue();
+        expect(probes, 4);
+      },
+    );
 
-    test('camera settles re-probe unless offline OSM and are throttled', () async {
-      var probes = 0;
-      final controller = MapAppController(
-        bridge: _EmptyVerifiedBridge(),
-        emapProbe: () async {
-          probes += 1;
-          return true;
-        },
-      );
-      addTearDown(controller.dispose);
-      await controller.load();
-      await pumpEventQueue();
-      expect(probes, 1);
+    test(
+      'camera settles re-probe unless offline OSM and are throttled',
+      () async {
+        var probes = 0;
+        final controller = MapAppController(
+          bridge: _EmptyVerifiedBridge(),
+          emapProbe: () async {
+            probes += 1;
+            return true;
+          },
+        );
+        addTearDown(controller.dispose);
+        await controller.load();
+        await pumpEventQueue();
+        expect(probes, 1);
 
-      // Just probed: a camera settle inside the throttle window is skipped.
-      controller.refreshEmapReachability();
-      await pumpEventQueue();
-      expect(probes, 1);
+        // Just probed: a camera settle inside the throttle window is skipped.
+        controller.refreshEmapReachability();
+        await pumpEventQueue();
+        expect(probes, 1);
 
-      await controller.setBasemapMode(MapBasemapMode.osm);
-      controller.refreshEmapReachability();
-      await pumpEventQueue();
-      expect(probes, 1);
-    });
+        await controller.setBasemapMode(MapBasemapMode.osm);
+        controller.refreshEmapReachability();
+        await pumpEventQueue();
+        expect(probes, 1);
+      },
+    );
 
     test('a slow probe finishing after dispose is ignored', () async {
       final controller = MapAppController(
