@@ -136,7 +136,9 @@ class OfflineMapAssetStore {
         includeEmap
             ? MapBasemap.injectEmapLayer(
               referenceStyle,
-              dark: styleAsset == MapLibreMapConfig.darkStyleAsset,
+              dark:
+                  styleAsset == MapLibreMapConfig.darkStyleAsset ||
+                  styleAsset == 'assets/map/styles/showcase-dark.json',
             )
             : referenceStyle;
     if (kIsWeb) return rewriteWebStyleAssetUris(hydratedStyle);

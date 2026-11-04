@@ -326,7 +326,7 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
       final style = await _assetStore.loadStyle(
         styleAsset: styleAsset,
         installNativeAssets: _usesPlatformMap && !kIsWeb,
-        includeEmap: !widget.showcaseMode,
+        includeEmap: true,
       );
       if (!mounted || generation != _styleLoadGeneration) return;
       setState(() {
@@ -1091,7 +1091,6 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
   /// The EMAP layer exists in every style; only its visibility follows the
   /// base map mode, so app overlays are never rebuilt by a base map switch.
   Future<void> _applyEmapVisibility() async {
-    if (widget.showcaseMode) return;
     final controller = _mapController;
     if (controller == null || !_styleLoaded) return;
     try {
