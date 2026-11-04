@@ -35,8 +35,8 @@
     (() => {
       const isShowcasePage =
         (location.hostname === 'localhost' && location.port === '8767') ||
-        location.pathname === '/OSS' ||
-        location.pathname.startsWith('/OSS/');
+        location.pathname === '/Resilient_Geo_Mesh' ||
+        location.pathname.startsWith('/Resilient_Geo_Mesh/');
       if (!isShowcasePage) return;
 
       const collapseAttribution = (root) => {
