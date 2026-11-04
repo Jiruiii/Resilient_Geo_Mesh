@@ -40,9 +40,9 @@ jobs:
         working-directory: flutter
         run: flutter test --no-pub test/showcase_fixture_test.dart test/showcase_simulation_test.dart
 
-      - name: Build Flutter Web for /OSS/
+      - name: Build Flutter Web for /Resilient_Geo_Mesh/
         working-directory: flutter
-        run: flutter build web --release --no-pub --no-web-resources-cdn --pwa-strategy=none --base-href /OSS/ --dart-define=SHOWCASE_MODE=true
+        run: flutter build web --release --no-pub --no-web-resources-cdn --pwa-strategy=none --base-href /Resilient_Geo_Mesh/ --dart-define=SHOWCASE_MODE=true
 
       - name: Clip high-resolution map to the Taipei scenario
         run: |
