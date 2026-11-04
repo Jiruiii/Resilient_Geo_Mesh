@@ -11,6 +11,28 @@ import 'package:resilientgeo_flutter/data/maplibre_map_config.dart';
 import 'package:resilientgeo_flutter/widgets/map_layers.dart';
 
 void main() {
+  test(
+    'current location marker keeps the app size unless zoom scaling is requested',
+    () {
+      const point = GeoPoint(longitude: 121.5, latitude: 25);
+      final marker = MapLayers.currentLocationMarker(point);
+
+      expect(marker.width, 22);
+      expect(marker.height, 22);
+    },
+  );
+
+  test('current location marker scales with map zoom', () {
+    const point = GeoPoint(longitude: 121.5, latitude: 25);
+    final overview = MapLayers.currentLocationMarker(point, zoomPercentage: 0);
+    final close = MapLayers.currentLocationMarker(point, zoomPercentage: 100);
+
+    expect(overview.width, 16);
+    expect(overview.height, 16);
+    expect(close.width, 30);
+    expect(close.height, 30);
+  });
+
   test('multi-area NCDR alert has no arbitrary point marker', () {
     const warning = MeshEvent(
       namespace: 'official.ncdr',

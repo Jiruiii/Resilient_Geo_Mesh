@@ -32,6 +32,8 @@ class ProfileScreen extends StatelessWidget {
     this.basemapMode = MapBasemapMode.auto,
     this.emapVisible = false,
     this.onBasemapModeChanged,
+    this.showcaseMode = false,
+    this.onShowcaseReset,
   }) : assert(
          (governmentAreaDirectory == null) == (governmentAreaIndex == null),
        );
@@ -52,6 +54,8 @@ class ProfileScreen extends StatelessWidget {
   final MapBasemapMode basemapMode;
   final bool emapVisible;
   final ValueChanged<MapBasemapMode>? onBasemapModeChanged;
+  final bool showcaseMode;
+  final VoidCallback? onShowcaseReset;
 
   Future<void> _openNotificationAreaSettings(BuildContext context) async {
     final directory = notificationAreaDirectory;
@@ -70,6 +74,7 @@ class ProfileScreen extends StatelessWidget {
   }
 
   String _notificationAreaSummary() {
+    if (showcaseMode) return '全台灣（展示固定）';
     final directory = notificationAreaDirectory;
     if (directory == null) return '全台灣 · 行政區目錄載入中';
     final names = notificationAreaIds
@@ -92,11 +97,33 @@ class ProfileScreen extends StatelessWidget {
     body: ListView(
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
       children: <Widget>[
-        GovernmentAccountSection(
-          controller: governmentAuth,
-          areaDirectory: governmentAreaDirectory,
-          areaIndex: governmentAreaIndex,
-        ),
+        if (showcaseMode)
+          const Card(
+            child: ListTile(
+              leading: Icon(Icons.info_outline),
+              title: Text('展示模式'),
+              subtitle: Text('政府帳號、資料更新及裝置同步無法在靜態網站使用。'),
+            ),
+          )
+        else
+          GovernmentAccountSection(
+            controller: governmentAuth,
+            areaDirectory: governmentAreaDirectory,
+            areaIndex: governmentAreaIndex,
+          ),
+        if (showcaseMode) ...<Widget>[
+          const SizedBox(height: 12),
+          Card(
+            child: ListTile(
+              key: const ValueKey<String>('showcase-reset'),
+              leading: const Icon(Icons.restart_alt),
+              title: const Text('重設展示情境'),
+              subtitle: const Text('清除目前操作並重新播放告警'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: onShowcaseReset,
+            ),
+          ),
+        ],
         const SizedBox(height: 12),
         Card(
           child: ListTile(
@@ -108,15 +135,19 @@ class ProfileScreen extends StatelessWidget {
             subtitle: const Text('取得最新警報與道路、收容所狀態'),
             trailing: const Icon(Icons.chevron_right),
             onTap:
-                () => Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder:
-                        (_) => GovernmentSyncScreen(
-                          bridge: bridge ?? MapBridge(),
-                          onWebAreaChanged: onWebGovernmentFeedRefresh,
-                        ),
-                  ),
-                ),
+                showcaseMode
+                    ? () => ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('展示模式不會連線更新資料')),
+                    )
+                    : () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder:
+                            (_) => GovernmentSyncScreen(
+                              bridge: bridge ?? MapBridge(),
+                              onWebAreaChanged: onWebGovernmentFeedRefresh,
+                            ),
+                      ),
+                    ),
           ),
         ),
         const SizedBox(height: 12),
@@ -130,12 +161,17 @@ class ProfileScreen extends StatelessWidget {
             subtitle: const Text('查看緊急模式、附近節點與同步結果'),
             trailing: const Icon(Icons.chevron_right),
             onTap:
-                () => Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder:
-                        (_) => SyncStatusScreen(bridge: bridge ?? MapBridge()),
-                  ),
-                ),
+                showcaseMode
+                    ? () => ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('展示模式沒有裝置同步功能')),
+                    )
+                    : () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder:
+                            (_) =>
+                                SyncStatusScreen(bridge: bridge ?? MapBridge()),
+                      ),
+                    ),
           ),
         ),
         const SizedBox(height: 12),
@@ -149,7 +185,11 @@ class ProfileScreen extends StatelessWidget {
             subtitle: Text(_notificationAreaSummary()),
             trailing: const Icon(Icons.chevron_right),
             onTap:
-                notificationAreaDirectory == null ||
+                showcaseMode
+                    ? () => ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('展示模式使用固定通知區域')),
+                    )
+                    : notificationAreaDirectory == null ||
                         onNotificationAreaIdsChanged == null
                     ? null
                     : () => _openNotificationAreaSettings(context),

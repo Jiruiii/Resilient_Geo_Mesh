@@ -141,8 +141,10 @@ class MapMarkerCluster {
 /// semantics while the map itself remains pannable.
 class MapLayers {
   const MapLayers._();
-  static MapMarkerData currentLocationMarker(GeoPoint point) =>
-      _locationMarker(point);
+  static MapMarkerData currentLocationMarker(
+    GeoPoint point, {
+    int? zoomPercentage,
+  }) => _locationMarker(point, zoomPercentage: zoomPercentage);
 
   static final _administrativeNames =
       Expando<Map<MapAdministrativeIndex, String?>>();
@@ -837,24 +839,36 @@ class MapLayers {
     );
   }
 
-  static MapMarkerData _locationMarker(GeoPoint location) => MapMarkerData(
-    key: const ValueKey<String>('current-location-marker'),
-    point: location,
-    width: 22,
-    height: 22,
-    child: const DecoratedBox(
-      decoration: BoxDecoration(
-        color: Color(0xFF1A73E8),
-        shape: BoxShape.circle,
-        border: Border.fromBorderSide(
-          BorderSide(color: Colors.white, width: 3),
+  static MapMarkerData _locationMarker(
+    GeoPoint location, {
+    int? zoomPercentage,
+  }) {
+    final percentage = zoomPercentage?.clamp(0, 100);
+    final diameter = percentage == null ? 22.0 : 16 + (14 * percentage / 100);
+    final borderWidth =
+        percentage == null ? 3.0 : 1.5 + (1.5 * percentage / 100);
+    final shadowBlur = percentage == null ? 4.0 : 2 + (2 * percentage / 100);
+    return MapMarkerData(
+      key: const ValueKey<String>('current-location-marker'),
+      point: location,
+      width: diameter,
+      height: diameter,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: const Color(0xFF1A73E8),
+          shape: BoxShape.circle,
+          border: Border.fromBorderSide(
+            BorderSide(color: Colors.white, width: borderWidth),
+          ),
+          boxShadow: <BoxShadow>[
+            BoxShadow(color: Colors.black26, blurRadius: shadowBlur),
+          ],
         ),
-        boxShadow: <BoxShadow>[BoxShadow(color: Colors.black26, blurRadius: 4)],
       ),
-    ),
-    onTap: () {},
-    kind: MapMarkerKind.currentLocation,
-  );
+      onTap: () {},
+      kind: MapMarkerKind.currentLocation,
+    );
+  }
 }
 
 class _AdministrativeMarkerGroup {

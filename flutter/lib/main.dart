@@ -20,6 +20,8 @@ import 'theme/app_theme.dart';
 import 'widgets/app_bottom_navigation.dart';
 import 'widgets/siren_panel.dart';
 import 'widgets/startup_splash.dart';
+import 'showcase/showcase_app.dart';
+import 'showcase/showcase_clock.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -33,7 +35,7 @@ Future<void> main() async {
     MapLibreWebRuntime.configure();
     await registerOfflineMapProtocol();
   }
-  runApp(const ResilientGeoApp());
+  runApp(ShowcaseClock.enabled ? const ShowcaseApp() : const ResilientGeoApp());
 }
 
 @pragma('vm:entry-point')

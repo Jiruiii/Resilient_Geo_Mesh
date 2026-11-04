@@ -11,6 +11,7 @@ class RouteEventSnapshot {
     Iterable<MeshEvent> events,
     DateTime now, {
     String? destinationSupplyKey,
+    this.includeShowcaseRoadClosures = false,
   }) {
     for (final event in events) {
       if (event.isRetiredShelterStatus) continue;
@@ -18,7 +19,13 @@ class RouteEventSnapshot {
           destinationSupplyKey != null &&
           isRoutableSupplyEvent(event) &&
           supplyEventKey(event) == destinationSupplyKey;
-      final kind = destination ? '物資狀態' : _kind(event);
+      final kind =
+          destination
+              ? '物資狀態'
+              : _kind(
+                event,
+                includeShowcaseRoadClosures: includeShowcaseRoadClosures,
+              );
       if (kind == null) continue;
       final expires = DateTime.tryParse(event.expiresAt ?? '');
       final state =
@@ -40,6 +47,7 @@ class RouteEventSnapshot {
   }
 
   final _entries = <String, (String, String?, String?, int)>{};
+  final bool includeShowcaseRoadClosures;
 
   String get fingerprint {
     final keys = _entries.keys.toList()..sort();
@@ -64,12 +72,16 @@ class RouteEventSnapshot {
     return reasons.join('、');
   }
 
-  static String? _kind(MeshEvent event) {
+  static String? _kind(
+    MeshEvent event, {
+    bool includeShowcaseRoadClosures = false,
+  }) {
     // Rescue points are people needing help, not hazards (HazardOverlay ignores them).
     if (event.namespace == 'crowd.rescue') return null;
     if (event.namespace?.startsWith('crowd.') == true) return '民眾警示';
     return switch (event.eventType) {
       'ROAD_STATUS' => '道路狀態',
+      'ROAD_CLOSED' => includeShowcaseRoadClosures ? '道路封閉' : null,
       'SHELTER_STATUS' => '避難所狀態',
       'FLOOD_WARNING' || 'LANDSLIDE_RISK' || 'DEBRIS_FLOW_WARNING' => '危險區域',
       _ => null,
@@ -80,6 +92,7 @@ class RouteEventSnapshot {
     Iterable<MeshEvent> events,
     DateTime now, {
     String? destinationSupplyKey,
+    bool includeShowcaseRoadClosures = false,
   }) {
     DateTime? earliest;
     for (final event in events) {
@@ -87,7 +100,12 @@ class RouteEventSnapshot {
           destinationSupplyKey != null &&
           isRoutableSupplyEvent(event) &&
           supplyEventKey(event) == destinationSupplyKey;
-      if ((!destination && _kind(event) == null) ||
+      if ((!destination &&
+              _kind(
+                    event,
+                    includeShowcaseRoadClosures: includeShowcaseRoadClosures,
+                  ) ==
+                  null) ||
           event.applyState == 'EXPIRED') {
         continue;
       }

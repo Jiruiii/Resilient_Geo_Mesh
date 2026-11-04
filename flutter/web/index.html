@@ -3,6 +3,8 @@
 <head>
   <base href="$FLUTTER_BASE_HREF">
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <link rel="icon" type="image/png" href="assets/assets/Geo_light_phone_logo.png">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
   <meta name="description" content="ResilientGeo 台灣離線地圖 UI 開發入口">
   <meta name="mobile-web-app-capable" content="yes">
@@ -11,6 +13,12 @@
   <meta name="apple-mobile-web-app-title" content="ResilientGeo">
   <title>ResilientGeo 台灣離線地圖</title>
   <style>
+    .maplibregl-ctrl-attrib[data-showcase-collapsed="true"] > .maplibregl-ctrl-attrib-button {
+      display: block;
+    }
+    .maplibregl-ctrl-bottom-left > .maplibregl-ctrl-attrib[data-showcase-collapsed="true"]:not(.maplibregl-compact):not([open]) {
+      transform: translateY(-36px);
+    }
   </style>
 </head>
 <body>
@@ -23,6 +31,60 @@
   <script src="locator_siren.js"></script>
   <script src="government_http.js"></script>
   <script src="government_crowd_signer.js"></script>
+  <script>
+    (() => {
+      const isShowcasePage =
+        (location.hostname === 'localhost' && location.port === '8767') ||
+        location.pathname === '/OSS' ||
+        location.pathname.startsWith('/OSS/');
+      if (!isShowcasePage) return;
+
+      const collapseAttribution = (root) => {
+        if (!(root instanceof Element)) return;
+        const controls = [];
+        if (root.matches('details.maplibregl-ctrl-attrib')) controls.push(root);
+        controls.push(...root.querySelectorAll('details.maplibregl-ctrl-attrib'));
+        for (const control of controls) {
+          if (control.dataset.showcaseCollapsed !== 'true') {
+            control.dataset.showcaseCollapsed = 'true';
+            control.querySelector('summary')?.addEventListener(
+              'click',
+              () => {
+                const compact = control.classList.contains('maplibregl-compact');
+                control.dataset.showcaseUserOpen = String(
+                  compact
+                    ? !control.classList.contains('maplibregl-compact-show')
+                    : !control.open,
+                );
+              },
+              { capture: true },
+            );
+            new MutationObserver(() => {
+              if (control.dataset.showcaseUserOpen !== 'true') {
+                control.removeAttribute('open');
+                control.classList.remove('maplibregl-compact-show');
+              }
+            }).observe(control, {
+              attributes: true,
+              attributeFilter: ['open'],
+            });
+          }
+          if (control.dataset.showcaseUserOpen !== 'true') {
+            control.removeAttribute('open');
+            control.classList.remove('maplibregl-compact-show');
+          }
+        }
+      };
+
+      const observer = new MutationObserver((records) => {
+        for (const record of records) {
+          for (const node of record.addedNodes) collapseAttribution(node);
+        }
+      });
+      observer.observe(document.documentElement, { childList: true, subtree: true });
+      collapseAttribution(document.documentElement);
+    })();
+  </script>
   <script src="flutter_bootstrap.js" async></script>
   <script>
     void (async () => {

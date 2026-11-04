@@ -288,6 +288,71 @@ void main() {
     expect(find.text('來源：taipei-medical'), findsOneWidget);
   });
 
+  testWidgets('opening an alert from notifications closes the route sheet', (
+    tester,
+  ) async {
+    final roadAlert = MeshEvent.fromJson(<String, dynamic>{
+      ..._eventJson('Point', <dynamic>[121.5912, 25.085]),
+      'event_id': 'road:route-overlap',
+      'event_type': 'ROAD_CLOSED',
+      'expires_at': '2099-01-01T00:00:00Z',
+      'attributes': <String, dynamic>{
+        'title': '康寧路二段道路封閉',
+        'map_visible': true,
+      },
+    });
+    var focusRequestId = 0;
+    MeshEvent? focusEvent;
+    late StateSetter updateFocus;
+    final location = _FakeLocationController(
+      const GeoPoint(longitude: 121.5928, latitude: 25.0808),
+    );
+    addTearDown(location.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: StatefulBuilder(
+          builder: (context, setState) {
+            updateFocus = setState;
+            return MapScreen(
+              staticFeatures: const StaticFeatureCollection(
+                schemaVersion: 'test',
+                datasetId: 'test',
+                snapshotAt: '2026-09-05T00:00:00Z',
+                features: <StaticFeature>[_shelter],
+              ),
+              initialState: MapInitialState(
+                events: <MeshEvent>[roadAlert],
+                emergencyModeEnabled: false,
+              ),
+              showcaseMode: true,
+              locationController: location,
+              notificationFocusEvent: focusEvent,
+              notificationFocusRequestId: focusRequestId,
+            );
+          },
+        ),
+      ),
+    );
+    await _finishMapLoad(tester);
+
+    await tester.tap(find.bySemanticsLabel('潭美國小'));
+    await tester.pump();
+    await tester.tap(find.text('規劃逃生路線'));
+    for (var attempt = 0; attempt < 3; attempt += 1) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(find.text('逃生路線'), findsOneWidget);
+
+    updateFocus(() {
+      focusEvent = roadAlert;
+      focusRequestId += 1;
+    });
+    await tester.pump();
+
+    expect(find.text('逃生路線'), findsNothing);
+    expect(find.text('康寧路二段道路封閉'), findsOneWidget);
+  });
+
   testWidgets('does not render an expired event on the map', (tester) async {
     await tester.pumpWidget(
       _testApp(
@@ -485,6 +550,63 @@ void main() {
     );
   });
 
+  testWidgets('app current location marker stays fixed when the map zooms in', (
+    tester,
+  ) async {
+    const location = GeoPoint(longitude: 121.545053, latitude: 25.011549);
+    final controller = _FakeLocationController(location);
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      _testApp(
+        features: const <StaticFeature>[],
+        locationController: controller,
+      ),
+    );
+    await _finishMapLoad(tester);
+    await tester.tap(find.byTooltip('目前位置'));
+    await tester.pump();
+
+    final marker = find.byKey(
+      const ValueKey<String>('current-location-marker'),
+    );
+    final overviewSize = tester.getSize(marker);
+    tester.widget<Slider>(find.byType(Slider).first).onChanged!(100);
+    await tester.pump();
+
+    expect(find.text('縮放 100%'), findsOneWidget);
+    expect(tester.getSize(marker).width, overviewSize.width);
+  });
+
+  testWidgets('showcase current location marker grows when the map zooms in', (
+    tester,
+  ) async {
+    const location = GeoPoint(longitude: 121.545053, latitude: 25.011549);
+    final controller = _FakeLocationController(location);
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      _testApp(
+        features: const <StaticFeature>[],
+        locationController: controller,
+        showcaseMode: true,
+      ),
+    );
+    await _finishMapLoad(tester);
+    await tester.tap(find.byTooltip('目前位置'));
+    await tester.pump();
+
+    final marker = find.byKey(
+      const ValueKey<String>('current-location-marker'),
+    );
+    final overviewSize = tester.getSize(marker);
+    tester.widget<Slider>(find.byType(Slider).first).onChanged!(100);
+    await tester.pump();
+
+    expect(find.text('縮放 100%'), findsOneWidget);
+    expect(tester.getSize(marker).width, greaterThan(overviewSize.width));
+  });
+
   testWidgets('failed current location preserves the previous location', (
     tester,
   ) async {
@@ -541,6 +663,7 @@ Widget _testApp({
   required List<StaticFeature> features,
   List<MeshEvent> events = const <MeshEvent>[],
   LocationController? locationController,
+  bool showcaseMode = false,
   MeshEvent? notificationFocusEvent,
   int notificationFocusRequestId = 0,
 }) => MaterialApp(
@@ -552,6 +675,7 @@ Widget _testApp({
       features: features,
     ),
     initialState: MapInitialState(events: events, emergencyModeEnabled: false),
+    showcaseMode: showcaseMode,
     locationController: locationController,
     notificationFocusEvent: notificationFocusEvent,
     notificationFocusRequestId: notificationFocusRequestId,

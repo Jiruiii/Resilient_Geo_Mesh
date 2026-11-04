@@ -127,13 +127,18 @@ class OfflineMapAssetStore {
   Future<String> loadStyle({
     required String styleAsset,
     required bool installNativeAssets,
+    bool includeEmap = true,
   }) async {
     final styleJson = await _bundle.loadString(styleAsset);
     final labelsJson = await _bundle.loadString(referenceLabelsAsset);
-    final hydratedStyle = MapBasemap.injectEmapLayer(
-      injectReferenceLabels(styleJson, labelsJson),
-      dark: styleAsset == MapLibreMapConfig.darkStyleAsset,
-    );
+    final referenceStyle = injectReferenceLabels(styleJson, labelsJson);
+    final hydratedStyle =
+        includeEmap
+            ? MapBasemap.injectEmapLayer(
+              referenceStyle,
+              dark: styleAsset == MapLibreMapConfig.darkStyleAsset,
+            )
+            : referenceStyle;
     if (kIsWeb) return rewriteWebStyleAssetUris(hydratedStyle);
     if (!installNativeAssets) return hydratedStyle;
 

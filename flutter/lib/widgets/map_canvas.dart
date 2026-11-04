@@ -57,6 +57,7 @@ class MapCanvas extends StatefulWidget {
     this.focusPoint,
     this.focusBounds,
     this.focusRequestId = 0,
+    this.showcaseMode = false,
   });
 
   static const double minZoom = MapLibreMapConfig.minZoom;
@@ -93,6 +94,7 @@ class MapCanvas extends StatefulWidget {
   final GeoPoint? focusPoint;
   final GeoBounds? focusBounds;
   final int focusRequestId;
+  final bool showcaseMode;
 
   @override
   State<MapCanvas> createState() => _MapCanvasState();
@@ -165,6 +167,7 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
   List<MapMarkerData>? _locationBaseMarkers;
   List<MapMarkerData>? _markersWithLocation;
   GeoPoint? _lastMarkerLocation;
+  int? _lastLocationMarkerZoomPercentage;
   bool _markerLayoutReady = false;
   int _lastFocusRequestId = -1;
   int _focusOperationToken = 0;
@@ -304,10 +307,16 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
           defaultTargetPlatform == TargetPlatform.iOS);
 
   Future<void> _loadStyle() async {
-    final styleAsset = MapLibreMapConfig.styleAssetFor(
+    final standardStyleAsset = MapLibreMapConfig.styleAssetFor(
       themeMode: widget.runtimeState.themeMode,
       systemBrightness: Theme.of(context).brightness,
     );
+    final styleAsset =
+        widget.showcaseMode
+            ? standardStyleAsset == MapLibreMapConfig.darkStyleAsset
+                ? 'assets/map/styles/showcase-dark.json'
+                : 'assets/map/styles/showcase-light.json'
+            : standardStyleAsset;
     // Keyboard/viewport changes also notify inherited-widget dependents.
     // They must not reinstall the same native map style.
     if (_requestedStyleAsset == styleAsset) return;
@@ -317,6 +326,7 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
       final style = await _assetStore.loadStyle(
         styleAsset: styleAsset,
         installNativeAssets: _usesPlatformMap && !kIsWeb,
+        includeEmap: !widget.showcaseMode,
       );
       if (!mounted || generation != _styleLoadGeneration) return;
       setState(() {
@@ -734,6 +744,17 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
       return const <MapMarkerData>[];
     }
     final currentZoom = zoom ?? _cameraPosition?.zoom;
+    final currentZoomPercentage =
+        currentZoom == null
+            ? widget.runtimeState.zoomPercentage
+            : ZoomPercentage.fromZoom(
+              zoom: currentZoom,
+              minZoom: MapCanvas.minZoom,
+              maxZoom: MapCanvas.maxZoom,
+              overviewZoom: _overviewReferenceZoom,
+            );
+    final locationMarkerZoomPercentage =
+        widget.showcaseMode ? currentZoomPercentage : null;
     final baseMarkers = _markerLayoutCache.getOrBuild(() {
       final zoomPercentage =
           currentZoom == null
@@ -805,12 +826,17 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
     final location = widget.runtimeState.currentLocation;
     if (location == null) return baseMarkers;
     if (!identical(_locationBaseMarkers, baseMarkers) ||
-        _lastMarkerLocation != location) {
+        _lastMarkerLocation != location ||
+        _lastLocationMarkerZoomPercentage != locationMarkerZoomPercentage) {
       _locationBaseMarkers = baseMarkers;
       _lastMarkerLocation = location;
+      _lastLocationMarkerZoomPercentage = locationMarkerZoomPercentage;
       _markersWithLocation = [
         ...baseMarkers,
-        MapLayers.currentLocationMarker(location),
+        MapLayers.currentLocationMarker(
+          location,
+          zoomPercentage: locationMarkerZoomPercentage,
+        ),
       ];
     }
     return _markersWithLocation!;
@@ -1065,6 +1091,7 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
   /// The EMAP layer exists in every style; only its visibility follows the
   /// base map mode, so app overlays are never rebuilt by a base map switch.
   Future<void> _applyEmapVisibility() async {
+    if (widget.showcaseMode) return;
     final controller = _mapController;
     if (controller == null || !_styleLoaded) return;
     try {

@@ -1,0 +1,64 @@
+name: Publish mobile showcase
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          lfs: true
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.29.2
+          channel: stable
+          cache: true
+          pub-cache: true
+
+      - name: Resolve dependencies
+        working-directory: flutter
+        run: flutter pub get
+
+      - name: Verify showcase inputs
+        working-directory: flutter
+        run: flutter test --no-pub test/showcase_fixture_test.dart test/showcase_simulation_test.dart
+
+      - name: Build Flutter Web for /OSS/
+        working-directory: flutter
+        run: flutter build web --release --no-pub --no-web-resources-cdn --pwa-strategy=none --base-href /OSS/ --dart-define=SHOWCASE_MODE=true
+
+      - name: Clip high-resolution map to the Taipei scenario
+        run: |
+          python3 -m pip install -r tools/maps/requirements-pmtiles.txt
+          python3 tools/showcase/clip_north_pmtiles.py \
+            flutter/assets/map/pmtiles/taiwan-north.pmtiles \
+            flutter/build/web/assets/assets/map/pmtiles/taiwan-north-clipped.pmtiles
+          mv flutter/build/web/assets/assets/map/pmtiles/taiwan-north-clipped.pmtiles \
+            flutter/build/web/assets/assets/map/pmtiles/taiwan-north.pmtiles
+
+      - name: Keep only static showcase resources
+        run: python3 tools/showcase/prepare_pages.py flutter/build/web
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: flutter/build/web
+      - id: deployment
+        uses: actions/deploy-pages@v4

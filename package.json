@@ -3,6 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "dev": "npm run dev:web",
+    "dev:web": "cd flutter && flutter run -d web-server --no-web-resources-cdn --web-port 8767 --dart-define=SHOWCASE_MODE=true",
     "server:start": "node server/src/api-entrypoint.mjs",
     "government:api": "node server/src/government/entrypoint.mjs",
     "government:publisher": "node server/src/government/publisher-entrypoint.mjs",
