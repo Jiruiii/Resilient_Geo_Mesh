@@ -736,9 +736,11 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
 
   void _applyEventSnapshot(List<MeshEvent> events) {
     if (!mounted) return;
-    final previousKeys = _persistedEvents.map(meshEventIdentity).toSet();
     MeshEvent? arrivingShowcaseRoadAlert;
     if (widget.showcaseMode) {
+      // Only the showcase looks for newly arrived alerts; skip building this
+      // set for every live snapshot.
+      final previousKeys = _persistedEvents.map(meshEventIdentity).toSet();
       for (final event in events) {
         if (!previousKeys.contains(meshEventIdentity(event)) &&
             event.eventType == 'ROAD_CLOSED' &&

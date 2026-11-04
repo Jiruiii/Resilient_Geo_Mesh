@@ -13,6 +13,9 @@ import 'map_search.dart';
 class AppPerformance {
   static Future<MapSearchQuery> Function(String)? search;
 
+  /// Reported with frame timings so A/B runs record which map path ran.
+  static String mapComposition = 'platform_default';
+
   /// Set by the app shell: replays the current event snapshot, returns size.
   static int Function()? replayEvents;
   static Future<Map<String, dynamic>>? _eventBurst;
@@ -122,6 +125,7 @@ class AppPerformance {
 
       return developer.ServiceExtensionResponse.result(
         jsonEncode({
+          'map_composition': mapComposition,
           'frames': frames.length,
           'build_p50_ms': percentile(
             frames.map((f) => f.buildDuration.inMicroseconds).toList(),

@@ -25,6 +25,7 @@ def main():
     parser.add_argument('--long-routes', action='store_true')
     parser.add_argument('--restart', action='store_true', help='Measure from a fresh app process')
     parser.add_argument('--over-keyguard', action='store_true', help='Opt in to debuggable test display while locked')
+    parser.add_argument('--map-texture-layer', action='store_true', help='With --restart: render the map with texture-layer composition (debug/profile only)')
     parser.add_argument('--event-burst', action='store_true', help='Pan while a burst of Room event updates arrives')
     parser.add_argument('--event-burst-only', action='store_true', help='Skip search/route latency; run only the event burst scenario')
     parser.add_argument('--burst-count', type=int, default=60, help='Room touches or Flutter replays per burst')
@@ -32,6 +33,8 @@ def main():
     args = parser.parse_args()
     if args.event_burst_only:
         args.event_burst = True
+    if args.map_texture_layer and not args.restart:
+        parser.error('--map-texture-layer only applies to a fresh process; add --restart')
     def adb(*command):
         return subprocess.check_output([args.adb,'-s',args.serial,*command],text=True,encoding='utf-8',errors='replace')
     startup = None
@@ -41,6 +44,8 @@ def main():
         command = ['shell','am','start','-n','com.resilientgeo.mesh/.MainActivity']
         if args.over_keyguard:
             command.extend(['--ez','performance_over_keyguard','true'])
+        if args.map_texture_layer:
+            command.extend(['--esa','dart_entrypoint_args','--map-texture-layer'])
         adb(*command)
     for _ in range(60):
         try:
@@ -79,6 +84,15 @@ def main():
                 time.sleep(.15)
             time.sleep(.8)
             return call('performance')
+        # Wait in short intervals for the already-backgrounded search asset.
+        for _ in range(60):
+            if call('search',query='成功路').get('ready'):
+                break
+            time.sleep(.5)
+        else:
+            raise RuntimeError('Search worker did not become ready')
+        if startup is not None:
+            observations['search_ready_after_start_ms'] = (time.monotonic()-startup)*1000
         if args.event_burst:
             # Same pan gesture three ways: quiet, while Android re-emits the
             # Room event table (mesh-sync shape, no data changed), and while
@@ -93,19 +107,12 @@ def main():
                 frames = swipe_frames()
                 observations['event_burst'][mode] = {'pan_frames':frames,'result':call('eventBurstResult')}
         if args.event_burst_only:
+            observations['dart_memory'] = rpc('getMemoryUsage',isolateId=isolate)
+            observations['android_memory'] = adb('shell','dumpsys','meminfo','com.resilientgeo.mesh')
             args.output.parent.mkdir(parents=True,exist_ok=True)
             args.output.write_text(json.dumps(observations,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
             print(json.dumps({'event_burst':observations['event_burst'],'output':str(args.output)},ensure_ascii=False))
             return
-        # Wait in short intervals for the already-backgrounded search asset.
-        for _ in range(60):
-            if call('search',query='成功路').get('ready'):
-                break
-            time.sleep(.5)
-        else:
-            raise RuntimeError('Search worker did not become ready')
-        if startup is not None:
-            observations['search_ready_after_start_ms'] = (time.monotonic()-startup)*1000
         observations['search'] = []
         for query in ['成功路','板橋','中正路','新北市板橋區文化路一段','路']:
             for _ in range(3):

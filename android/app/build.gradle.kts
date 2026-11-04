@@ -31,7 +31,14 @@ android {
             matchingFallbacks += listOf("debug")
         }
         release {
-            isMinifyEnabled = false
+            // R8 removes unused Kotlin/AndroidX/Nearby code from the release
+            // dex. Resources are not shrunk; the APK size is dominated by map
+            // assets. Keep rules: proguard-rules.pro.
+            isMinifyEnabled = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
         }
     }
 

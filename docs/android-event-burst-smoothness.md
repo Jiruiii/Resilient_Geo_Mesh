@@ -15,6 +15,20 @@
 功能、資料、畫面、載入與錯誤狀態都沒有改變：bridge 仍只送已驗證事件，最後一份快照一定送達，
 失敗時照舊顯示「事件更新失敗，目前保留最後一份已驗證資料」。
 
+### 第二批（同日）
+
+| # | 問題 | 改法 | Android | Web |
+| --- | --- | --- | --- | --- |
+| 4 | 冷啟動約 6.8 秒後道路搜尋才可用。容器內量測：JSON 解碼約 1 秒，建立 30 萬筆道路的 n-gram 索引約 4.4–4.8 秒，後者為主要成本。 | 建索引時把 1～2 字元的 UTF-16 gram 編碼成整數，不再為每個 gram 產生子字串，也不再為每筆資料建立暫存 Set。容器內 `prepare` 由 4,674 ms 降到 2,245 ms（−52%）；231 個查詢、1,269 筆結果與修改前逐字相同。 | 已改（搜尋 worker） | 已改（Web 用同一個 `MapSearchIndex`） |
+| 6 | Android 固定使用 Hybrid Composition。程式註解說明這是為了避開模擬器 Virtual Display 黑畫面，實機上還沒和 texture layer 比較過。 | debug／profile 版可用 `--esa dart_entrypoint_args --map-texture-layer` 啟動 texture layer 模式；`ext.resilientgeo.performance` 回報 `map_composition`；量測腳本加 `--map-texture-layer`（需搭配 `--restart`）。release 版忽略這個參數，預設不變。 | 已改（只用於量測） | 不適用：Web 不使用 Android platform view |
+| 7 | release 版沒有啟用 R8。 | 開啟 `isMinifyEnabled`，但不混淆名稱（`-dontobfuscate`），讓錯誤堆疊與 bridge 錯誤訊息仍可讀。新增 `android/app/proguard-rules.pro`：保留 Flutter 外掛註冊與 Bouncy Castle。容器內 `assembleRelease` 建置成功。 | 已改；**需在實機做 release 冒煙測試** | 不適用 |
+| 8 | 每次回到前景都觸發政府資料同步。 | 不需修改：`GovernmentSyncManager.sync(automatic = true)` 已有 5 分鐘最短間隔，同步造成的 Room 連續寫入已由第 1 項節流。 | — | — |
+| 9 | `MapScreen` 約 2,758 行，任何 `setState` 都會重建整個畫面。 | 只做低風險的局部修正：非展示模式不再為每份事件快照建立事件 key 集合。不做大規模拆分，以保持既有架構；若之後要拆，需先另外規劃。 | 已改 | 已改（共用程式碼） |
+
+未處理：第 5 項（預熱並快取 FlutterEngine）。緊急模式的前景服務會讓 process 一直存活；
+如果 engine 也跟著常駐，退出畫面後約 1 GiB 的地圖與搜尋記憶體不會釋放，系統在記憶體不足時
+更可能回收整個 process，連帶中斷 mesh 交換。這項風險大於啟動時間的改善，所以這次不做。
+
 ## 量測工具
 
 - Android `measurementEventBurst`（只在 debuggable 的 debug／profile 版提供）：把 `events`
@@ -56,6 +70,23 @@ python tools/maps/measure_android_latency.py --adb <adb.exe路徑> --serial <ser
 
 預設為 60 次、間隔 50 ms（約 3 秒），可用 `--burst-count`、`--burst-interval-ms` 調整。
 開始前先把地圖移到街道層級，與既有拖動量測一致；量測期間不要碰手機。
+
+第 4 項看冷啟動後搜尋可用的時間（`search_ready_after_start_ms`），前後各跑一次：
+
+```powershell
+python tools/maps/measure_android_latency.py --adb <adb.exe路徑> --serial <serial> --output .sim-out/search-ready.json --restart --swipes
+```
+
+第 6 項用同一個 APK 跑兩次，比較 `pan_frames` 與 `event_burst`；兩次都使用 `--restart`，只差在有沒有 `--map-texture-layer`：
+
+```powershell
+python tools/maps/measure_android_latency.py --adb <adb.exe路徑> --serial <serial> --output .sim-out/hybrid.json --restart --swipes --event-burst
+python tools/maps/measure_android_latency.py --adb <adb.exe路徑> --serial <serial> --output .sim-out/texture-layer.json --restart --swipes --event-burst --map-texture-layer
+```
+
+texture layer 模式下也要確認地圖沒有黑畫面、標記位置正確。只有實機數據較好、而且畫面正常時，才考慮改預設值。
+
+第 7 項建置 release 版，安裝到測試機後至少確認：地圖、搜尋、事件推播、民眾回報簽章、避難路線、緊急模式開關都正常。`adb logcat` 不應出現 `ClassNotFoundException` 或 `NoSuchMethodError`。release 版沒有設定簽章，需要用你們自己的 keystore 簽署。
 
 ## 判讀
 

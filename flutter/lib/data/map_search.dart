@@ -478,7 +478,16 @@ class _RoadSearchLookup {
   _RoadSearchLookup(List<TaiwanSearchEntry> entries, {bool addressMode = false})
     : count = entries.length,
       _addressMode = addressMode {
-    final grams = <String, List<int>>{};
+    // Grams are UTF-16 code units packed into an int (see [_gramKey]), so
+    // building the index for ~300k entries allocates no substring per gram.
+    // Entry indexes only grow, so comparing with the last posting removes
+    // duplicates within an entry and keeps every posting sorted.
+    final grams = <int, List<int>>{};
+    void addGram(int key, int index) {
+      final posting = grams[key] ??= <int>[];
+      if (posting.isEmpty || posting.last != index) posting.add(index);
+    }
+
     final reverse = <String, List<int>>{};
     if (addressMode) {
       texts = const <_SearchText>[];
@@ -489,14 +498,10 @@ class _RoadSearchLookup {
               _normalizeAddressQuery(entry.address ?? entry.name),
           ...entry.aliases.map(_normalizeAddressQuery),
         ];
-        final seen = <String>{};
         for (final field in fields) {
           for (var start = 0; start + 1 < field.length; start += 3) {
-            seen.add(field.substring(start, start + 2));
+            addGram(_gramKey(field, start, 2), index);
           }
-        }
-        for (final gram in seen) {
-          (grams[gram] ??= <int>[]).add(index);
         }
       }
       postings = grams.map(
@@ -514,15 +519,11 @@ class _RoadSearchLookup {
           text.kind,
           text.id,
         ];
-        final seen = <String>{};
         for (final field in fields) {
           for (var i = 0; i < field.length; i++) {
-            seen.add(field.substring(i, i + 1));
-            if (i + 1 < field.length) seen.add(field.substring(i, i + 2));
+            addGram(_gramKey(field, i, 1), index);
+            if (i + 1 < field.length) addGram(_gramKey(field, i, 2), index);
           }
-        }
-        for (final gram in seen) {
-          (grams[gram] ??= <int>[]).add(index);
         }
         for (final field in {text.name, ...text.aliases, text.region}) {
           if (field.length < 2) continue;
@@ -539,19 +540,26 @@ class _RoadSearchLookup {
     }
   }
 
+  /// One code unit `c` maps to `c`; two code units map to
+  /// `((first + 1) << 16) | second`, which never collides with one.
+  static int _gramKey(String text, int start, int length) =>
+      length == 1
+          ? text.codeUnitAt(start)
+          : ((text.codeUnitAt(start) + 1) << 16) | text.codeUnitAt(start + 1);
+
   final int count;
   final bool _addressMode;
   late final List<_SearchText> texts;
   int maxReverseLength = 0;
-  late final Map<String, Uint32List> postings;
+  late final Map<int, Uint32List> postings;
   late final Map<String, Uint32List> reverseFields;
 
   Iterable<int> candidates(String query) {
     if (_addressMode) {
       if (query.length < 2) return const <int>[];
-      final grams = <String>{};
+      final grams = <int>{};
       for (var start = 0; start + 1 < query.length; start += 3) {
-        grams.add(query.substring(start, start + 2));
+        grams.add(_gramKey(query, start, 2));
       }
       Uint32List? smallest;
       final available = <Uint32List>[];
@@ -575,10 +583,13 @@ class _RoadSearchLookup {
       ];
     }
     // Preserve one-character and UTF-16 matching semantics of the old scan.
-    if (query.length < 2) return postings[query] ?? const <int>[];
+    if (query.isEmpty) return const <int>[];
+    if (query.length < 2) {
+      return postings[_gramKey(query, 0, 1)] ?? const <int>[];
+    }
     Uint32List? smallest;
     for (var i = 0; i + 1 < query.length; i++) {
-      final posting = postings[query.substring(i, i + 2)];
+      final posting = postings[_gramKey(query, i, 2)];
       if (posting == null) {
         smallest = null;
         break;

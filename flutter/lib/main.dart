@@ -23,12 +23,21 @@ import 'widgets/startup_splash.dart';
 import 'showcase/showcase_app.dart';
 import 'showcase/showcase_clock.dart';
 
-Future<void> main() async {
+/// Debug/profile only: `adb shell am start -n com.resilientgeo.mesh/.MainActivity
+/// --esa dart_entrypoint_args --map-texture-layer` renders the map with
+/// texture-layer composition instead, to compare frame timings on a real
+/// phone. Release builds ignore the argument.
+const _textureLayerMapArgument = '--map-texture-layer';
+
+Future<void> main([List<String> args = const <String>[]]) async {
   WidgetsFlutterBinding.ensureInitialized();
   if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
     // The emulator's Virtual Display path can leave the GL map black while
     // Flutter overlays continue to paint. Create the map as a TextureView.
-    MapLibreMap.useHybridComposition = true;
+    MapLibreMap.useHybridComposition =
+        kReleaseMode || !args.contains(_textureLayerMapArgument);
+    AppPerformance.mapComposition =
+        MapLibreMap.useHybridComposition ? 'hybrid' : 'texture_layer';
   }
   AppPerformance.register();
   if (kIsWeb) {
