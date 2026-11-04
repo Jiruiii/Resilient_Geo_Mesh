@@ -642,6 +642,18 @@ class _EventCard extends StatelessWidget {
               ],
             ),
           ),
+          if (isExpanded && onDoubleTap != null && mapPoint != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  onPressed: onDoubleTap,
+                  icon: const Icon(Icons.map_outlined),
+                  label: const Text('在地圖查看'),
+                ),
+              ),
+            ),
           if (isExpanded && onDelete != null)
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),

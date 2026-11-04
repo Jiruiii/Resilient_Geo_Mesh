@@ -53,9 +53,13 @@ flutter:
     - assets/Geo_light_phone_logo.png
     - assets/Geo_dark_phone_logo.png
     - assets/data/taiwan/ncdr-hazard-events.json
+    - assets/data/showcase/scenario.json
+    - assets/data/showcase/routes.json
     - assets/data/trusted-keys.json
     - assets/map/styles/taiwan-light.json
     - assets/map/styles/taiwan-dark.json
+    - assets/map/styles/showcase-light.json
+    - assets/map/styles/showcase-dark.json
     - assets/map/labels/taiwan-reference-labels.geojson
     - assets/map/boundaries/cwa-county-warning.geojson
     - assets/map/boundaries/taiwan-administrative-area-directory.json

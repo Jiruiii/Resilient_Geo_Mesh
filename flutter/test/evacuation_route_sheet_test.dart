@@ -53,6 +53,38 @@ void main() {
     expect(find.text('受路線快照排除事件：road:closed'), findsOneWidget);
   });
 
+  testWidgets('showcase route details hide ids and snapshot metadata', (
+    tester,
+  ) async {
+    final route = _route().withWarning(
+      const RouteWarning(
+        code: 'ROAD_CLOSED_DETOUR',
+        eventId: 'showcase:route-road-closed',
+        message: '前方道路封閉，已自動繞行',
+      ),
+    );
+    await tester.pumpWidget(
+      _app(
+        EvacuationRouteSheet(
+          route: route,
+          loading: false,
+          errorMessage: null,
+          stale: false,
+          loadingMessage: null,
+          showcaseMode: true,
+          onRecalculate: null,
+          onClose: null,
+        ),
+      ),
+    );
+
+    expect(find.text('距離：1.2 公里'), findsOneWidget);
+    expect(find.text('前方道路封閉，已自動繞行'), findsOneWidget);
+    expect(find.textContaining('路網版本：'), findsNothing);
+    expect(find.textContaining('事件快照：'), findsNothing);
+    expect(find.textContaining('showcase:route-road-closed'), findsNothing);
+  });
+
   testWidgets('uses metres below one kilometre and rounds duration upward', (
     tester,
   ) async {

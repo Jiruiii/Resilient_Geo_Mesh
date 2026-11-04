@@ -16,6 +16,7 @@ class EvacuationRouteSheet extends StatelessWidget {
     this.updateNotice,
     this.destinationName,
     this.destinationKind = RouteDestinationKind.shelter,
+    this.showcaseMode = false,
     required this.onRecalculate,
     required this.onClose,
   });
@@ -28,6 +29,7 @@ class EvacuationRouteSheet extends StatelessWidget {
   final String? updateNotice;
   final String? destinationName;
   final RouteDestinationKind destinationKind;
+  final bool showcaseMode;
   final VoidCallback? onRecalculate;
   final VoidCallback? onClose;
 
@@ -143,15 +145,17 @@ class EvacuationRouteSheet extends StatelessWidget {
         if (stale) ...<Widget>[_staleNotice(), const SizedBox(height: 10)],
         Text('距離：${_distanceText(result.distanceM)}'),
         Text('預估步行時間：${_durationText(result.durationS)}'),
-        const SizedBox(height: 10),
-        Text('路網版本：${result.graphVersion ?? '無資料'}'),
-        Text('事件快照：${formatUpdateTime(result.eventSnapshotAt)}'),
+        if (!showcaseMode) ...<Widget>[
+          const SizedBox(height: 10),
+          Text('路網版本：${result.graphVersion ?? '無資料'}'),
+          Text('事件快照：${formatUpdateTime(result.eventSnapshotAt)}'),
+        ],
         if (result.warnings.isNotEmpty) ...<Widget>[
           const SizedBox(height: 12),
           const Text('路線警示'),
           ...result.warnings.map((warning) => Text(warning.message)),
         ],
-        if (result.blockedEventIds.isNotEmpty) ...<Widget>[
+        if (!showcaseMode && result.blockedEventIds.isNotEmpty) ...<Widget>[
           const SizedBox(height: 12),
           Text('受路線快照排除事件：${result.blockedEventIds.join('、')}'),
         ],

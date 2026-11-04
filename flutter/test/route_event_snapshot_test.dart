@@ -21,6 +21,42 @@ void main() {
     },
   );
 
+  test(
+    'showcase road closures do not change the app route snapshot by default',
+    () {
+      final previous = RouteEventSnapshot([], now);
+      final closure = event('closure', 'ROAD_CLOSED');
+      expect(previous.changeReason(RouteEventSnapshot([closure], now)), isNull);
+
+      final previousShowcase = RouteEventSnapshot(
+        [],
+        now,
+        includeShowcaseRoadClosures: true,
+      );
+      final showcase = RouteEventSnapshot(
+        [closure],
+        now,
+        includeShowcaseRoadClosures: true,
+      );
+      expect(previousShowcase.changeReason(showcase), '道路封閉更新');
+
+      final timedClosure = event(
+        'timed-closure',
+        'ROAD_CLOSED',
+        expires: now.add(const Duration(seconds: 5)),
+      );
+      expect(RouteEventSnapshot.nextExpiry([timedClosure], now), isNull);
+      expect(
+        RouteEventSnapshot.nextExpiry(
+          [timedClosure],
+          now,
+          includeShowcaseRoadClosures: true,
+        ),
+        now.add(const Duration(seconds: 5)),
+      );
+    },
+  );
+
   test('expiry and removals are detected from the captured state', () {
     final road = event(
       'road',

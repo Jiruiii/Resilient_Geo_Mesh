@@ -33,6 +33,7 @@ import '../data/taiwan_administrative_area_directory.dart';
 import '../data/offline_address_pack_store.dart';
 import '../data/offline_map_asset_store.dart';
 import '../data/rescue_service.dart';
+import '../showcase/showcase_clock.dart';
 import '../widgets/feature_details_sheet.dart';
 import '../widgets/crowd_report_sheet.dart';
 import '../widgets/evacuation_route_sheet.dart';
@@ -66,6 +67,8 @@ class MapScreen extends StatefulWidget {
     this.administrativeAreaDirectory,
     this.notificationFocusEvent,
     this.notificationFocusRequestId = 0,
+    this.showcaseMode = false,
+    this.showcaseOrigin,
   });
 
   /// Optional deterministic inputs keep widget tests independent of channels.
@@ -95,6 +98,8 @@ class MapScreen extends StatefulWidget {
   final DateTime Function()? routeClock;
   final MeshEvent? notificationFocusEvent;
   final int notificationFocusRequestId;
+  final bool showcaseMode;
+  final GeoPoint? showcaseOrigin;
 
   /// Defaults to [RescueService.forPlatform] when omitted.
   final RescueService? rescueService;
@@ -189,7 +194,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   String? _routeUpdateNotice;
 
   DateTime get _routeNow =>
-      (widget.routeClock?.call() ?? DateTime.now()).toUtc();
+      (widget.routeClock?.call() ?? ShowcaseClock.now()).toUtc();
   String _eventFingerprint(Iterable<MeshEvent> events) =>
       _routeSnapshot(events).fingerprint;
 
@@ -202,6 +207,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
         events,
         _routeNow,
         destinationSupplyKey: _routeSupplyKey,
+        includeShowcaseRoadClosures: widget.showcaseMode,
       );
 
   RouteDestinationKind get _routeKind =>
@@ -220,6 +226,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     _rescue = RescueFlowController(
       service:
           widget.rescueService ?? RescueService.forPlatform(bridge: _bridge),
+      clock: widget.showcaseMode ? () => ShowcaseClock.scenarioTime : null,
     )..addListener(_onRescueChanged);
     unawaited(_rescue.load());
     _locationController = widget.locationController ?? LocationController();
@@ -235,6 +242,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
       themeMode: widget.themeMode,
       animationEnabled: widget.animationEnabled,
       emapVisible: _emapVisible,
+      currentLocation: widget.showcaseOrigin,
     );
     _load();
   }
@@ -248,6 +256,11 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
       final event = widget.notificationFocusEvent;
       final point = event == null ? null : meshEventFocusPoint(event);
       if (event != null && point != null) {
+        if (widget.showcaseMode) {
+          _routeSheetVisible = false;
+          _routeRefreshTimer?.cancel();
+          _routeExpiryTimer?.cancel();
+        }
         _selectedFeature = null;
         _selectedEvent = event;
         _searchSelection = null;
@@ -332,8 +345,10 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _load() async {
-    unawaited(_loadSearchAssetInBackground());
-    unawaited(_loadAddressPacks());
+    if (!widget.showcaseMode) {
+      unawaited(_loadSearchAssetInBackground());
+      unawaited(_loadAddressPacks());
+    }
     final featureFuture =
         widget.staticFeatures == null
             ? _loadStaticFeatures()
@@ -715,10 +730,100 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
 
   void _applyEventSnapshot(List<MeshEvent> events) {
     if (!mounted) return;
+    final previousKeys = _persistedEvents.map(meshEventIdentity).toSet();
+    MeshEvent? arrivingShowcaseRoadAlert;
+    if (widget.showcaseMode) {
+      for (final event in events) {
+        if (!previousKeys.contains(meshEventIdentity(event)) &&
+            event.eventType == 'ROAD_CLOSED' &&
+            event.isShownAt(_routeNow) &&
+            isMapVisibleEvent(event)) {
+          arrivingShowcaseRoadAlert = event;
+          break;
+        }
+      }
+    }
+    final shouldRefreshRoute =
+        arrivingShowcaseRoadAlert != null &&
+        (_requestedRouteDestination != null || _routeDestination != null);
+    if (arrivingShowcaseRoadAlert != null) {
+      _routeRefreshTimer?.cancel();
+      _routeExpiryTimer?.cancel();
+      _routeRefreshReady = false;
+    }
     setState(() {
       _persistedEvents = events;
+      if (arrivingShowcaseRoadAlert != null) {
+        final event = arrivingShowcaseRoadAlert;
+        final point = meshEventFocusPoint(event);
+        _routeSheetVisible = false;
+        _selectedEvent = event;
+        _selectedFeature = null;
+        _searchSelection = null;
+        _searchText = '';
+        _searchController.clear();
+        _mapSearchResults = const <MapSearchResult>[];
+        if (point != null) {
+          _focusPoint = point;
+          _focusBounds =
+              event.isNcdrMultiAreaWarning ? meshEventBounds(event) : null;
+          _focusRequestId += 1;
+        }
+      }
     });
+    if (arrivingShowcaseRoadAlert != null) {
+      if (shouldRefreshRoute) {
+        unawaited(_recalculateShowcaseRouteAroundAlert());
+      }
+      return;
+    }
     _checkRouteEvents();
+  }
+
+  Future<void> _recalculateShowcaseRouteAroundAlert() async {
+    final destination = _requestedRouteDestination ?? _routeDestination;
+    final origin = _runtimeState.currentLocation ?? widget.showcaseOrigin;
+    if (!widget.showcaseMode || destination == null || origin == null) return;
+
+    final requestToken = ++_routeRequestToken;
+    final eventFingerprint = _eventFingerprint(_persistedEvents);
+    _requestedRouteDestination = destination;
+    _routeRecommendation = false;
+    _observedRouteEvents = _routeSnapshot(_persistedEvents);
+    _routeUpdateReason = null;
+    _routeUpdateNotice = null;
+    setState(() {
+      _routeStale = true;
+      _routeLoading = true;
+      _routeLoadingMessage = '道路告警已出現，正在規劃替代路線…';
+      _routeErrorMessage = null;
+    });
+
+    try {
+      final result = await _bridge.calculateEvacuationRoute(
+        origin: origin,
+        destination: destination.candidate,
+      );
+      if (!mounted || requestToken != _routeRequestToken) return;
+      if (_eventFingerprint(_persistedEvents) != eventFingerprint) return;
+      setState(() {
+        _routeDestination = destination;
+        _routeResult = result;
+        _routeErrorMessage = null;
+        _routeStale = false;
+        _routeLoading = false;
+        _routeLoadingMessage = null;
+      });
+    } on Object catch (error) {
+      if (!mounted || requestToken != _routeRequestToken) return;
+      setState(() {
+        _routeResult = null;
+        _routeErrorMessage = _routeErrorMessageFor(error);
+        _routeStale = false;
+        _routeLoading = false;
+        _routeLoadingMessage = null;
+      });
+    }
   }
 
   @override
@@ -752,6 +857,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
       _persistedEvents,
       _routeNow,
       destinationSupplyKey: _routeSupplyKey,
+      includeShowcaseRoadClosures: widget.showcaseMode,
     );
     if (expires == null) return;
     _routeExpiryTimer = Timer(expires.difference(_routeNow), _checkRouteEvents);
@@ -922,7 +1028,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
         byId[key] = event;
       }
     }
-    final now = DateTime.now().toUtc();
+    final now = _routeNow;
     return AttestationIndex.fromEvents(byId.values, now: now)
         .mapDisplayEvents(byId.values)
         .where(
@@ -979,10 +1085,17 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     );
   }
 
-  void _showEvent(MeshEvent event) => setState(() {
-    _selectedEvent = event;
-    _selectedFeature = null;
-  });
+  void _showEvent(MeshEvent event) {
+    if (widget.showcaseMode) {
+      _routeRefreshTimer?.cancel();
+      _routeExpiryTimer?.cancel();
+    }
+    setState(() {
+      if (widget.showcaseMode) _routeSheetVisible = false;
+      _selectedEvent = event;
+      _selectedFeature = null;
+    });
+  }
 
   void _closeDetails() => setState(() {
     _selectedFeature = null;
@@ -1401,6 +1514,10 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _openSyncStatus() async {
+    if (widget.showcaseMode) {
+      _showMessage('展示模式沒有同步或附近節點功能');
+      return;
+    }
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => SyncStatusScreen(bridge: _bridge),
@@ -1417,6 +1534,11 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _setEmergencyMode(bool enabled) async {
+    if (widget.showcaseMode) {
+      setState(() => _emergencyModeEnabled = enabled);
+      _showMessage('緊急模式僅在此展示頁模擬');
+      return;
+    }
     try {
       final confirmed = await _bridge.setEmergencyMode(enabled: enabled);
       if (mounted) setState(() => _emergencyModeEnabled = confirmed);
@@ -1539,7 +1661,9 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     if (!mounted) return;
     setState(() {});
     final notice = _rescue.consumeNotice();
-    if (notice != null) _showMessage(notice);
+    if (notice != null) {
+      _showMessage(widget.showcaseMode ? '$notice；僅在此頁模擬，未送出' : notice);
+    }
   }
 
   void _openRescueRequest() {
@@ -1776,7 +1900,9 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
         _reportStep = CrowdReportSheetStep.edit;
       });
       _showMessage(
-        submission.deliveryState == 'UPLOADED'
+        widget.showcaseMode
+            ? '展示回報已加入此頁，未實際送出'
+            : submission.deliveryState == 'UPLOADED'
             ? '回報已上傳，尚未經查證，僅供參考'
             : '回報已保存在本機，未經查證；連線後會重試上傳',
       );
@@ -1849,7 +1975,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
               ? _searchIndex?.query(text) ?? const <MapSearchResult>[]
               : (await _searchWorker!.search(text)).results;
       var addressEntries = const <TaiwanSearchEntry>[];
-      if (!report) {
+      if (!report && !widget.showcaseMode) {
         try {
           addressEntries = await _addressPackStore.search(text);
         } on Object {
@@ -1949,6 +2075,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
       body: Stack(
         children: <Widget>[
           MapCanvas(
+            showcaseMode: widget.showcaseMode,
             runtimeState: _runtimeState,
             staticFeatures: staticFeatures.features,
             administrativeIndex: _administrativeIndex,
@@ -1997,7 +2124,10 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                           results: searchResults,
                           onChanged: _onMapSearchChanged,
                           onSelected: _selectSearchResult,
-                          onAddressPacksPressed: _openAddressPackDialog,
+                          onAddressPacksPressed:
+                              widget.showcaseMode
+                                  ? () => _showMessage('展示模式僅提供固定地點搜尋')
+                                  : _openAddressPackDialog,
                         ),
                       ),
                       const SizedBox(height: 8),
@@ -2026,12 +2156,15 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                                     maxWidth: statusWidth,
                                   ),
                                   child: _StatusOverlay(
+                                    showcaseMode: widget.showcaseMode,
                                     snapshotAt: staticFeatures.snapshotAt,
                                     visibleEventCount: visibleEventCount,
                                     hasCurrentLocation:
                                         _runtimeState.currentLocation != null,
                                     reportDeliveryEventId:
-                                        _reportDeliveryEventId,
+                                        widget.showcaseMode
+                                            ? null
+                                            : _reportDeliveryEventId,
                                     staticFeaturesPending:
                                         widget.staticFeaturesPending,
                                     staticFeaturesFailed:
@@ -2228,6 +2361,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
             Align(
               alignment: Alignment.bottomCenter,
               child: RescueRequestSheet(
+                showcaseMode: widget.showcaseMode,
                 draft: _rescue.draft!,
                 step: _rescue.step!,
                 submitting: _rescue.busy,
@@ -2270,6 +2404,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
             Align(
               alignment: Alignment.bottomCenter,
               child: CrowdReportSheet(
+                showcaseMode: widget.showcaseMode,
                 draft: _reportDraft!,
                 step: _reportStep,
                 submitting: _reportSubmitting,
@@ -2312,6 +2447,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                 stale: _routeStale,
                 loadingMessage: _routeLoadingMessage,
                 updateNotice: _routeUpdateNotice,
+                showcaseMode: widget.showcaseMode,
                 destinationName: _routeDestination?.name,
                 destinationKind: _routeKind,
                 onRecalculate: _routeDestinationWithdrawn ? null : _retryRoute,
@@ -2326,6 +2462,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
 
 class _StatusOverlay extends StatelessWidget {
   const _StatusOverlay({
+    required this.showcaseMode,
     required this.snapshotAt,
     required this.visibleEventCount,
     required this.hasCurrentLocation,
@@ -2334,6 +2471,7 @@ class _StatusOverlay extends StatelessWidget {
     this.staticFeaturesFailed = false,
   });
 
+  final bool showcaseMode;
   final String? snapshotAt;
   final int visibleEventCount;
   final bool hasCurrentLocation;
@@ -2356,9 +2494,10 @@ class _StatusOverlay extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
-            Text(
-              '資料更新：${staticFeaturesPending ? '載入中' : formatStaticDataUpdateTime(snapshotAt)}',
-            ),
+            if (!showcaseMode)
+              Text(
+                '資料更新：${staticFeaturesPending ? '載入中' : formatStaticDataUpdateTime(snapshotAt)}',
+              ),
             if (!staticFeaturesPending) Text('事件標記：$visibleEventCount'),
             Text('目前位置：${hasCurrentLocation ? '已取得' : '尚未取得'}'),
             if (staticFeaturesPending)

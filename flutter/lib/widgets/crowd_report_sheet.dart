@@ -23,6 +23,7 @@ class CrowdReportSheet extends StatelessWidget {
     required this.onBackToEdit,
     required this.onSubmit,
     required this.onCancel,
+    this.showcaseMode = false,
   });
 
   final CrowdReportDraft draft;
@@ -39,6 +40,7 @@ class CrowdReportSheet extends StatelessWidget {
   final VoidCallback onBackToEdit;
   final VoidCallback onSubmit;
   final VoidCallback onCancel;
+  final bool showcaseMode;
 
   @override
   Widget build(BuildContext context) {
@@ -85,9 +87,10 @@ class CrowdReportSheet extends StatelessWidget {
           (category) => RadioListTile<CrowdReportCategory>(
             contentPadding: EdgeInsets.zero,
             title: Text(category.label),
-            subtitle: category == CrowdReportCategory.trappedInjured
-                ? const Text('若是你或現場有人需要救援，請改用「需要救援」')
-                : null,
+            subtitle:
+                category == CrowdReportCategory.trappedInjured
+                    ? const Text('若是你或現場有人需要救援，請改用「需要救援」')
+                    : null,
             value: category,
             groupValue: draft.category,
             onChanged: (value) {
@@ -159,7 +162,7 @@ class CrowdReportSheet extends StatelessWidget {
     children: <Widget>[
       _header(context, '確認警示內容'),
       const SizedBox(height: 8),
-      Text('請確認以下資訊後送出。'),
+      Text(showcaseMode ? '確認展示回報內容；不會送出或上傳。' : '請確認以下資訊後送出。'),
       const SizedBox(height: 12),
       Text('類型：${draft.category.label}'),
       Text('位置來源：${_locationSourceLabel()}'),
@@ -187,7 +190,7 @@ class CrowdReportSheet extends StatelessWidget {
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
                     : const Icon(Icons.send),
-            label: const Text('確認送出'),
+            label: Text(showcaseMode ? '加入展示地圖' : '確認送出'),
           ),
         ],
       ),
@@ -315,7 +318,10 @@ class CrowdReportMapPickerBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) => MapLocationPickerBar(
     title: '拖動地圖調整警示位置',
-    instruction: draft.locationHint == null ? '將中心圖釘放在警示發生的位置' : '已定位到「${draft.locationHint!.label}」，請拖動地圖微調',
+    instruction:
+        draft.locationHint == null
+            ? '將中心圖釘放在警示發生的位置'
+            : '已定位到「${draft.locationHint!.label}」，請拖動地圖微調',
     point: draft.location,
     onBack: onBackToForm,
     onConfirm: onConfirm,
@@ -355,10 +361,7 @@ class MapLocationPickerBar extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
-            Text(
-              title,
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
+            Text(title, style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 4),
             Text(instruction),
             const SizedBox(height: 6),

@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import '../showcase/showcase_clock.dart';
+
 /// UI-independent map data types shared by static assets and Android events.
 class GeoPoint {
   const GeoPoint({required this.longitude, required this.latitude});
@@ -224,7 +226,7 @@ class MeshEvent {
   /// Keep the UI correct between native expiry ticks and while returning from background.
   String? get effectiveApplyState {
     final issued = _parseEventTime(issuedAt);
-    final now = DateTime.now().toUtc();
+    final now = ShowcaseClock.now().toUtc();
     final expires = _parseEventTime(expiresAt);
     if (applyState == 'EXPIRED' || (expires != null && !expires.isAfter(now))) {
       return 'EXPIRED';
@@ -288,7 +290,7 @@ class MeshEvent {
         (applyState != null && applyState != 'CURRENT')) {
       return false;
     }
-    final reference = (now ?? DateTime.now()).toUtc();
+    final reference = (now ?? ShowcaseClock.now()).toUtc();
     final start = _parseEventTime(issuedAt);
     final end = _parseEventTime(expiresAt);
     return start != null &&
@@ -309,7 +311,7 @@ class MeshEvent {
   /// issued/expires time window. An explicit non-CURRENT Android state always
   /// wins over the raw timestamps.
   bool isCurrentAt([DateTime? now]) {
-    final reference = (now ?? DateTime.now()).toUtc();
+    final reference = (now ?? ShowcaseClock.now()).toUtc();
     if (applyState != null && applyState != 'CURRENT') return false;
 
     final issued = _parseEventTime(issuedAt);
@@ -330,7 +332,8 @@ class MeshEvent {
     if (isEndedRescueRequest) return false;
     if (applyState != 'UNVERIFIED') return isCurrentAt(now);
     final expires = _parseEventTime(expiresAt);
-    return expires != null && expires.isAfter((now ?? DateTime.now()).toUtc());
+    return expires != null &&
+        expires.isAfter((now ?? ShowcaseClock.now()).toUtc());
   }
 
   bool get isUnverified =>

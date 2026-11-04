@@ -35,6 +35,7 @@ class RescueRequestSheet extends StatelessWidget {
     required this.onSubmit,
     required this.onCancel,
     required this.onOpenSirenOnly,
+    this.showcaseMode = false,
   });
 
   final RescueDraft draft;
@@ -55,6 +56,7 @@ class RescueRequestSheet extends StatelessWidget {
   final VoidCallback onSubmit;
   final VoidCallback onCancel;
   final VoidCallback onOpenSirenOnly;
+  final bool showcaseMode;
 
   bool get _canSign => capabilities?.canSign ?? true;
 
@@ -264,12 +266,12 @@ class RescueRequestSheet extends StatelessWidget {
         Text('人數：${draft.peopleCount} 人'),
         Text('描述：${draft.description.trim().isEmpty ? '無描述' : draft.description.trim()}'),
         const SizedBox(height: 12),
-        Text(rescueUnverifiedText, style: const TextStyle(color: unverifiedEventColor, fontWeight: FontWeight.w700)),
+        Text(showcaseMode ? '展示求救只會改變此頁畫面，絕不送出或通知救援單位' : rescueUnverifiedText, style: const TextStyle(color: unverifiedEventColor, fontWeight: FontWeight.w700)),
         const SizedBox(height: 4),
-        Text(rescuePrivacyText, style: theme.textTheme.bodySmall),
+        if (!showcaseMode) Text(rescuePrivacyText, style: theme.textTheme.bodySmall),
         const SizedBox(height: 4),
         Text(rescueNot119Text, style: theme.textTheme.bodySmall),
-        if (capabilities?.supportsMesh == false && !isUpdate)
+        if (!showcaseMode && capabilities?.supportsMesh == false && !isUpdate)
           Padding(
             padding: const EdgeInsets.only(top: 4),
             child: Text(rescueBrowserKeyText, style: theme.textTheme.bodySmall),
@@ -298,7 +300,7 @@ class RescueRequestSheet extends StatelessWidget {
               icon: submitting
                   ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
                   : const Icon(Icons.send),
-              label: Text(isUpdate ? '確認更新' : '確認送出'),
+              label: Text(showcaseMode ? (isUpdate ? '模擬更新' : '模擬建立') : (isUpdate ? '確認更新' : '確認送出')),
             ),
           ],
         ),
