@@ -70,6 +70,26 @@ void main() {
     );
   });
 
+  testWidgets('delayed road alert marker remains after its pulse animation', (
+    tester,
+  ) async {
+    await _pumpShowcase(tester, basemapProbe: () async => false);
+
+    await tester.pump(const Duration(seconds: 10));
+    for (var attempt = 0; attempt < 12; attempt += 1) {
+      await tester.pump(const Duration(milliseconds: 500));
+    }
+
+    expect(
+      find.byKey(
+        const ValueKey<String>(
+          'event-marker-["official.live.ncdr","showcase:route-road-closed",1]',
+        ),
+      ),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('a new road alert replaces an open route sheet', (tester) async {
     await tester.runAsync(() async {
       await ShowcaseScenario.load();
