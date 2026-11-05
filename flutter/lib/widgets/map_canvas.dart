@@ -58,6 +58,7 @@ class MapCanvas extends StatefulWidget {
     this.focusBounds,
     this.focusRequestId = 0,
     this.showcaseMode = false,
+    this.eventDisplayTime,
   });
 
   static const double minZoom = MapLibreMapConfig.minZoom;
@@ -95,6 +96,7 @@ class MapCanvas extends StatefulWidget {
   final GeoBounds? focusBounds;
   final int focusRequestId;
   final bool showcaseMode;
+  final DateTime? eventDisplayTime;
 
   @override
   State<MapCanvas> createState() => _MapCanvasState();
@@ -817,6 +819,7 @@ class _MapCanvasState extends State<MapCanvas> with TickerProviderStateMixin {
         currentLocation: null,
         zoom: currentZoom,
         zoomPercentage: zoomPercentage,
+        now: widget.eventDisplayTime,
       );
       if (cacheOverviewLayout) {
         _overviewMarkerLayouts.put(currentZoom, layout);

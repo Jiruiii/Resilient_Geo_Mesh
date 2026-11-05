@@ -2076,6 +2076,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
         children: <Widget>[
           MapCanvas(
             showcaseMode: widget.showcaseMode,
+            eventDisplayTime: _routeNow,
             runtimeState: _runtimeState,
             staticFeatures: staticFeatures.features,
             administrativeIndex: _administrativeIndex,
