@@ -18,6 +18,7 @@
 | Web／Android 同步開發規則與資料整合 | [前端整合](frontend-real-data-integration.md#web-與-android-同步開發規則) |
 | 系統架構、開發階段與驗收條件 | [系統實作計畫](../system.md)，目前狀態以開頭進度表與 MVP 進度總表為準 |
 | 雙北路網與 Pixel 8a 效能 | [雙北離線路線紀錄](taipei-offline-routing.md) |
+| 搜尋、路線與政府工作台等待時間優化（A53 實測） | [等待時間優化](startup-wait-optimization.md) |
 | Android 建置與 Flutter 操作 | [Android README](../android/README.md)、[Flutter README](../flutter/README.md) |
 | 地圖、搜尋與路網重建 | [地圖工具 README](../tools/maps/README.md) |
 | 事件、簽章與同步契約 | [資料契約](data-contract-v0.md)、[Peer Sync 協定](peer-sync-v0.md) |

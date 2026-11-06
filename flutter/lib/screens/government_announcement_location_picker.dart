@@ -79,12 +79,13 @@ class _GovernmentAnnouncementLocationPickerState
 
   Future<void> _loadSearchIndex() async {
     try {
-      final raw = await rootBundle.loadString(
-        'assets/map/search/taiwan-roads.json',
-      );
+      const assetPath = 'assets/map/search/taiwan-roads.json';
       if (!kIsWeb) {
-        _searchWorker = await OfflineSearchWorker.start(raw);
+        _searchWorker = await OfflineSearchWorker.startFromBytes(
+          await rootBundle.load(assetPath),
+        );
       } else {
+        final raw = await rootBundle.loadString(assetPath);
         final decoded = jsonDecode(raw);
         if (decoded is! Map) {
           throw const FormatException('Taiwan search index is invalid');

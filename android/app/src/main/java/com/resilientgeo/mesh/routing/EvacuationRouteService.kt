@@ -49,6 +49,22 @@ class EvacuationRouteService(
     private var cachedOverlay: Pair<String, HazardOverlay>? = null
     private var shelterCatalog: ShelterDisasterCatalog? = null
 
+    /**
+     * Loads the walk graph and its search workspace before the first route
+     * request, so tapping "route" does not wait ~2 s for the asset. A failed
+     * load is left for [calculate], which retries and reports it as a status.
+     */
+    suspend fun prewarm() = mutex.withLock {
+        if (graph != null) return@withLock
+        val loaded = try {
+            graphLoader()
+        } catch (_: Exception) {
+            return@withLock
+        }
+        graph = loaded
+        if (workspace == null) workspace = EvacuationRouter.SearchWorkspace(loaded.nodeCount)
+    }
+
     suspend fun calculate(request: RouteRequest): RouteResult = mutex.withLock {
         val now = clock()
         val events = eventJsonProvider().mapNotNull { RouteEvent.fromEventJson(it, now) }

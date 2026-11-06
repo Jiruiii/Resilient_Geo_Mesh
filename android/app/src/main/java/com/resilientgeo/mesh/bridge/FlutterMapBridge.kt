@@ -31,6 +31,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
@@ -101,6 +102,13 @@ class FlutterMapBridge(
         methodChannel.setMethodCallHandler(this)
         eventChannel.setStreamHandler(this)
         staticFeatures.start()
+        // The first route otherwise waits ~2.3 s on Pixel 8a for the walk
+        // graph. Load it once the launch work (first frame, search index) has
+        // had a head start; route requests share the service mutex.
+        scope.launch(Dispatchers.Default) {
+            delay(ROUTE_GRAPH_PREWARM_DELAY_MS)
+            routeService.prewarm()
+        }
     }
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
@@ -536,6 +544,7 @@ class FlutterMapBridge(
         const val DEVICE_NOT_AUTHORIZED = "government_device_not_authorized"
         const val STORAGE_UNAVAILABLE = "storage_unavailable"
         const val ROUTE_ENGINE_ERROR = "route_engine_error"
+        const val ROUTE_GRAPH_PREWARM_DELAY_MS = 3_000L
         const val INVALID_ARGUMENTS = "invalid_arguments"
         const val METHOD_ERROR = "map_bridge_error"
         const val EVENT_OBSERVATION_ERROR = "event_observation_error"
