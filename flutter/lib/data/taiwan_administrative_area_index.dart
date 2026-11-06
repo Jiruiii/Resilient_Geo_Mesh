@@ -1,5 +1,7 @@
 import 'dart:convert';
+import 'dart:isolate';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import 'map_models.dart';
@@ -28,7 +30,7 @@ enum _RingRelation { outside, inside, boundary }
 class TaiwanAdministrativeAreaIndex {
   TaiwanAdministrativeAreaIndex._({
     required List<_SpatialArea> areas,
-    required List<num> coordinates,
+    required Float64List coordinates,
   }) : _areas = List<_SpatialArea>.unmodifiable(areas),
        _coordinates = coordinates;
 
@@ -36,15 +38,34 @@ class TaiwanAdministrativeAreaIndex {
       'assets/map/boundaries/taiwan-administrative-area-index.json';
 
   final List<_SpatialArea> _areas;
-  final List<num> _coordinates;
+  final Float64List _coordinates;
 
   static Future<TaiwanAdministrativeAreaIndex> load(
     TaiwanAdministrativeAreaDirectory directory, {
     AssetBundle? bundle,
   }) async {
-    final raw = await (bundle ?? rootBundle).loadString(assetPath);
-    return TaiwanAdministrativeAreaIndex.fromJson(directory, jsonDecode(raw));
+    final source = bundle ?? rootBundle;
+    if (kIsWeb) {
+      final raw = await source.loadString(assetPath, cache: false);
+      return TaiwanAdministrativeAreaIndex.fromJson(directory, jsonDecode(raw));
+    }
+    // The 43 MB asset took seconds to decode and validate on the UI isolate,
+    // freezing the government workbench while it opened.
+    final bytes = await source.load(assetPath);
+    return Isolate.run(() => _decode(directory, bytes));
   }
+
+  static TaiwanAdministrativeAreaIndex _decode(
+    TaiwanAdministrativeAreaDirectory directory,
+    ByteData bytes,
+  ) => TaiwanAdministrativeAreaIndex.fromJson(
+    directory,
+    utf8.decoder
+        .fuse(json.decoder)
+        .convert(
+          bytes.buffer.asUint8List(bytes.offsetInBytes, bytes.lengthInBytes),
+        ),
+  );
 
   factory TaiwanAdministrativeAreaIndex.fromJson(
     TaiwanAdministrativeAreaDirectory directory,
@@ -69,12 +90,16 @@ class TaiwanAdministrativeAreaIndex {
       throw const FormatException('Invalid administrative area spatial index');
     }
 
-    if (rawCoordinates.any(
-      (coordinate) => coordinate is! num || !coordinate.isFinite,
-    )) {
-      throw const FormatException('Invalid administrative area coordinates');
+    // ~2.3M values: a flat Float64List instead of boxed JSON numbers behind a
+    // cast view, which is smaller and faster to read in resolvePoint.
+    final coordinates = Float64List(rawCoordinates.length);
+    for (var i = 0; i < rawCoordinates.length; i++) {
+      final coordinate = rawCoordinates[i];
+      if (coordinate is! num || !coordinate.isFinite) {
+        throw const FormatException('Invalid administrative area coordinates');
+      }
+      coordinates[i] = coordinate.toDouble();
     }
-    final coordinates = rawCoordinates.cast<num>();
     final totalCoordinatePairs = coordinates.length ~/ 2;
     final areas = <_SpatialArea>[];
     final seenAreaIds = <String>{};
@@ -227,10 +252,10 @@ class TaiwanAdministrativeAreaIndex {
   }
 
   double _longitude(int coordinatePairIndex) =>
-      _coordinates[coordinatePairIndex * 2].toDouble();
+      _coordinates[coordinatePairIndex * 2];
 
   double _latitude(int coordinatePairIndex) =>
-      _coordinates[coordinatePairIndex * 2 + 1].toDouble();
+      _coordinates[coordinatePairIndex * 2 + 1];
 
   static List<int>? _readOffsets(Object? value) {
     if (value is! List || value.length < 2) return null;
