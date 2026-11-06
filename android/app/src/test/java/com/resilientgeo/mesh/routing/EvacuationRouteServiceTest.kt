@@ -69,6 +69,26 @@ class EvacuationRouteServiceTest {
     }
 
     @Test
+    fun `prewarm loads the graph once for later routes`() = runTest {
+        var graphLoads = 0
+        val service = service(loader = { graphLoads++; RoutingTestSupport.grid() })
+        service.prewarm()
+        service.prewarm()
+        assertEquals(1, graphLoads)
+        assertEquals(RouteStatus.OK, service.calculate(request(RoutingTestSupport.p(0, 0))).status)
+        assertEquals(1, graphLoads)
+    }
+
+    @Test
+    fun `a failed prewarm is reported by the next route`() = runTest {
+        val result = service(loader = { error("asset missing") }).run {
+            prewarm()
+            calculate(request(RoutingTestSupport.p(0, 0)))
+        }
+        assertEquals(RouteStatus.GRAPH_UNAVAILABLE, result.status)
+    }
+
+    @Test
     fun `a missing graph asset is graph_unavailable`() = runTest {
         val result = service(loader = { error("asset missing") }).calculate(request(RoutingTestSupport.p(0, 0)))
         assertEquals(RouteStatus.GRAPH_UNAVAILABLE, result.status)
