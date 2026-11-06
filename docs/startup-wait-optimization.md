@@ -45,6 +45,21 @@
 - Android：`:app:testDebugUnitTest` 279 項通過，含兩項新的預載測試。
 - Web：`flutter build web --release` 成功，Chrome 搜尋「成功路」列出新店、永和、板橋、三重的成功路；本機未啟動 Server，事件更新失敗訊息為預期。
 
+## 兩機功能驗收（2026-11-07）
+
+Pixel 8a（Android 17）與 Samsung A53（Android 16）以 USB 連接，安裝本分支 debug 版為獨立套件 `com.resilientgeo.mesh.perf`。
+
+| 項目 | 結果 |
+| --- | --- |
+| `RealPeerSyncInstrumentedTest`（Pixel 持 FLOOD、A53 持 ROAD_BLOCKAGE） | BLE、Nearby、Wi-Fi Direct 三種方式都通過：首次相遇各收到 1 片，再次相遇 `already in sync`、`chunksApplied=0`；Wi-Fi Direct 未出現系統連線邀請 |
+| 全部 instrumented 測試 | 兩台各 48 項通過（opt-in 項目略過） |
+| 正式 App 緊急模式（自動選擇） | Pixel 送出淹水回報，約 26 秒後 A53 經 Nearby 收到並列入通知；A53 送出求救，約 44 秒後 Pixel 經 BLE 收到並顯示求救點；A53 取消誤報，約 25 秒後 Pixel 經 Nearby 收到並移除求救點、不列入通知 |
+| 搜尋與路線（`measure_android_latency.py`） | 兩台搜尋「成功路」4 筆、「中正路」7 筆、完整地址 1 筆；所有路線 `ok` |
+
+上述時間為按下送出到對方套用的手機計時，含同步冷卻與搜尋時間，非傳輸速度。測試期間 Wi-Fi 與行動數據保持開啟（傳輸本身不經網際網路）；未重跑完全離線與政府警告離線轉傳（需本機政府伺服器並關閉兩台網路）。debug 版的伺服器位址為模擬器專用的 `10.0.2.2`，測試回報與求救沒有上傳。
+
+測後兩台都移除測試套件，只保留以本機開發金鑰簽章的 release 版。Web 沒有原生無線交換，本次未更動 Web。
+
 ## 限制與後續
 
 - 搜尋可用時間在 A53 仍約 7–9 秒，量測變異大。主要剩下 JSON 解碼與建立索引；若要再大幅縮短，需在資料管線預先產生二進位索引，改動 `tools/maps/build_taiwan_search_index.py` 與兩端載入程式。
