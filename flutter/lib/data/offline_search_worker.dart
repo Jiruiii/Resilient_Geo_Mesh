@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:isolate';
+import 'dart:typed_data';
 
 import 'map_administrative.dart';
 import 'map_models.dart';
@@ -19,7 +20,21 @@ class OfflineSearchWorker {
   int _sequence = 0;
   bool _closed = false;
 
-  static Future<OfflineSearchWorker> start(String roadJson) async {
+  static Future<OfflineSearchWorker> start(String roadJson) => _start(roadJson);
+
+  /// Starts from the raw UTF-8 asset bytes. The worker decodes them directly,
+  /// so the UI isolate never builds or copies the ~42 MB JSON string.
+  static Future<OfflineSearchWorker> startFromBytes(ByteData roadJsonBytes) =>
+      _start(
+        TransferableTypedData.fromList([
+          roadJsonBytes.buffer.asUint8List(
+            roadJsonBytes.offsetInBytes,
+            roadJsonBytes.lengthInBytes,
+          ),
+        ]),
+      );
+
+  static Future<OfflineSearchWorker> _start(Object roadJson) async {
     final worker = OfflineSearchWorker._();
     worker._replies.listen((dynamic message) {
       final response = message as List;
@@ -91,7 +106,13 @@ class OfflineSearchWorker {
 void _serveSearch(List<dynamic> arguments) {
   final replies = arguments[1] as SendPort;
   try {
-    final decoded = jsonDecode(arguments[0] as String);
+    final payload = arguments[0];
+    final decoded =
+        payload is TransferableTypedData
+            ? utf8.decoder
+                .fuse(json.decoder)
+                .convert(payload.materialize().asUint8List())
+            : jsonDecode(payload as String);
     final asset = TaiwanSearchAsset.fromJson(
       Map<String, dynamic>.from(decoded as Map),
     );
@@ -106,8 +127,7 @@ void _serveSearch(List<dynamic> arguments) {
           roadEntries: asset.entries,
           administrativeAreas:
               (request[2] as List).cast<MapAdministrativeArea>(),
-          addressEntries:
-              (request[3] as List).cast<TaiwanSearchEntry>(),
+          addressEntries: (request[3] as List).cast<TaiwanSearchEntry>(),
         );
         index.prepare();
       } else {

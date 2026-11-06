@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:resilientgeo_flutter/data/offline_search_worker.dart';
@@ -54,4 +55,35 @@ void main() {
       await expectLater(OfflineSearchWorker.start('{}'), throwsFormatException);
     },
   );
+
+  test('starts from raw UTF-8 asset bytes', () async {
+    final bytes = utf8.encode(
+      jsonEncode({
+        'schema_version': '1',
+        'dataset_id': 'test',
+        'snapshot_at': '2026-09-25',
+        'source_url': 'fixture',
+        'source_sha256': List.filled(64, 'a').join(),
+        'attribution': 'OSM',
+        'entries': [
+          {
+            'id': 'road:2',
+            'name': '文化路一段',
+            'aliases': [],
+            'kind': 'road',
+            'region': '板橋區',
+            'coordinate': [121.46, 25.01],
+          },
+        ],
+      }),
+    );
+    // Offset view, as rootBundle may return a slice of a larger buffer.
+    final padded = Uint8List(bytes.length + 3)
+      ..setRange(3, 3 + bytes.length, bytes);
+    final worker = await OfflineSearchWorker.startFromBytes(
+      ByteData.sublistView(padded, 3),
+    );
+    addTearDown(worker.close);
+    expect((await worker.search('文化路')).results.single.id, 'road:2');
+  });
 }

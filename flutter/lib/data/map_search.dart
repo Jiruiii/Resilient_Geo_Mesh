@@ -383,6 +383,9 @@ int? _featureMatchScore(StaticFeature feature, String query) {
   );
 }
 
+/// Bundled road entries match by name, alias, and region only. Their OSM ids
+/// and the uniform `road` kind are never typed by users, and indexing them
+/// made up about 70% of the nationwide postings and startup indexing time.
 int? _entryMatchScore(_SearchText text, String query) {
   final sourceRegion = text.region;
   final score = _matchScore(
@@ -391,8 +394,8 @@ int? _entryMatchScore(_SearchText text, String query) {
     region: sourceRegion,
     address: '',
     details: '',
-    kind: text.kind,
-    id: text.id,
+    kind: '',
+    id: '',
     query: query,
   );
   if (score == null) return null;
@@ -507,13 +510,7 @@ class _RoadSearchLookup {
       texts = entries.map(_entryText).toList(growable: false);
       for (var index = 0; index < entries.length; index++) {
         final text = texts[index];
-        final fields = <String>[
-          text.name,
-          ...text.aliases,
-          text.region,
-          text.kind,
-          text.id,
-        ];
+        final fields = <String>[text.name, ...text.aliases, text.region];
         final seen = <String>{};
         for (final field in fields) {
           for (var i = 0; i < field.length; i++) {
