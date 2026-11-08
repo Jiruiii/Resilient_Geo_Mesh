@@ -193,6 +193,19 @@ App 主畫面直接進入 Flutter 台灣離線地圖，底圖使用隨 App 提�
 
 - 評選影片：<!-- TODO：請填入影片連結 -->
 
+<table>
+  <tr>
+    <td align="center"><img src="flutter/assets/Geo_light_phone_logo.png" height="480" alt="登入畫面"><br>登入畫面</td>
+    <td align="center"><img src="flutter/assets/gif/民眾求救.gif" height="480" alt="民眾求救"><br>民眾求救</td>
+    <td align="center"><img src="flutter/assets/gif/求救通知.gif" height="480" alt="求救通知"><br>求救通知</td>
+  </tr>
+  <tr>
+    <td align="center"><img src="flutter/assets/gif/淹水通報.gif" height="480" alt="淹水通報"><br>淹水通報</td>
+    <td align="center"><img src="flutter/assets/gif/物資發放.gif" height="480" alt="物資發放"><br>物資發放</td>
+    <td></td>
+  </tr>
+</table>
+
 ## 限制與未來工作
 
 如實揭露，不是藉口：
