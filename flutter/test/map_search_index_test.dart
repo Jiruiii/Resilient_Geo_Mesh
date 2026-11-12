@@ -55,4 +55,23 @@ void main() {
       );
     }
   });
+
+  test('bundled roads are not matched by internal id or kind', () {
+    final index = MapSearchIndex(
+      const [],
+      roadEntries: const [
+        TaiwanSearchEntry(
+          id: 'way:319679961',
+          name: '成功路',
+          aliases: [],
+          kind: 'road',
+          region: null,
+          coordinate: GeoPoint(longitude: 121.5, latitude: 25.0),
+        ),
+      ],
+    )..prepare();
+    expect(index.query('成功路').single.id, 'way:319679961');
+    expect(index.query('319679961'), isEmpty);
+    expect(index.query('road'), isEmpty);
+  });
 }

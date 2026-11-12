@@ -383,6 +383,9 @@ int? _featureMatchScore(StaticFeature feature, String query) {
   );
 }
 
+/// Bundled road entries match by name, alias, and region only. Their OSM ids
+/// and the uniform `road` kind are never typed by users, and indexing them
+/// made up about 70% of the nationwide postings and startup indexing time.
 int? _entryMatchScore(_SearchText text, String query) {
   final sourceRegion = text.region;
   final score = _matchScore(
@@ -391,8 +394,8 @@ int? _entryMatchScore(_SearchText text, String query) {
     region: sourceRegion,
     address: '',
     details: '',
-    kind: text.kind,
-    id: text.id,
+    kind: '',
+    id: '',
     query: query,
   );
   if (score == null) return null;
@@ -502,27 +505,29 @@ class _RoadSearchLookup {
       postings = grams.map(
         (key, ids) => MapEntry(key, Uint32List.fromList(ids)),
       );
+      gramPostings = const <int, Uint32List>{};
       reverseFields = const <String, Uint32List>{};
     } else {
+      // Road grams are keyed by UTF-16 code units instead of substrings: the
+      // same one- and two-unit grams, without allocating millions of short
+      // strings while the nationwide index is built at startup.
+      final roadGrams = <int, List<int>>{};
       texts = entries.map(_entryText).toList(growable: false);
       for (var index = 0; index < entries.length; index++) {
         final text = texts[index];
-        final fields = <String>[
-          text.name,
-          ...text.aliases,
-          text.region,
-          text.kind,
-          text.id,
-        ];
-        final seen = <String>{};
+        final fields = <String>[text.name, ...text.aliases, text.region];
+        final seen = <int>{};
         for (final field in fields) {
           for (var i = 0; i < field.length; i++) {
-            seen.add(field.substring(i, i + 1));
-            if (i + 1 < field.length) seen.add(field.substring(i, i + 2));
+            final unit = field.codeUnitAt(i);
+            seen.add(unit);
+            if (i + 1 < field.length) {
+              seen.add(_pairGram(unit, field.codeUnitAt(i + 1)));
+            }
           }
         }
         for (final gram in seen) {
-          (grams[gram] ??= <int>[]).add(index);
+          (roadGrams[gram] ??= <int>[]).add(index);
         }
         for (final field in {text.name, ...text.aliases, text.region}) {
           if (field.length < 2) continue;
@@ -530,7 +535,8 @@ class _RoadSearchLookup {
           (reverse[field] ??= <int>[]).add(index);
         }
       }
-      postings = grams.map(
+      postings = const <String, Uint32List>{};
+      gramPostings = roadGrams.map(
         (key, ids) => MapEntry(key, Uint32List.fromList(ids)),
       );
       reverseFields = reverse.map(
@@ -539,11 +545,21 @@ class _RoadSearchLookup {
     }
   }
 
+  /// A one-unit gram is its code unit (0..0xFFFF); a two-unit gram is offset
+  /// above that range. Multiplication keeps the key exact on the Web, where
+  /// bit shifts truncate to 32 bits.
+  static int _pairGram(int first, int second) => (first + 1) * 0x10000 + second;
+
   final int count;
   final bool _addressMode;
   late final List<_SearchText> texts;
   int maxReverseLength = 0;
+
+  /// Address-mode postings, keyed by sampled two-character substrings.
   late final Map<String, Uint32List> postings;
+
+  /// Road-mode postings, keyed by [_pairGram] / single code units.
+  late final Map<int, Uint32List> gramPostings;
   late final Map<String, Uint32List> reverseFields;
 
   Iterable<int> candidates(String query) {
@@ -575,10 +591,14 @@ class _RoadSearchLookup {
       ];
     }
     // Preserve one-character and UTF-16 matching semantics of the old scan.
-    if (query.length < 2) return postings[query] ?? const <int>[];
+    if (query.isEmpty) return const <int>[];
+    if (query.length < 2) {
+      return gramPostings[query.codeUnitAt(0)] ?? const <int>[];
+    }
     Uint32List? smallest;
     for (var i = 0; i + 1 < query.length; i++) {
-      final posting = postings[query.substring(i, i + 2)];
+      final posting =
+          gramPostings[_pairGram(query.codeUnitAt(i), query.codeUnitAt(i + 1))];
       if (posting == null) {
         smallest = null;
         break;

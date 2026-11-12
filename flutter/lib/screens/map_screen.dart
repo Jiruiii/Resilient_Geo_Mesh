@@ -663,10 +663,12 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   Future<void> _loadSearchAssetInBackground() async {
     try {
       if (!kIsWeb) {
-        final raw = await rootBundle.loadString(
+        // Raw bytes: loadString would decode on another isolate, copy the
+        // string back, and keep it in rootBundle's cache for the app's life.
+        final bytes = await rootBundle.load(
           'assets/map/search/taiwan-roads.json',
         );
-        final worker = await OfflineSearchWorker.start(raw);
+        final worker = await OfflineSearchWorker.startFromBytes(bytes);
         if (!mounted) {
           worker.close();
           return;
